@@ -1,0 +1,54 @@
+[general]
+static=yes
+writeprotect=yes
+clearglobalvars=no
+
+[globals]
+TEL_DID=__TEL_DID__
+FAX_DID=__FAX_DID__
+SMARTPHONE_EXTENSION=__SMARTPHONE_EXTENSION__
+
+[from-carrier]
+exten => __TEL_DID__,1,NoOp(Anshin Phone inbound TEL ${CALLERID(all)})
+ same => n,Set(CHANNEL(hangup_handler_push)=phase1-hangup,s,1)
+ same => n,Dial(PJSIP/${SMARTPHONE_EXTENSION},30)
+ same => n,Hangup()
+
+exten => __FAX_DID__,1,NoOp(Anshin Phone inbound FAX ${CALLERID(all)})
+ same => n,Set(FAX_FILE=/var/spool/asterisk/fax/${STRFTIME(${EPOCH},,%Y%m%d-%H%M%S)}-${UNIQUEID}.tif)
+ same => n,Answer()
+ same => n,Wait(2)
+ same => n,ReceiveFAX(${FAX_FILE},f)
+ same => n,Hangup()
+
+exten => _X.,1,NoOp(Reject unassigned inbound DID ${EXTEN})
+ same => n,Hangup(1)
+
+[from-smartphone]
+exten => 110,1,NoOp(Block emergency call until carrier and location requirements are approved)
+ same => n,Hangup(21)
+exten => 118,1,Goto(110,1)
+exten => 119,1,Goto(110,1)
+exten => _010X.,1,NoOp(Block international call in Phase 1)
+ same => n,Hangup(21)
+exten => _0570X.,1,NoOp(Block premium-rate call in Phase 1)
+ same => n,Hangup(21)
+exten => _0990X.,1,NoOp(Block premium-rate call in Phase 1)
+ same => n,Hangup(21)
+exten => _0[1-9]XXXXXXXX,1,Gosub(outbound-carrier,s,1(${EXTEN}))
+ same => n,Hangup()
+exten => _0[1-9]XXXXXXXXX,1,Gosub(outbound-carrier,s,1(${EXTEN}))
+ same => n,Hangup()
+exten => _X.,1,NoOp(Reject unsupported outbound destination ${EXTEN})
+ same => n,Hangup(21)
+
+[outbound-carrier]
+exten => s,1,NoOp(Anshin Phone outbound TEL ${ARG1})
+ same => n,Set(CALLERID(num)=__TEL_DID__)
+ same => n,Set(PJSIP_HEADER(add,P-Asserted-Identity)=<sip:__TEL_DID__@__CARRIER_HOST__>)
+ same => n,Dial(PJSIP/${ARG1}@carrier-endpoint,60)
+ same => n,Return()
+
+[phase1-hangup]
+exten => s,1,NoOp(Phase1 call ended uniqueid=${UNIQUEID} disposition=${DIALSTATUS})
+ same => n,Return()
