@@ -1,0 +1,31 @@
+services:
+  backend:
+    ports: !reset []
+
+  asterisk:
+    ports: !reset []
+    networks:
+      phone-internal:
+        ipv4_address: 172.31.250.20
+
+  mock-carrier:
+    build:
+      context: ./tests/mock-sip
+    command: ["tail", "-f", "/dev/null"]
+    networks:
+      phone-internal:
+        ipv4_address: 172.31.250.10
+
+  mock-smartphone:
+    build:
+      context: ./tests/mock-sip
+    command: ["tail", "-f", "/dev/null"]
+    networks:
+      phone-internal:
+        ipv4_address: 172.31.250.30
+
+networks:
+  phone-internal:
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24

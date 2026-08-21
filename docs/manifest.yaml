@@ -1,0 +1,10 @@
+schema_version: 2
+root_id: anshin-phone
+owner: anshin-phone-infra
+enforcement: changed
+canonical_documents: []
+managed_globs:
+  - "**/*.md"
+  - "**/*.mdx"
+warning_baseline: {}
+exemptions: []

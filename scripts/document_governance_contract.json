@@ -1,0 +1,15 @@
+{
+  "checker_sha256": "4d977e3bd689d4b623cf59edb8ebe812ceb8af7a93fac3a58c570d6eba9051df",
+  "contract_version": "2026-08-17.1",
+  "guard_test_sha256": "feb6d992850d2cda7aecb05e751d862ca8b0bbed1d0ec475e2619c7b1006cdb8",
+  "required_build_check_command": "bash scripts/run_document_governance_guard.sh",
+  "required_build_check_marker": "anshin-document-governance-build-check:v1",
+  "roots": [
+    {
+      "documents_path": "docs",
+      "id": "anshin-phone"
+    }
+  ],
+  "runner_sha256": "37ddb99bcaeed661770129073ff4a1fc35162f0d706ea3ed94108ac71b723d64",
+  "schema_version": 1
+}

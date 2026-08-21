@@ -1,5 +1,11 @@
 name: anshin-phone-phase1
 
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   postgres:
     image: postgres:16-bookworm
@@ -17,7 +23,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 6
-    networks: [phone-internal]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [phone-data]
 
   backend:
     build:
@@ -39,7 +47,49 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:${ANSHIN_PHONE_BACKEND_PORT:-8010}:8000"
-    networks: [phone-internal]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [phone-data]
+
+  pbx-event-forwarder:
+    build:
+      context: ./deploy/pbx-event-forwarder
+    restart: unless-stopped
+    environment:
+      PBX_EVENT_SPOOL_DIR: /var/spool/anshin-phone/events
+      PBX_EVENT_BACKEND_URL: http://backend:8000
+      PBX_EVENT_TOKEN_FILE: /run/secrets/internal_api_token
+      PBX_EVENT_MAX_PENDING_AGE_SECONDS: "300"
+    secrets:
+      - internal_api_token
+    depends_on:
+      backend:
+        condition: service_healthy
+      asterisk:
+        condition: service_healthy
+    volumes:
+      - pbx-event-spool:/var/spool/anshin-phone/events
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks: [phone-data]
 
   asterisk:
     build:
@@ -53,12 +103,16 @@ services:
       CARRIER_AUTH_MODE: ${CARRIER_AUTH_MODE:?set registration or ip}
       CARRIER_HOST: ${CARRIER_HOST:?set carrier SIP host}
       CARRIER_PORT: ${CARRIER_PORT:-5060}
+      CARRIER_QUALIFY_FREQUENCY: ${CARRIER_QUALIFY_FREQUENCY:-30}
       CARRIER_SOURCE_CIDRS: ${CARRIER_SOURCE_CIDRS:?set comma-separated carrier source addresses}
       CARRIER_SIP_USERNAME: ${CARRIER_SIP_USERNAME:?set carrier SIP username}
       PUBLIC_SIP_IP: ${PUBLIC_SIP_IP:?set VPS public IP}
       TEL_DID: ${TEL_DID:?set carrier-issued TEL DID in digits}
       FAX_DID: ${FAX_DID:?set carrier-issued FAX DID in digits}
       SMARTPHONE_EXTENSION: ${SMARTPHONE_EXTENSION:-2001}
+      SMARTPHONE_QUALIFY_FREQUENCY: ${SMARTPHONE_QUALIFY_FREQUENCY:-30}
+      ANSHIN_PHONE_TENANT_ID: ${ANSHIN_PHONE_TENANT_ID:-anshin-phase1}
+      PBX_EVENT_SPOOL_DIR: /var/spool/asterisk/anshin-events
       CARRIER_SIP_PASSWORD_FILE: /run/secrets/carrier_sip_password
       SMARTPHONE_SIP_PASSWORD_FILE: /run/secrets/smartphone_sip_password
     secrets:
@@ -71,6 +125,16 @@ services:
       - asterisk-state:/var/lib/asterisk
       - asterisk-logs:/var/log/asterisk
       - fax-spool:/var/spool/asterisk/fax
+      - pbx-event-spool:/var/spool/asterisk/anshin-events
+    healthcheck:
+      test: ["CMD", "asterisk", "-rx", "core show uptime"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    cap_drop: [ALL]
+    cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
     networks: [phone-internal]
 
 secrets:
@@ -88,7 +152,11 @@ volumes:
   asterisk-state:
   asterisk-logs:
   fax-spool:
+  pbx-event-spool:
 
 networks:
+  phone-data:
+    driver: bridge
+    internal: true
   phone-internal:
     driver: bridge

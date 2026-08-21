@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="ISO-8859-1" ?>
+<!DOCTYPE scenario SYSTEM "sipp.dtd">
+<scenario name="Anshin Phone mock smartphone sends outbound call">
+  <send retrans="500"><![CDATA[
+    INVITE sip:0300000000@[remote_ip]:[remote_port] SIP/2.0
+    Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+    From: "Mock smartphone" <sip:2001@[remote_ip]>;tag=[call_number]
+    To: <sip:0300000000@[remote_ip]>
+    Call-ID: [call_id]
+    CSeq: 1 INVITE
+    Contact: <sip:2001@[local_ip]:[local_port];transport=UDP>
+    Max-Forwards: 70
+    Content-Type: application/sdp
+    Content-Length: [len]
+
+    v=0
+    o=sipp 1 1 IN IP4 [local_ip]
+    s=Anshin Phone mock smartphone
+    c=IN IP4 [local_ip]
+    t=0 0
+    m=audio 6000 RTP/AVP 0
+    a=rtpmap:0 PCMU/8000
+    a=sendrecv
+  ]]></send>
+  <recv response="401" auth="true"/>
+  <send><![CDATA[
+    ACK sip:0300000000@[remote_ip]:[remote_port] SIP/2.0
+    Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+    From: "Mock smartphone" <sip:2001@[remote_ip]>;tag=[call_number]
+    To: <sip:0300000000@[remote_ip]>
+    Call-ID: [call_id]
+    CSeq: 1 ACK
+    Max-Forwards: 70
+    Content-Length: 0
+  ]]></send>
+  <send retrans="500"><![CDATA[
+    INVITE sip:0300000000@[remote_ip]:[remote_port] SIP/2.0
+    Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+    From: "Mock smartphone" <sip:2001@[remote_ip]>;tag=[call_number]
+    To: <sip:0300000000@[remote_ip]>
+    Call-ID: [call_id]
+    CSeq: 2 INVITE
+    Contact: <sip:2001@[local_ip]:[local_port];transport=UDP>
+    [authentication username=2001 password=test-smartphone-password]
+    Max-Forwards: 70
+    Content-Type: application/sdp
+    Content-Length: [len]
+
+    v=0
+    o=sipp 1 1 IN IP4 [local_ip]
+    s=Anshin Phone mock smartphone
+    c=IN IP4 [local_ip]
+    t=0 0
+    m=audio 6000 RTP/AVP 0
+    a=rtpmap:0 PCMU/8000
+    a=sendrecv
+  ]]></send>
+  <recv response="100" optional="true"/>
+  <recv response="180" optional="true"/>
+  <recv response="200" rtd="true"/>
+  <send><![CDATA[
+    ACK sip:carrier@[remote_ip]:[remote_port] SIP/2.0
+    Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+    [last_From:]
+    [last_To:]
+    [last_Call-ID:]
+    CSeq: 2 ACK
+    Contact: <sip:2001@[local_ip]:[local_port];transport=UDP>
+    Max-Forwards: 70
+    Content-Length: 0
+  ]]></send>
+  <pause milliseconds="500"/>
+  <send retrans="500"><![CDATA[
+    BYE sip:0300000000@[remote_ip]:[remote_port] SIP/2.0
+    Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+    [last_From:]
+    [last_To:]
+    [last_Call-ID:]
+    CSeq: 3 BYE
+    Contact: <sip:2001@[local_ip]:[local_port];transport=UDP>
+    Max-Forwards: 70
+    Content-Length: 0
+  ]]></send>
+  <recv response="200" crlf="true"/>
+  <ResponseTimeRepartition value="10,20,30,40,50,100,150,500,1000"/>
+  <CallLengthRepartition value="10,50,100,500,1000,5000"/>
+</scenario>

@@ -11,7 +11,9 @@ flowchart LR
   pstn["固定電話・携帯電話"] --> carrier["上位キャリア / SIPトランク"]
   carrier --> pbx["Asterisk 22 LTS"]
   pbx --> mobile["スマートフォンSIPクライアント"]
-  pbx --> backend["アンシンフォンBackend / 番号・CDR台帳"]
+  pbx --> spool["マスク済みevent耐障害スプール"]
+  spool --> forwarder["PBX event forwarder"]
+  forwarder --> backend["アンシンフォンBackend / 番号・CDR台帳"]
   carrier --> fax["FAX番号"]
   fax --> pbx
   pbx --> faxstore["FAX受信保管（Phase 1検証）"]
@@ -21,10 +23,12 @@ flowchart LR
 
 ## 構成
 
-- `compose.phase1.yaml`: Asterisk、Backend、PostgreSQLのPhase 1構成
+- `compose.phase1.yaml`: Asterisk、Backend、PostgreSQL及びPBX event forwarderのPhase 1構成
+- `compose.phase1.mock.yaml`: 実番号・実認証情報を使わない隔離SIP E2E構成
 - `deploy/asterisk`: Asterisk 22 LTSのビルド、実番号用PJSIP設定、着信・発信ダイヤルプラン
-- `scripts/verify_phase1.sh`: secretを読み込まずに構成と必須ファイルを検査
-- `docs/phase1_real_number_runbook.md`: キャリア情報の受領から実通話試験までの手順
+- `scripts/verify_phase1.sh`: secretを読み込まずに構成、REGISTER認証・固定IP認証、event連携及び高リスク宛先の遮断を検査
+- `scripts/phase1_status.sh`: secret値やevent本文を表示せず、service、SIP、Backend及びspool状態を点検
+- `docs/runbooks/telephony-platform/phase1_real_number_runbook.md`: キャリア情報の受領から実通話試験までの手順
 
 Backendは別リポジトリです。ローカルとVPSのどちらも、次の配置を前提とします。
 
@@ -55,4 +59,12 @@ secret以外の接続値も、起動シェルの環境変数又は運用中のse
 ./scripts/verify_phase1.sh
 ```
 
-実番号試験は[Phase 1実番号接続手順](docs/phase1_real_number_runbook.md)に従います。キャリアのDID、SIP接続先、認証方式、接続元IP、コーデック、発信者番号通知、FAX方式が未確定の状態では、外線試験を完了扱いにしません。Phase 1のスマートフォンは、固定送信元IPを許可した試験用Wi-Fi又はWireGuard等のVPN経路から接続し、SIP/RTPを全世界へ無制限公開しません。
+隔離環境で仮想キャリア、スマートフォンREGISTER、着信、発信、CDR及びFAX eventのBackend登録まで確認する場合は次を実行する。
+
+```bash
+RUN_PHASE1_SIP_E2E=1 ./scripts/verify_phase1.sh
+```
+
+この検査は、文書用IPアドレス、架空DID及び一時的なテスト値だけを使用する。実電話番号、キャリア認証情報、`.env`又は外部secretは読み込まない。REGISTER認証と固定IP認証の両方でAsterisk設定が完全に生成されること、TEL/FAXが別経路になること、110・118・119、国際電話、0570及び0990がPhase 1では遮断されることを確認する。
+
+実番号試験は[Phase 1実番号接続手順](docs/runbooks/telephony-platform/phase1_real_number_runbook.md)に従います。キャリアのDID、SIP接続先、認証方式、接続元IP、コーデック、発信者番号通知、FAX方式が未確定の状態では、外線試験を完了扱いにしません。Phase 1のスマートフォンは、固定送信元IPを許可した試験用Wi-Fi又はWireGuard等のVPN経路から接続し、SIP/RTPを全世界へ無制限公開しません。

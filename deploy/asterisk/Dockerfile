@@ -32,15 +32,21 @@ RUN apt-get update \
 COPY config/asterisk.conf /etc/asterisk/asterisk.conf
 COPY config/modules.conf /etc/asterisk/modules.conf
 COPY config/rtp.conf /etc/asterisk/rtp.conf
+COPY config/logger.conf /etc/asterisk/logger.conf
 COPY config/pjsip.conf.template /opt/anshin-phone/templates/pjsip.conf.template
 COPY config/extensions.conf.template /opt/anshin-phone/templates/extensions.conf.template
 COPY scripts/render_config.py /opt/anshin-phone/render_config.py
+COPY scripts/pbx_event_spool.py /var/lib/asterisk/agi-bin/pbx_event_spool.py
 COPY scripts/entrypoint.sh /usr/local/bin/anshin-phone-asterisk-entrypoint
 
 RUN chmod 0755 /usr/local/bin/anshin-phone-asterisk-entrypoint \
-    && mkdir -p /var/spool/asterisk/fax /var/log/asterisk /var/lib/asterisk
+      /var/lib/asterisk/agi-bin/pbx_event_spool.py \
+    && mkdir -p /var/spool/asterisk/fax /var/spool/asterisk/anshin-events \
+      /var/log/asterisk /var/lib/asterisk \
+    && groupadd --gid 10001 asterisk \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin asterisk
 
 EXPOSE 5060/udp 10000-10100/udp
 
 ENTRYPOINT ["/usr/local/bin/anshin-phone-asterisk-entrypoint"]
-CMD ["asterisk", "-f", "-U", "root", "-G", "root", "-vvv"]
+CMD ["asterisk", "-f", "-U", "asterisk", "-G", "asterisk", "-vvv"]

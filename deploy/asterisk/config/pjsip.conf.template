@@ -21,7 +21,7 @@ password=__CARRIER_SIP_PASSWORD__
 [carrier-aor]
 type=aor
 contact=sip:__CARRIER_HOST__:__CARRIER_PORT__
-qualify_frequency=30
+qualify_frequency=__CARRIER_QUALIFY_FREQUENCY__
 
 [carrier-endpoint]
 type=endpoint
@@ -52,11 +52,11 @@ auth_type=userpass
 username=__SMARTPHONE_EXTENSION__
 password=__SMARTPHONE_SIP_PASSWORD__
 
-[__SMARTPHONE_EXTENSION__-aor]
+[__SMARTPHONE_EXTENSION__]
 type=aor
 max_contacts=1
 remove_existing=yes
-qualify_frequency=30
+qualify_frequency=__SMARTPHONE_QUALIFY_FREQUENCY__
 
 [__SMARTPHONE_EXTENSION__]
 type=endpoint
@@ -66,7 +66,7 @@ disallow=all
 allow=ulaw
 allow=alaw
 auth=__SMARTPHONE_EXTENSION__-auth
-aors=__SMARTPHONE_EXTENSION__-aor
+aors=__SMARTPHONE_EXTENSION__
 callerid=Anshin Phase1 <__TEL_DID__>
 direct_media=no
 rtp_symmetric=yes
