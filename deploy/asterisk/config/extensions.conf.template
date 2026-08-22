@@ -10,7 +10,7 @@ SMARTPHONE_EXTENSION=__SMARTPHONE_EXTENSION__
 TENANT_ID=__TENANT_ID__
 
 [from-carrier]
-exten => __TEL_DID__,1,NoOp(Anshin Phone inbound TEL ${CALLERID(all)})
+exten => __TEL_DID__,1,NoOp(Anshin Phone inbound TEL)
  same => n,Set(PHASE1_DIRECTION=inbound)
  same => n,Set(PHASE1_DID=${TEL_DID})
  same => n,Set(PHASE1_REMOTE_MASKED=${CALLERID(num):0:3}****${CALLERID(num):-4})
@@ -19,7 +19,7 @@ exten => __TEL_DID__,1,NoOp(Anshin Phone inbound TEL ${CALLERID(all)})
  same => n,Dial(PJSIP/${SMARTPHONE_EXTENSION},30)
  same => n,Hangup()
 
-exten => __FAX_DID__,1,NoOp(Anshin Phone inbound FAX ${CALLERID(all)})
+exten => __FAX_DID__,1,NoOp(Anshin Phone inbound FAX)
  same => n,Set(FAX_FILE=/var/spool/asterisk/fax/${STRFTIME(${EPOCH},,%Y%m%d-%H%M%S)}-${UNIQUEID}.tif)
  same => n,Answer()
  same => n,Wait(2)
@@ -30,7 +30,7 @@ exten => __FAX_DID__,1,NoOp(Anshin Phone inbound FAX ${CALLERID(all)})
  same => n,AGI(pbx_event_spool.py,fax,${TENANT_ID},${FAX_DID},${UNIQUEID},inbound,${PHASE1_REMOTE_MASKED},${PHASE1_FAX_STATUS},${PHASE1_OCCURRED_AT},${FAX_FILE})
  same => n,Hangup()
 
-exten => _X.,1,NoOp(Reject unassigned inbound DID ${EXTEN})
+exten => _X.,1,NoOp(Reject unassigned inbound DID)
  same => n,Hangup(1)
 
 [from-smartphone]
@@ -48,11 +48,11 @@ exten => _0[1-9]XXXXXXXX,1,Gosub(outbound-carrier,s,1(${EXTEN}))
  same => n,Hangup()
 exten => _0[1-9]XXXXXXXXX,1,Gosub(outbound-carrier,s,1(${EXTEN}))
  same => n,Hangup()
-exten => _X.,1,NoOp(Reject unsupported outbound destination ${EXTEN})
+exten => _X.,1,NoOp(Reject unsupported outbound destination)
  same => n,Hangup(21)
 
 [outbound-carrier]
-exten => s,1,NoOp(Anshin Phone outbound TEL ${ARG1})
+exten => s,1,NoOp(Anshin Phone outbound TEL)
  same => n,Set(PHASE1_DIRECTION=outbound)
  same => n,Set(PHASE1_DID=${TEL_DID})
  same => n,Set(PHASE1_REMOTE_MASKED=${ARG1:0:3}****${ARG1:-4})

@@ -9,8 +9,12 @@ Phase 1の最初の合格点は、上位キャリアから払い出された実�
 ```mermaid
 flowchart LR
   pstn["固定電話・携帯電話"] --> carrier["上位キャリア / SIPトランク"]
-  carrier --> pbx["Asterisk 22 LTS"]
-  pbx --> mobile["スマートフォンSIPクライアント"]
+  carrier -->|"SIP"| sbc["Kamailio 5.6.3 SBC\n外部SIP 5060/UDP"]
+  mobile["スマートフォンSIPクライアント"] -->|"SIP"| sbc
+  carrier -. "RTP" .-> media["RTPengine 10.5.3.5\n外部RTP 20000-20100/UDP"]
+  mobile <-. "RTP" .-> media
+  sbc -->|"内部SIP"| pbx["Asterisk 22.10.1\n非公開SIP・内部RTP 10000-10100/UDP"]
+  media <-->|"内部RTP"| pbx
   pbx --> spool["マスク済みevent耐障害スプール"]
   spool --> forwarder["PBX event forwarder"]
   forwarder --> backend["アンシンフォンBackend / 番号・CDR台帳"]
@@ -19,11 +23,11 @@ flowchart LR
   pbx --> faxstore["FAX受信保管（Phase 1検証）"]
 ```
 
-このリポジトリの構成は、実キャリア接続を一件通すための最小構成です。商用提供前にはSBC、RTPメディアリレー、冗長化、モバイルPush着信、監視及び課金を追加します。Ubuntu 24.04のVPSへFreePBX 17を直接導入せず、Asterisk 22 LTSをDebian 12コンテナで固定します。
+このリポジトリのPhase 1構成にはKamailio SBC、RTPengine及び非公開Asteriskが含まれ、隔離Docker環境で模擬キャリアとの接続を検証します。商用提供前に追加する対象は、SIP TLS/SRTP、レート制限・不正発信対策、冗長化、モバイルPush着信、監視及び課金です。Ubuntu 24.04のVPSへFreePBX 17を直接導入せず、Asterisk 22.10.1をDebian 12コンテナで固定します。
 
 ## 構成
 
-- `compose.phase1.yaml`: Asterisk、Backend、PostgreSQL及びPBX event forwarderのPhase 1構成
+- `compose.phase1.yaml`: Kamailio、RTPengine、Asterisk、Backend、PostgreSQL及びPBX event forwarderのPhase 1構成
 - `compose.phase1.mock.yaml`: 実番号・実認証情報を使わない隔離SIP E2E構成
 - `deploy/asterisk`: Asterisk 22 LTSのビルド、実番号用PJSIP設定、着信・発信ダイヤルプラン
 - `scripts/verify_phase1.sh`: secretを読み込まずに構成、REGISTER認証・固定IP認証、event連携及び高リスク宛先の遮断を検査

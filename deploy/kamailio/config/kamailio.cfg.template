@@ -31,7 +31,7 @@ modparam("rtpengine", "rtpengine_sock", "__RTPENGINE_SOCKET__")
 modparam("ctl", "binrpc", "unix:/tmp/kamailio_ctl")
 
 request_route {
-    xlog("L_INFO", "SIP method=$rm source=$si:$sp ruri=$ru route=$hdr(Route)\n");
+    xlog("L_INFO", "SIP method=$rm source=$si:$sp\n");
     remove_hf("X-Anshin-Source");
     if (!mf_process_maxfwd_header("16")) {
         sl_send_reply("483", "Too Many Hops");
@@ -137,12 +137,12 @@ route[MEDIA] {
     }
     if (src_ip __ASTERISK_SOURCE_CONDITION__) {
         if (!rtpengine_manage("direction=internal direction=external replace-origin replace-session-connection ICE=remove")) {
-            xlog("L_ERR", "RTPengine failed for PBX-originated request call-id=$ci\n");
+            xlog("L_ERR", "RTPengine failed for PBX-originated request\n");
             return;
         }
     } else {
         if (!rtpengine_manage("direction=external direction=internal replace-origin replace-session-connection ICE=remove")) {
-            xlog("L_ERR", "RTPengine failed for edge-originated request call-id=$ci\n");
+            xlog("L_ERR", "RTPengine failed for edge-originated request\n");
             return;
         }
     }

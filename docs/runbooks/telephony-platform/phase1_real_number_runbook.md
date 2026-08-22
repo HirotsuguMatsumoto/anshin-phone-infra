@@ -24,7 +24,7 @@ test_paths:
   - scripts/test_phase1_render_config.py
   - scripts/test_pbx_event_pipeline.py
   - scripts/test_phase1_sip_e2e.py
-last_reviewed: "2026-08-21"
+last_reviewed: "2026-08-22"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -88,7 +88,7 @@ RUN_PHASE1_SIP_E2E=1 ./scripts/verify_phase1.sh
 2. Git管理外かつアクセス制限された専用ディレクトリへ4つのsecretを配置する。`.env`は作らない。
 3. キャリアから受領した非secret接続値を、運用中のsecret manager又は起動プロセスの環境変数から渡す。
 4. `docker compose -f compose.phase1.yaml config` で展開結果を確認する。出力を保存する場合はsecret値を含めない。
-5. Asterisk、PostgreSQL、Backend及びPBX event forwarderを起動し、Asterisk CLIでendpoint、registration、contactを確認する。
+5. Kamailio、RTPengine、Asterisk、PostgreSQL、Backend及びPBX event forwarderを起動し、Kamailio/RTPengineのhealthcheckとAsterisk CLIのendpoint、registration、contactを確認する。
 6. VPSのSIP/RTP受信はキャリア接続元と試験端末経路だけに制限する。スマートフォンは、固定送信元IPを許可した試験用Wi-Fi又はWireGuard等のVPN経路から接続し、SIP/RTPを全世界公開したまま試験しない。
 
 Phase 1の発信ダイヤルプランは、国内の10桁・11桁番号だけを許可し、国際電話、110、118、119、0570及び0990を停止する。緊急通報は上位キャリア、登録住所及び位置通知の要件が確定した後に専用設計として開放する。
@@ -102,7 +102,7 @@ Phase 1の発信ダイヤルプランは、国内の10桁・11桁番号だけを
 - 通話相手番号はAsterisk側でマスクしてから耐障害スプールへ書き、Backendへはマスク済み番号だけを送る。
 - 送信済みeventは`sent`、入力不正は`dead-letter`へ移す。5分を超える未送信又はdead-letter発生時はforwarderをunhealthyとして扱う。
 - 日常点検は`./scripts/phase1_status.sh`でservice、Asterisk、SIP endpoint、Backend及びevent spool件数を確認する。event本文やsecret値は表示しない。
-- 実番号、SIP/RTPのhost firewall及びVPN経路が確定するまで、VPSで5060/UDP及び10000-10100/UDPを全世界へ公開しない。
+- 実番号、SIP/RTPのhost firewall及びVPN経路が確定するまで、VPSでKamailioの`5060/UDP`及びRTPengineの`20000-20100/UDP`を公開しない。AsteriskのSIP及び内部RTP `10000-10100/UDP`はホストへ公開しない。
 
 ## 6. 実番号切替・切戻し台帳
 
@@ -147,9 +147,9 @@ Clocoから既存番号の付替え可否と手順を受領した後、切替作
 
 ## 9. VPS配置前監査
 
-2026-08-21の読み取り専用監査では、対象VPSはUbuntu 24.04、Disk空き約86GB、available memory約1.1GiB、Swapなしで、既存のアンシンマーケティング基盤が稼働していた。SIP/RTPは未開放で、firewallの有効状態を確認できず、infra/Backendの両Git working treeには既存差分があった。
+2026-08-22の読み取り専用再監査では、Disk空き約86GB、available memory約1.1GiB、Swapなし、既存コンテナ7件、SIP/RTP待受なしを確認した。UFWサービスはactiveだったが、実ルールは非対話sudoで取得できず、infra/Backendの両Git working treeには既存差分が残っていた。
 
-したがって、既存差分の統合、firewall制御点、メモリ対策、secret保管、バックアップ及び切戻しを確定するまでVPSへ上書き配置しない。詳細は[VPS Phase 1配置前監査](../../evidence/telephony-platform/vps_phase1_readiness_2026-08-21.md)を参照する。
+したがって、既存差分の統合、firewall実ルールと制御点、メモリ対策、secret保管、バックアップ及び切戻しを確定するまでVPSへ上書き配置しない。詳細は[VPS Phase 1配置前再監査](../../evidence/telephony-platform/vps_phase1_readiness_2026-08-22.md)を参照する。
 
 ## 10. Phase 1構成と商用化前の差分
 

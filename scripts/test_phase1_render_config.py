@@ -107,6 +107,14 @@ class Phase1RenderConfigTest(unittest.TestCase):
         self.assertIn("exten => _0570X.,1,NoOp(Block premium-rate call", extensions)
         self.assertIn("exten => _0990X.,1,NoOp(Block premium-rate call", extensions)
 
+    def test_dialplan_does_not_log_raw_phone_numbers(self) -> None:
+        _, extensions, _, _ = self.render("registration")
+
+        self.assertNotIn("${CALLERID(all)}", extensions)
+        self.assertNotIn("NoOp(Reject unassigned inbound DID ${EXTEN})", extensions)
+        self.assertNotIn("NoOp(Reject unsupported outbound destination ${EXTEN})", extensions)
+        self.assertNotIn("NoOp(Anshin Phone outbound TEL ${ARG1})", extensions)
+
     def test_invalid_carrier_source_network_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
             self.render("ip", {"CARRIER_SOURCE_CIDRS": "not-a-network"})

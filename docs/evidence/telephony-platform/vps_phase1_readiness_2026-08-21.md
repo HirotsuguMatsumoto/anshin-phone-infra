@@ -19,7 +19,7 @@ code_paths:
   - scripts/audit_phase1_host.sh
 contract_paths: []
 test_paths: []
-last_reviewed: "2026-08-21"
+last_reviewed: "2026-08-22"
 review_interval_days: 30
 sensitivity: restricted
 ---
@@ -44,7 +44,7 @@ sensitivity: restricted
 | Docker Compose | 2.40.3 | 対応可能 |
 | 既存サービス | アンシンマーケティングのWeb、Backend、worker、Redis、PostgreSQL、MinIOが稼働 | 競合・資源影響を事前確認 |
 | 公開待受 | 22/TCP、80/TCP、443/TCP | SIP/RTPは未開放 |
-| SIP/RTP | 5060/UDP、10000-10100/UDPは未開放 | キャリア情報確定後だけ最小範囲を許可 |
+| SIP/RTP | 外部SIP `5060/UDP`及び外部RTP `20000-20100/UDP`は未開放。Asterisk内部RTP `10000-10100/UDP`はホスト非公開 | キャリア情報確定後だけKamailio/RTPengineへの最小範囲を許可 |
 | Firewall | 読み取り監査で有効状態を確認できず | 配置停止条件 |
 | infra Git | `main`だが既存の変更・未追跡ファイルあり | 上書き禁止、統合方針が必要 |
 | Backend Git | `main`だが既存の変更・未追跡ファイルあり | 上書き禁止、統合方針が必要 |

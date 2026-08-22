@@ -57,6 +57,13 @@ class KamailioRenderConfigTest(unittest.TestCase):
         self.assertIn("direction=external direction=internal", config)
         self.assertNotIn("__", config)
 
+    def test_sip_logs_do_not_include_destination_or_call_identifier(self) -> None:
+        config = self.render()
+
+        self.assertNotIn("ruri=$ru", config)
+        self.assertNotIn("$hdr(Route)", config)
+        self.assertNotIn("call-id=$ci", config)
+
     def test_rejects_invalid_source_network(self) -> None:
         with self.assertRaises(ValueError):
             self.render({"SMARTPHONE_SOURCE_CIDRS": "not-a-network"})
