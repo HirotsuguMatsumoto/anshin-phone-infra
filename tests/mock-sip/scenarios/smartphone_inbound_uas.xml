@@ -42,17 +42,6 @@
     a=rtpmap:0 PCMU/8000
     a=sendrecv
   ]]></send>
-  <recv request="ACK"/>
-  <recv request="BYE"/>
-  <send><![CDATA[
-    SIP/2.0 200 OK
-    [last_Via:]
-    [last_From:]
-    [last_To:]
-    [last_Call-ID:]
-    [last_CSeq:]
-    Content-Length: 0
-  ]]></send>
   <ResponseTimeRepartition value="10,20,30,40,50,100,150,500,1000"/>
   <CallLengthRepartition value="10,50,100,500,1000,5000"/>
 </scenario>

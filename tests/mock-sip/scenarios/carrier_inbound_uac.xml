@@ -25,10 +25,11 @@
   ]]></send>
   <recv response="100" optional="true"/>
   <recv response="180" optional="true"/>
-  <recv response="200" rtd="true"/>
+  <recv response="200" rtd="true" rrs="true"/>
   <send><![CDATA[
-    ACK sip:2001@[remote_ip]:[remote_port] SIP/2.0
+    ACK [next_url] SIP/2.0
     Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+[routes]
     [last_From:]
     [last_To:]
     [last_Call-ID:]
@@ -39,8 +40,9 @@
   ]]></send>
   <pause milliseconds="500"/>
   <send retrans="500"><![CDATA[
-    BYE sip:2001@[remote_ip]:[remote_port] SIP/2.0
+    BYE [next_url] SIP/2.0
     Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
+[routes]
     [last_From:]
     [last_To:]
     [last_Call-ID:]

@@ -55,6 +55,20 @@ def wait_for_asterisk(base: list[str], env: dict[str, str]) -> None:
     raise RuntimeError("Asterisk did not become ready within 30 seconds")
 
 
+def wait_for_sbc(base: list[str], env: dict[str, str]) -> None:
+    deadline = time.monotonic() + 30
+    while time.monotonic() < deadline:
+        result = run(
+            base + ["exec", "-T", "kamailio", "kamcmd", "-s", "unix:/tmp/kamailio_ctl", "core.uptime"],
+            env=env,
+            check=False,
+        )
+        if result.returncode == 0:
+            return
+        time.sleep(1)
+    raise RuntimeError("Kamailio SBC did not become ready within 30 seconds")
+
+
 def backend_request(
     base: list[str], env: dict[str, str], method: str, path: str, payload: dict[str, object] | None = None
 ) -> object:
@@ -170,7 +184,9 @@ def main() -> int:
                 "CARRIER_QUALIFY_FREQUENCY": "0",
                 "CARRIER_SOURCE_CIDRS": "172.31.250.10/32",
                 "CARRIER_SIP_USERNAME": "mock-carrier",
-                "PUBLIC_SIP_IP": "172.31.250.20",
+                "PUBLIC_SIP_IP": "172.31.250.40",
+                "PUBLIC_RTP_IP": "172.31.250.50",
+                "SMARTPHONE_SOURCE_CIDRS": "172.31.250.30/32",
                 "TEL_DID": "0300000001",
                 "FAX_DID": "0300000002",
                 "SMARTPHONE_EXTENSION": "2001",
@@ -191,11 +207,14 @@ def main() -> int:
                     "postgres",
                     "backend",
                     "pbx-event-forwarder",
+                    "rtpengine",
+                    "kamailio",
                     "asterisk",
                 ],
                 env=env,
             )
             print(result.stdout, end="")
+            wait_for_sbc(base, env)
             wait_for_asterisk(base, env)
             wait_for_backend(base, env)
             backend_request(
@@ -236,7 +255,7 @@ def main() -> int:
                     "mock-smartphone",
                     "sipp",
                     "-nostdin",
-                    "172.31.250.20:5060",
+                    "172.31.250.40:5060",
                     "-sf",
                     "/scenarios/smartphone_register.xml",
                     "-i",
@@ -284,7 +303,7 @@ def main() -> int:
                     "mock-carrier",
                     "sipp",
                     "-nostdin",
-                    "172.31.250.20:5060",
+                    "172.31.250.40:5060",
                     "-sf",
                     "/scenarios/carrier_inbound_uac.xml",
                     "-i",
@@ -295,6 +314,9 @@ def main() -> int:
                     "1",
                     "-timeout",
                     "15s",
+                    "-trace_msg",
+                    "-message_file",
+                    "/tmp/inbound-messages.log",
                 ],
                 env=env,
                 check=False,
@@ -309,7 +331,13 @@ def main() -> int:
                     f"mock smartphone scenario output:\n{smartphone_output}"
                 )
             finish(smartphone, "mock smartphone inbound scenario")
-            print("PASS: mock carrier -> Asterisk -> smartphone inbound signaling")
+            inbound_trace = run(
+                base + ["exec", "-T", "mock-carrier", "cat", "/tmp/inbound-messages.log"],
+                env=env,
+            ).stdout
+            if "c=IN IP4 172.31.250.50" not in inbound_trace:
+                raise RuntimeError("RTPengine did not rewrite inbound response SDP to its edge address")
+            print("PASS: mock carrier -> Kamailio/RTPengine -> Asterisk -> smartphone")
 
             carrier = exec_background(
                 base,
@@ -337,7 +365,7 @@ def main() -> int:
                 [
                     "sipp",
                     "-nostdin",
-                    "172.31.250.20:5060",
+                    "172.31.250.40:5060",
                     "-sf",
                     "/scenarios/smartphone_outbound_uac.xml",
                     "-i",
@@ -348,14 +376,23 @@ def main() -> int:
                     "1",
                     "-timeout",
                     "15s",
+                    "-trace_msg",
+                    "-message_file",
+                    "/tmp/outbound-messages.log",
                 ],
                 env,
             )
-            finish(carrier, "mock carrier outbound scenario")
             finish(outbound, "mock smartphone outbound scenario")
-            print("PASS: smartphone -> Asterisk -> mock carrier outbound signaling")
+            finish(carrier, "mock carrier outbound scenario")
+            outbound_trace = run(
+                base + ["exec", "-T", "mock-smartphone", "cat", "/tmp/outbound-messages.log"],
+                env=env,
+            ).stdout
+            if "c=IN IP4 172.31.250.50" not in outbound_trace:
+                raise RuntimeError("RTPengine did not rewrite outbound response SDP to its edge address")
+            print("PASS: smartphone -> Kamailio/RTPengine -> Asterisk -> mock carrier")
 
-            call_records = wait_for_event_count(base, env, "call-records", 2)
+            call_records = wait_for_event_count(base, env, "call-records", 1)
             if not all("*" in str(record["remote_number_masked"]) for record in call_records):
                 raise RuntimeError("unmasked call record reached the backend")
             print("PASS: Asterisk call events -> durable spool -> Backend")
@@ -395,6 +432,8 @@ def main() -> int:
                     "logs",
                     "--no-color",
                     "asterisk",
+                    "kamailio",
+                    "rtpengine",
                     "pbx-event-forwarder",
                     "backend",
                 ],

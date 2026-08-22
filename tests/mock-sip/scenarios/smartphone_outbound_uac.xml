@@ -22,6 +22,7 @@
     a=rtpmap:0 PCMU/8000
     a=sendrecv
   ]]></send>
+  <recv response="100" optional="true"/>
   <recv response="401" auth="true"/>
   <send><![CDATA[
     ACK sip:0300000000@[remote_ip]:[remote_port] SIP/2.0

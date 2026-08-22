@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from ipaddress import ip_address, ip_network
+from ipaddress import ip_network
 from pathlib import Path
 
 
@@ -71,7 +71,7 @@ def main() -> None:
     for cidr in source_cidrs:
         ip_network(cidr, strict=False)
     identify = ["[carrier-identify]", "type=identify", "endpoint=carrier-endpoint"]
-    identify.extend(f"match={cidr}" for cidr in source_cidrs)
+    identify.append("match_header=X-Anshin-Source: carrier")
 
     username = required("CARRIER_SIP_USERNAME")
     if not re.fullmatch(r"[A-Za-z0-9_.+@-]+", username):
@@ -84,8 +84,12 @@ def main() -> None:
     smartphone_qualify_frequency = required("SMARTPHONE_QUALIFY_FREQUENCY")
     if not smartphone_qualify_frequency.isdigit() or not 0 <= int(smartphone_qualify_frequency) <= 300:
         raise RuntimeError("SMARTPHONE_QUALIFY_FREQUENCY must be between 0 and 300")
-    public_ip = required("PUBLIC_SIP_IP")
-    ip_address(public_ip)
+    sbc_host = required("SBC_HOST")
+    if not re.fullmatch(r"[A-Za-z0-9.-]+", sbc_host):
+        raise RuntimeError("SBC_HOST must be an IPv4 address or DNS hostname")
+    sbc_port = required("SBC_PORT")
+    if not sbc_port.isdigit() or not 1 <= int(sbc_port) <= 65535:
+        raise RuntimeError("SBC_PORT must be between 1 and 65535")
     tenant_id = required("ANSHIN_PHONE_TENANT_ID")
     if not re.fullmatch(r"[A-Za-z0-9._:-]{1,64}", tenant_id):
         raise RuntimeError("ANSHIN_PHONE_TENANT_ID contains unsupported characters")
@@ -100,6 +104,7 @@ def main() -> None:
                 "outbound_auth=carrier-auth",
                 f"server_uri=sip:{carrier_host}:{carrier_port}",
                 f"client_uri=sip:{username}@{carrier_host}",
+                f"outbound_proxy=sip:{sbc_host}:{sbc_port}\\;lr",
                 f"contact_user={tel_did}",
                 "retry_interval=30",
                 "forbidden_retry_interval=300",
@@ -113,7 +118,8 @@ def main() -> None:
         "CARRIER_QUALIFY_FREQUENCY": carrier_qualify_frequency,
         "CARRIER_SIP_USERNAME": username,
         "CARRIER_SIP_PASSWORD": secret("CARRIER_SIP_PASSWORD"),
-        "PUBLIC_SIP_IP": public_ip,
+        "SBC_HOST": sbc_host,
+        "SBC_PORT": sbc_port,
         "TEL_DID": tel_did,
         "FAX_DID": fax_did,
         "SMARTPHONE_EXTENSION": smartphone_extension,

@@ -2,18 +2,29 @@ services:
   backend:
     ports: !reset []
 
-  asterisk:
+  rtpengine:
     ports: !reset []
+    environment:
+      PUBLIC_RTP_IP: 172.31.250.50
+
+  kamailio:
+    ports: !reset []
+    environment:
+      SBC_ADVERTISED_IP: 172.31.250.40
+      CARRIER_SOURCE_CIDRS: 172.31.250.10/32
+      SMARTPHONE_SOURCE_CIDRS: 172.31.250.30/32
+
+  asterisk:
     networks:
-      phone-internal:
-        ipv4_address: 172.31.250.20
+      pbx-internal:
+        ipv4_address: 172.31.251.20
 
   mock-carrier:
     build:
       context: ./tests/mock-sip
     command: ["tail", "-f", "/dev/null"]
     networks:
-      phone-internal:
+      sip-edge:
         ipv4_address: 172.31.250.10
 
   mock-smartphone:
@@ -21,11 +32,5 @@ services:
       context: ./tests/mock-sip
     command: ["tail", "-f", "/dev/null"]
     networks:
-      phone-internal:
+      sip-edge:
         ipv4_address: 172.31.250.30
-
-networks:
-  phone-internal:
-    ipam:
-      config:
-        - subnet: 172.31.250.0/24

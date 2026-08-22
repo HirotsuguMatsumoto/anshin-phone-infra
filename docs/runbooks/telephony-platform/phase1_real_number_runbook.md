@@ -151,6 +151,8 @@ Clocoから既存番号の付替え可否と手順を受領した後、切替作
 
 したがって、既存差分の統合、firewall制御点、メモリ対策、secret保管、バックアップ及び切戻しを確定するまでVPSへ上書き配置しない。詳細は[VPS Phase 1配置前監査](../../evidence/telephony-platform/vps_phase1_readiness_2026-08-21.md)を参照する。
 
-## 10. Phase 1最小構成と商用化前の差分
+## 10. Phase 1構成と商用化前の差分
 
-この最小構成では、キャリアIPを限定したAsterisk直接接続で一件目の実番号を検証する。外部顧客へ提供する前に、Kamailio等のSBC、RTPengine等のメディアリレー、TLS/SRTP、モバイルPush、SIP不正利用防止、冗長化、監視、バックアップ及び災害時切替を必須追加する。最小構成の成功を、そのまま商用提供可能の判定に使わない。
+Phase 1の外部SIPはKamailio SBCだけで受け、RTPはRTPengineへ固定し、Asteriskを内部networkへ隔離する。隔離モックではスマホREGISTER、キャリア着信、スマホ発信、RTPengineのSDP書換えまで自動検査する。実キャリア接続情報を受領するまでは実疎通や実音声の合格とは扱わない。
+
+外部顧客へ提供する前に、TLS/SRTP、モバイルPush、fraud検知・rate limit、冗長化、監視、暗号化backup、災害時切替、端末provisioning lifecycle及び実負荷試験を必須追加する。Phase 1の成功を、そのまま商用提供可能の判定に使わない。

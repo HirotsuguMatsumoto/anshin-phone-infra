@@ -10,6 +10,7 @@
     CSeq: 1 REGISTER
     Contact: <sip:2001@[local_ip]:[local_port];transport=UDP>
     Max-Forwards: 70
+    Supported: path
     Expires: 300
     Content-Length: 0
   ]]></send>
@@ -24,6 +25,7 @@
     Contact: <sip:2001@[local_ip]:[local_port];transport=UDP>
     [authentication username=2001 password=test-smartphone-password]
     Max-Forwards: 70
+    Supported: path
     Expires: 300
     Content-Length: 0
   ]]></send>

@@ -91,6 +91,75 @@ services:
     logging: *default-logging
     networks: [phone-data]
 
+  rtpengine:
+    build:
+      context: ./deploy/rtpengine
+      args:
+        RTPENGINE_VERSION: "10.5.3.5-1+deb12u1"
+    restart: unless-stopped
+    environment:
+      RTPENGINE_INTERNAL_IP: 172.31.251.50
+      RTPENGINE_EXTERNAL_IP: 172.31.250.50
+      PUBLIC_RTP_IP: ${PUBLIC_RTP_IP:?set VPS public RTP IP}
+    ports:
+      - "${RTP_BIND_ADDRESS:-0.0.0.0}:20000-20100:20000-20100/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /run:mode=0755
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks:
+      sip-edge:
+        ipv4_address: 172.31.250.50
+      pbx-internal:
+        ipv4_address: 172.31.251.50
+
+  kamailio:
+    build:
+      context: ./deploy/kamailio
+      args:
+        KAMAILIO_VERSION: "5.6.3-2"
+    restart: unless-stopped
+    environment:
+      SBC_ADVERTISED_IP: ${PUBLIC_SIP_IP:?set VPS public SIP IP}
+      SBC_EDGE_IP: 172.31.250.40
+      SBC_INTERNAL_IP: 172.31.251.40
+      ASTERISK_HOST: asterisk
+      ASTERISK_PORT: "5060"
+      ASTERISK_SOURCE_CIDRS: 172.31.251.20/32
+      CARRIER_SOURCE_CIDRS: ${CARRIER_SOURCE_CIDRS:?set comma-separated carrier source addresses}
+      SMARTPHONE_SOURCE_CIDRS: ${SMARTPHONE_SOURCE_CIDRS:?set VPN or fixed smartphone source addresses}
+      RTPENGINE_SOCKET: udp:rtpengine:2223
+    depends_on:
+      rtpengine:
+        condition: service_healthy
+    ports:
+      - "${SIP_BIND_ADDRESS:-0.0.0.0}:5060:5060/udp"
+    healthcheck:
+      test: ["CMD", "kamcmd", "-s", "unix:/tmp/kamailio_ctl", "core.uptime"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    read_only: true
+    tmpfs:
+      - /tmp:mode=1777
+      - /run:mode=0755
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging: *default-logging
+    networks:
+      sip-edge:
+        ipv4_address: 172.31.250.40
+      pbx-internal:
+        ipv4_address: 172.31.251.40
+
   asterisk:
     build:
       context: ./deploy/asterisk
@@ -104,9 +173,10 @@ services:
       CARRIER_HOST: ${CARRIER_HOST:?set carrier SIP host}
       CARRIER_PORT: ${CARRIER_PORT:-5060}
       CARRIER_QUALIFY_FREQUENCY: ${CARRIER_QUALIFY_FREQUENCY:-30}
-      CARRIER_SOURCE_CIDRS: ${CARRIER_SOURCE_CIDRS:?set comma-separated carrier source addresses}
+      CARRIER_SOURCE_CIDRS: 172.31.251.40/32
       CARRIER_SIP_USERNAME: ${CARRIER_SIP_USERNAME:?set carrier SIP username}
-      PUBLIC_SIP_IP: ${PUBLIC_SIP_IP:?set VPS public IP}
+      SBC_HOST: kamailio
+      SBC_PORT: "5060"
       TEL_DID: ${TEL_DID:?set carrier-issued TEL DID in digits}
       FAX_DID: ${FAX_DID:?set carrier-issued FAX DID in digits}
       SMARTPHONE_EXTENSION: ${SMARTPHONE_EXTENSION:-2001}
@@ -118,9 +188,9 @@ services:
     secrets:
       - carrier_sip_password
       - smartphone_sip_password
-    ports:
-      - "${SIP_BIND_ADDRESS:-0.0.0.0}:5060:5060/udp"
-      - "${SIP_BIND_ADDRESS:-0.0.0.0}:10000-10100:10000-10100/udp"
+    depends_on:
+      kamailio:
+        condition: service_healthy
     volumes:
       - asterisk-state:/var/lib/asterisk
       - asterisk-logs:/var/log/asterisk
@@ -135,7 +205,9 @@ services:
     cap_add: [CHOWN, DAC_OVERRIDE, SETGID, SETUID]
     security_opt: [no-new-privileges:true]
     logging: *default-logging
-    networks: [phone-internal]
+    networks:
+      pbx-internal:
+        ipv4_address: 172.31.251.20
 
 secrets:
   postgres_password:
@@ -158,5 +230,14 @@ networks:
   phone-data:
     driver: bridge
     internal: true
-  phone-internal:
+  sip-edge:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.250.0/24
+  pbx-internal:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.31.251.0/24

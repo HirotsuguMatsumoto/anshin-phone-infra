@@ -1,0 +1,163 @@
+#!KAMAILIO
+
+debug=2
+log_stderror=yes
+fork=yes
+children=2
+rundir="/tmp"
+listen=udp:__SBC_EDGE_IP__:5060 advertise __SBC_ADVERTISED_IP__:5060
+listen=udp:__SBC_INTERNAL_IP__:5060 advertise __SBC_INTERNAL_IP__:5060
+alias=__SBC_ADVERTISED_IP__:5060
+alias=__SBC_INTERNAL_IP__:5060
+alias=kamailio:5060
+
+loadmodule "tm.so"
+loadmodule "sl.so"
+loadmodule "pv.so"
+loadmodule "rr.so"
+loadmodule "maxfwd.so"
+loadmodule "textops.so"
+loadmodule "siputils.so"
+loadmodule "xlog.so"
+loadmodule "path.so"
+loadmodule "nathelper.so"
+loadmodule "rtpengine.so"
+loadmodule "ctl.so"
+
+modparam("rr", "enable_full_lr", 1)
+modparam("rr", "append_fromtag", 1)
+modparam("path", "use_received", 1)
+modparam("rtpengine", "rtpengine_sock", "__RTPENGINE_SOCKET__")
+modparam("ctl", "binrpc", "unix:/tmp/kamailio_ctl")
+
+request_route {
+    xlog("L_INFO", "SIP method=$rm source=$si:$sp ruri=$ru route=$hdr(Route)\n");
+    remove_hf("X-Anshin-Source");
+    if (!mf_process_maxfwd_header("16")) {
+        sl_send_reply("483", "Too Many Hops");
+        exit;
+    }
+
+    if (is_method("OPTIONS") && uri == myself) {
+        sl_send_reply("200", "Keepalive");
+        exit;
+    }
+
+    if (is_method("CANCEL")) {
+        if (t_check_trans()) {
+            route(RELAY);
+        }
+        exit;
+    }
+
+    if (has_totag()) {
+        if (loose_route()) {
+            if (src_ip __ASTERISK_SOURCE_CONDITION__) {
+                $fs = "udp:__SBC_EDGE_IP__:5060";
+                handle_ruri_alias();
+            } else {
+                $fs = "udp:__SBC_INTERNAL_IP__:5060";
+            }
+            route(MEDIA);
+            route(RELAY);
+            exit;
+        }
+        if (src_ip __ASTERISK_SOURCE_CONDITION__) {
+            $fs = "udp:__SBC_EDGE_IP__:5060";
+            handle_ruri_alias();
+            route(MEDIA);
+            route(RELAY);
+            exit;
+        }
+        if (is_method("ACK") && t_check_trans()) {
+            route(RELAY);
+        }
+        exit;
+    }
+
+    if (!(src_ip __TRUSTED_SOURCE_CONDITION__)) {
+        xlog("L_WARN", "Rejected untrusted SIP source $si:$sp method=$rm\n");
+        sl_send_reply("403", "Source Not Allowed");
+        exit;
+    }
+
+    if (src_ip __ASTERISK_SOURCE_CONDITION__) {
+        route(FROM_PBX);
+        exit;
+    }
+
+    if (src_ip __CARRIER_SOURCE_CONDITION__) {
+        if (!is_method("INVITE|ACK|BYE|CANCEL|OPTIONS|INFO|UPDATE|PRACK")) {
+            sl_send_reply("405", "Carrier Method Not Allowed");
+            exit;
+        }
+        append_hf("X-Anshin-Source: carrier\r\n");
+        route(TO_PBX);
+        exit;
+    }
+
+    if (src_ip __SMARTPHONE_SOURCE_CONDITION__) {
+        route(TO_PBX);
+        exit;
+    }
+
+    sl_send_reply("403", "Route Not Allowed");
+}
+
+route[TO_PBX] {
+    $fs = "udp:__SBC_INTERNAL_IP__:5060";
+    $du = "sip:__ASTERISK_HOST__:__ASTERISK_PORT__";
+    if (is_method("INVITE")) {
+        record_route();
+    }
+    route(MEDIA);
+    route(RELAY);
+    exit;
+}
+
+route[FROM_PBX] {
+    $fs = "udp:__SBC_EDGE_IP__:5060";
+    if (loose_route()) {
+        handle_ruri_alias();
+    }
+    if (is_method("INVITE")) {
+        record_route();
+    }
+    route(MEDIA);
+    route(RELAY);
+    exit;
+}
+
+route[MEDIA] {
+    if (is_method("BYE|CANCEL")) {
+        rtpengine_delete();
+    }
+    if (!has_body("application/sdp")) {
+        return;
+    }
+    if (src_ip __ASTERISK_SOURCE_CONDITION__) {
+        if (!rtpengine_manage("direction=internal direction=external replace-origin replace-session-connection ICE=remove")) {
+            xlog("L_ERR", "RTPengine failed for PBX-originated request call-id=$ci\n");
+            return;
+        }
+    } else {
+        if (!rtpengine_manage("direction=external direction=internal replace-origin replace-session-connection ICE=remove")) {
+            xlog("L_ERR", "RTPengine failed for edge-originated request call-id=$ci\n");
+            return;
+        }
+    }
+}
+
+route[RELAY] {
+    if (is_method("INVITE|SUBSCRIBE|UPDATE")) {
+        t_on_reply("MANAGE_REPLY");
+    }
+    if (!t_relay()) {
+        sl_reply_error();
+    }
+    exit;
+}
+
+onreply_route[MANAGE_REPLY] {
+    route(MEDIA);
+}

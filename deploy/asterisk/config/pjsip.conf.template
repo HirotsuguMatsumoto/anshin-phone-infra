@@ -1,13 +1,12 @@
 [global]
 type=global
 user_agent=AnshinPhone-Phase1
+endpoint_identifier_order=auth_username,username,ip
 
 [transport-udp]
 type=transport
 protocol=udp
 bind=0.0.0.0:5060
-external_media_address=__PUBLIC_SIP_IP__
-external_signaling_address=__PUBLIC_SIP_IP__
 local_net=10.0.0.0/8
 local_net=172.16.0.0/12
 local_net=192.168.0.0/16
@@ -21,6 +20,7 @@ password=__CARRIER_SIP_PASSWORD__
 [carrier-aor]
 type=aor
 contact=sip:__CARRIER_HOST__:__CARRIER_PORT__
+outbound_proxy=sip:__SBC_HOST__:__SBC_PORT__\;lr
 qualify_frequency=__CARRIER_QUALIFY_FREQUENCY__
 
 [carrier-endpoint]
@@ -31,6 +31,7 @@ disallow=all
 allow=ulaw
 allow=alaw
 outbound_auth=carrier-auth
+outbound_proxy=sip:__SBC_HOST__:__SBC_PORT__\;lr
 aors=carrier-aor
 from_user=__TEL_DID__
 send_pai=yes
@@ -61,6 +62,7 @@ qualify_frequency=__SMARTPHONE_QUALIFY_FREQUENCY__
 [__SMARTPHONE_EXTENSION__]
 type=endpoint
 transport=transport-udp
+outbound_proxy=sip:__SBC_HOST__:__SBC_PORT__\;lr
 context=from-smartphone
 disallow=all
 allow=ulaw
@@ -71,4 +73,4 @@ callerid=Anshin Phase1 <__TEL_DID__>
 direct_media=no
 rtp_symmetric=yes
 force_rport=yes
-rewrite_contact=yes
+rewrite_contact=no

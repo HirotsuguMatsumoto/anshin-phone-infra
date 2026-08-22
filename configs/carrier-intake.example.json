@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "carrier": "example-carrier",
+  "service": "example-sip-trunk",
+  "sip": {
+    "host": "sip.example.invalid",
+    "port": 5060,
+    "transport": "UDP",
+    "auth_mode": "registration",
+    "source_cidrs": ["192.0.2.0/28"],
+    "rtp_cidrs": ["198.51.100.0/28"],
+    "rtp_ports": "10000-20000",
+    "codecs": ["ulaw", "alaw"],
+    "dtmf": "RFC4733",
+    "did_format": "national",
+    "caller_id_header": "P-Asserted-Identity"
+  },
+  "fax": {"mode": "T38", "same_trunk": true},
+  "capacity": {"channels": 1, "cps": 1},
+  "emergency_calling": "not-confirmed",
+  "secret_reference": "external-secret-manager:item-id-only",
+  "received_at": "2026-08-21",
+  "approved_by": null
+}

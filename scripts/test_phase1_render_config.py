@@ -44,7 +44,8 @@ class Phase1RenderConfigTest(unittest.TestCase):
                 "CARRIER_SOURCE_CIDRS": "198.51.100.0/24,203.0.113.8/32",
                 "CARRIER_SIP_USERNAME": "phase1-test",
                 "CARRIER_SIP_PASSWORD_FILE": str(carrier_password),
-                "PUBLIC_SIP_IP": "192.0.2.10",
+                "SBC_HOST": "sbc.example.test",
+                "SBC_PORT": "5060",
                 "TEL_DID": "0300000000",
                 "FAX_DID": "0300000001",
                 "SMARTPHONE_EXTENSION": "2001",
@@ -74,10 +75,13 @@ class Phase1RenderConfigTest(unittest.TestCase):
 
         self.assertIn("[carrier-registration]", pjsip)
         self.assertIn("client_uri=sip:phase1-test@198.51.100.10", pjsip)
-        self.assertIn("match=198.51.100.0/24", pjsip)
-        self.assertIn("match=203.0.113.8/32", pjsip)
+        self.assertIn("outbound_proxy=sip:sbc.example.test:5060\\;lr", pjsip)
+        self.assertIn("match_header=X-Anshin-Source: carrier", pjsip)
         self.assertIn("[2001]", pjsip)
         self.assertIn("aors=2001", pjsip)
+        self.assertIn("outbound_proxy=sip:sbc.example.test:5060\\;lr", pjsip)
+        self.assertIn("rewrite_contact=no", pjsip)
+        self.assertIn("endpoint_identifier_order=auth_username,username,ip", pjsip)
         self.assertNotIn("__", pjsip)
         self.assertNotIn("__", extensions)
         self.assertEqual(pjsip_mode, 0o600)
@@ -89,7 +93,7 @@ class Phase1RenderConfigTest(unittest.TestCase):
         self.assertNotIn("[carrier-registration]", pjsip)
         self.assertIn("[carrier-identify]", pjsip)
         self.assertIn("endpoint=carrier-endpoint", pjsip)
-        self.assertIn("match=198.51.100.0/24", pjsip)
+        self.assertIn("match_header=X-Anshin-Source: carrier", pjsip)
 
     def test_dialplan_separates_tel_fax_and_blocks_high_risk_destinations(self) -> None:
         _, extensions, _, _ = self.render("registration")
