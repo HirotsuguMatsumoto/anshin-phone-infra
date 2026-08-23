@@ -20,7 +20,9 @@ scripts/test_kamailio_render_config.py
 scripts/test_device_and_voice_tools.py
 scripts/test_carrier_and_firewall_tools.py
 anshin-phone-backend/Dockerfile
-anshin-phone-backend/app/main.py'
+anshin-phone-backend/app/main.py
+anshin-phone-backend/alembic.ini
+anshin-phone-backend/migrations/versions/20260822_0001_initial_phone_control_plane.py'
 
 printf '%s\n' "$required_files" | while IFS= read -r item; do
   test -f "$repo_dir/$item" || {
@@ -47,6 +49,18 @@ python3 -m py_compile "$repo_dir/scripts/create_sip_enrollment_bundle.py"
 python3 -m py_compile "$repo_dir/scripts/evaluate_voice_quality.py"
 python3 -m py_compile "$repo_dir/scripts/render_phase1_firewall.py"
 python3 -m py_compile "$repo_dir/scripts/validate_carrier_intake.py"
+
+ANSHIN_PHONE_SECRET_DIR=/private/tmp/anshin-phone-phase1-validation-secrets \
+  CARRIER_AUTH_MODE=registration \
+  CARRIER_HOST=carrier.invalid \
+  CARRIER_SOURCE_CIDRS=198.51.100.10/32 \
+  SMARTPHONE_SOURCE_CIDRS=192.0.2.10/32 \
+  CARRIER_SIP_USERNAME=phase1-validation \
+  TEL_DID=0312345678 \
+  FAX_DID=0312345679 \
+  PUBLIC_SIP_IP=203.0.113.10 \
+  PUBLIC_RTP_IP=203.0.113.10 \
+  docker compose -f "$repo_dir/compose.phase1.yaml" config -q
 
 if [ "${RUN_PHASE1_SIP_E2E:-0}" = "1" ]; then
   python3 "$repo_dir/scripts/test_phase1_sip_e2e.py"
