@@ -22,6 +22,21 @@ sensitivity: internal
 
 # FAX・番号プロビジョニング
 
+## 専門用語一覧
+
+| 用語 | 正式名称・読み方 | 意味・本書での扱い |
+| --- | --- | --- |
+| FAX | Facsimile | 電話網等を使って文書画像を送受信する通信サービス |
+| PBX | Private Branch Exchange | 内線、外線、着信振分け及び転送等を制御する電話交換システム |
+| TEL | Telephone | 音声通話に使用する電話又は電話番号 |
+| SIP | Session Initiation Protocol | IP網上で電話の発着信や通話sessionを制御する通信規約 |
+| 電気通信番号 | でんきつうしんばんごう | 電気通信役務の提供において端末や通信先等を識別する番号 |
+| 電気通信番号使用計画 | でんきつうしんばんごうしようけいかく | 電気通信番号の使用方法、管理及び設備等を定め、認定等の対象となる計画 |
+| API | Application Programming Interface | システムやソフトウェア間で機能・データを利用するための接続仕様 |
+| backend | Backend | server側でAPI、業務処理及びdata管理等を担うsoftware領域 |
+| PDF | Portable Document Format | 表示・印刷レイアウトを保持する文書ファイル形式 |
+| DB | Database | 業務データを永続的に保存・検索するデータベース |
+
 ## 番号
 
 キャリア払い出し直後は`provisioning`とし、PBXへの到達確認中は`testing`、着信・発信・番号通知・緊急通報条件・履歴を確認後に`active`とする。`active`にはroute targetを必須とし、`released`からの復帰を禁止する。TEL番号とSIP endpointの割当は同一tenantだけを許可し、FAX番号を音声endpointへ割り当てない。

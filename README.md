@@ -1,5 +1,35 @@
 # anshin-phone-infra
 
+## 専門用語一覧
+
+| 用語 | 正式名称・読み方 | 意味・本書での扱い |
+| --- | --- | --- |
+| SIP | Session Initiation Protocol | IP網上で電話の発着信や通話sessionを制御する通信規約 |
+| PBX | Private Branch Exchange | 内線、外線、着信振分け及び転送等を制御する電話交換システム |
+| FAX | Facsimile | 電話網等を使って文書画像を送受信する通信サービス |
+| DID | Direct Inward Dialing | 着信番号をPBX等へ通知し、番号別に着信先を制御する方式 |
+| repository | Repository | source code、文書及び変更履歴を一まとまりで管理する単位 |
+| SBC | Session Border Controller | SIP通信の境界で接続制御、セキュリティ及び相互接続を担う設備 |
+| Docker | Docker | アプリケーションと依存関係をcontainerとして実行・配布する基盤 |
+| TLS | Transport Layer Security | 通信の暗号化、改ざん検知及び接続先認証を行うプロトコル |
+| SRTP | Secure Real-time Transport Protocol | 音声等のRTP packetを暗号化・認証するprotocol |
+| VPS | Virtual Private Server | 仮想化された専用環境として利用するserver |
+| FreePBX | FreePBX | Asteriskを管理するWeb UIを備えたIP-PBX software |
+| YAML | YAML Ain't Markup Language | indentとkey-valueで構造化データを表すテキスト形式 |
+| backend | Backend | server側でAPI、業務処理及びdata管理等を担うsoftware領域 |
+| PostgreSQL | PostgreSQL | open sourceのリレーショナルデータベース管理システム |
+| E2E | End-to-End | 利用者操作から最終処理までの一連の経路又はそのテスト |
+| LTS | Long-Term Support | 長期間の保守・security updateが提供されるrelease区分 |
+| PJSIP | PJSIP | SIP、SDP、RTP等を実装するopen source communication library |
+| IP | Internet Protocol | パケット通信網でデータの宛先と配送を制御する通信規約 |
+| MD | Markdown | 見出し、表、link等をplain textで記述する文書形式 |
+| Git | Git | ファイルの変更履歴とブランチを管理する分散型バージョン管理システム |
+| API | Application Programming Interface | システムやソフトウェア間で機能・データを利用するための接続仕様 |
+| CDR | Content Disarm and Reconstruction | ファイルを分解し、危険なコンテンツを除去して再構成する無害化技術 |
+| TEL | Telephone | 音声通話に使用する電話又は電話番号 |
+| VPN | Virtual Private Network | public network上に暗号化等でprivateな通信経路を構成する仕組み |
+| RTP | Real-time Transport Protocol | SIP等で確立した通話の音声データを運ぶ通信規約 |
+
 アンシンフォンのSIP/PBX基盤です。
 
 Phase 1の最初の合格点は、上位キャリアから払い出された実番号をこの基盤へ収容し、スマートフォンのSIPクライアントで外線の着信・通話・発信ができることです。FAX番号は同じ番号台帳へ収容し、専用DIDをFAX受信経路へ振り分けます。

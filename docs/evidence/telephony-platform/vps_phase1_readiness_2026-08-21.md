@@ -26,6 +26,27 @@ sensitivity: restricted
 
 # VPS Phase 1配置前監査 2026-08-21
 
+## 専門用語一覧
+
+| 用語 | 正式名称・読み方 | 意味・本書での扱い |
+| --- | --- | --- |
+| VPS | Virtual Private Server | 仮想化された専用環境として利用するserver |
+| Git | Git | ファイルの変更履歴とブランチを管理する分散型バージョン管理システム |
+| Docker | Docker | アプリケーションと依存関係をcontainerとして実行・配布する基盤 |
+| OS | Operating System | computerや端末のhardwareとapplicationを管理する基本software |
+| LTS | Long-Term Support | 長期間の保守・security updateが提供されるrelease区分 |
+| backend | Backend | server側でAPI、業務処理及びdata管理等を担うsoftware領域 |
+| Redis | Redis | memory上のkey-valueデータを扱うdata store |
+| PostgreSQL | PostgreSQL | open sourceのリレーショナルデータベース管理システム |
+| MinIO | MinIO | S3互換APIを提供するobject storageソフトウェア |
+| TCP | Transmission Control Protocol | 送達確認、順序制御及び再送を行う接続型の通信規約 |
+| SIP | Session Initiation Protocol | IP網上で電話の発着信や通話sessionを制御する通信規約 |
+| RTP | Real-time Transport Protocol | SIP等で確立した通話の音声データを運ぶ通信規約 |
+| UDP | User Datagram Protocol | 送達確認や再送を必須としないdatagram型の通信規約 |
+| IP | Internet Protocol | パケット通信網でデータの宛先と配送を制御する通信規約 |
+| VPN | Virtual Private Network | public network上に暗号化等でprivateな通信経路を構成する仕組み |
+| UFW | Uncomplicated Firewall | Linuxのfirewall ruleを管理するtool |
+
 ## 1. 判定
 
 対象VPSはPhase 1の配置候補として利用可能だが、現時点では配置を実行しない。ファイアウォール、メモリ余力、既存の未コミット差分、secret保管、バックアップ及び切戻しを確定してから変更作業を承認する。
