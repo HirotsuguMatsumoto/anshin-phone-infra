@@ -1,0 +1,427 @@
+<mxfile host="65bd71144e">
+    <diagram id="logical-end-to-end" name="01_論理構成_発着信全体像">
+        <mxGraphModel dx="964" dy="546" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2200" pageHeight="1300" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="L_title" value="Cloco × アンシンフォン　論理構成（電話発信者・電話受信者を含む全体像）" style="text;html=1;align=left;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#172B4D;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="20" width="2040" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_subtitle" value="実番号の着信・発信を、SIP信号、RTP音声、番号・テナント管理、履歴・監査に分離して表現。Phase 1は自社テナント限定。" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="68" width="2040" height="34" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_inbound_lane" value="着信：外部の電話発信者 → アンシンフォン利用者" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#EAF2F8;strokeColor=#5B9BD5;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="120" width="2040" height="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_outbound_lane" value="発信：アンシンフォン利用者 → 外部の電話受信者" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#E9F7EF;strokeColor=#70AD47;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="400" width="2040" height="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_control_lane" value="アンシンフォン管理・制御プレーン" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#F4ECF7;strokeColor=#8064A2;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="680" width="1500" height="420" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_gate_lane" value="Phase 1 / 商用化Gate" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#FFF4E5;strokeColor=#F5A623;" parent="1" vertex="1">
+                    <mxGeometry x="1560" y="680" width="520" height="420" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_caller" value="&lt;b&gt;電話発信者A&lt;/b&gt;&lt;br&gt;固定電話 / 携帯電話&lt;br&gt;発信者番号：相手番号" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#5B9BD5;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="75" y="205" width="210" height="95" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_pstn" value="&lt;b&gt;公衆電話網（PSTN）&lt;/b&gt;&lt;br&gt;発信元キャリア網" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#F2F2F2;strokeColor=#7F8C8D;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="330" y="205" width="210" height="95" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_cloco" value="&lt;b&gt;Cloco&lt;/b&gt;&lt;br&gt;契約番号（DID）&lt;br&gt;SIPトランク2 / PSTN接続" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8EAF6;strokeColor=#5C6BC0;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="590" y="195" width="230" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_sbc" value="&lt;b&gt;アンシンフォン SBC / Media&lt;/b&gt;&lt;br&gt;Kamailio：SIP境界&lt;br&gt;RTPengine：音声中継" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DDEBF7;strokeColor=#2F75B5;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="875" y="195" width="245" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_pbx" value="&lt;b&gt;アンシンフォン PBX&lt;/b&gt;&lt;br&gt;DID → テナント → 内線&lt;br&gt;着信制御 / 呼出 / 切断" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9EAD3;strokeColor=#548235;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="1175" y="195" width="245" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_client" value="&lt;b&gt;受信者B&lt;/b&gt;&lt;br&gt;アンシンフォン利用者&lt;br&gt;スマホSIPクライアント / 内線" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#70AD47;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="1475" y="195" width="245" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_identity" value="&lt;b&gt;着信時の論理識別子&lt;/b&gt;&lt;br&gt;発信者番号 → Cloco DID → テナントID → TEL用途 → 内線 / 受信端末" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1765" y="195" width="275" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_e1" value="発信" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_i_caller" target="L_i_pstn" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_e2" value="PSTN呼" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_i_pstn" target="L_i_cloco" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_e3" value="SIP INVITE&lt;br&gt;To / DID" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_i_cloco" target="L_i_sbc" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_e4" value="内部SIP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_i_sbc" target="L_i_pbx" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_e5" value="内線呼出" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_i_pbx" target="L_i_client" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_i_media" value="双方向RTP音声（Cloco ↔ RTPengine ↔ Asterisk ↔ スマホ）" style="edgeStyle=orthogonalEdgeStyle;curved=1;html=1;strokeColor=#00A65A;strokeWidth=3;dashed=1;startArrow=block;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=1;" parent="1" source="L_i_cloco" target="L_i_client" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="710" y="345"/>
+                            <mxPoint x="1595" y="345"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="L_i_map" value="DIDルーティング" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;strokeWidth=1;dashed=1;endArrow=open;" parent="1" source="L_i_pbx" target="L_i_identity" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_caller" value="&lt;b&gt;電話発信者B&lt;/b&gt;&lt;br&gt;アンシンフォン利用者&lt;br&gt;スマホSIPクライアント / 内線" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#70AD47;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="75" y="485" width="245" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_pbx" value="&lt;b&gt;アンシンフォン PBX&lt;/b&gt;&lt;br&gt;発信権限 / 宛先制限&lt;br&gt;From・PAIへ契約TEL番号" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9EAD3;strokeColor=#548235;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="380" y="485" width="245" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_sbc" value="&lt;b&gt;アンシンフォン SBC / Media&lt;/b&gt;&lt;br&gt;送信元制限 / SIP中継&lt;br&gt;RTPアンカー" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#DDEBF7;strokeColor=#2F75B5;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="685" y="485" width="245" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_cloco" value="&lt;b&gt;Cloco&lt;/b&gt;&lt;br&gt;SIPトランク2&lt;br&gt;契約番号の発信者番号検証" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8EAF6;strokeColor=#5C6BC0;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="990" y="485" width="230" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_pstn" value="&lt;b&gt;公衆電話網（PSTN）&lt;/b&gt;&lt;br&gt;着信先キャリア網" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#F2F2F2;strokeColor=#7F8C8D;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="1280" y="495" width="210" height="95" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_receiver" value="&lt;b&gt;電話受信者A&lt;/b&gt;&lt;br&gt;固定電話 / 携帯電話&lt;br&gt;表示番号：アンシン契約TEL DID" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#5B9BD5;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="1550" y="485" width="245" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_policy" value="&lt;b&gt;Phase 1発信制御&lt;/b&gt;&lt;br&gt;国内固定・携帯のみ&lt;br&gt;110 / 118 / 119・国際・0570・0990は遮断" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C00000;fontSize=13;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="1845" y="485" width="195" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_e1" value="SIP発信" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_o_caller" target="L_o_pbx" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_e2" value="内部SIP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_o_pbx" target="L_o_sbc" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_e3" value="SIP INVITE&lt;br&gt;From / PAI = TEL DID" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_o_sbc" target="L_o_cloco" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_e4" value="PSTN呼" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_o_cloco" target="L_o_pstn" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_e5" value="着信" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="L_o_pstn" target="L_o_receiver" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_o_media" value="双方向RTP音声（スマホ ↔ RTPengine ↔ Asterisk ↔ Cloco）" style="edgeStyle=orthogonalEdgeStyle;curved=1;html=1;strokeColor=#00A65A;strokeWidth=3;dashed=1;startArrow=block;endArrow=block;exitX=0.5;exitY=1;entryX=0.5;entryY=1;" parent="1" source="L_o_caller" target="L_o_cloco" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="195" y="630"/>
+                            <mxPoint x="1105" y="630"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="L_o_rule" value="発信ポリシー" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#C00000;strokeWidth=1;dashed=1;endArrow=open;" parent="1" source="L_o_pbx" target="L_o_policy" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="500" y="620"/>
+                            <mxPoint x="1940" y="620"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="L_admin" value="&lt;b&gt;アンシンフォン管理者&lt;/b&gt;&lt;br&gt;会社 / テナント管理" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8064A2;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="75" y="775" width="220" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_frontend" value="&lt;b&gt;管理画面&lt;/b&gt;&lt;br&gt;番号・端末・割当・履歴" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E4DFEC;strokeColor=#8064A2;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="345" y="775" width="220" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_auth" value="&lt;b&gt;認証・認可&lt;/b&gt;&lt;br&gt;Keycloak OIDC&lt;br&gt;tenant + role" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E4DFEC;strokeColor=#8064A2;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="615" y="775" width="220" height="80" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_backend" value="&lt;b&gt;Backend / Control Plane&lt;/b&gt;&lt;br&gt;番号・endpoint・割当&lt;br&gt;CDR / FAX / 監査" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9E1F2;strokeColor=#4472C4;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="885" y="765" width="245" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_db" value="&lt;b&gt;PostgreSQL&lt;/b&gt;&lt;br&gt;テナント / DID / 内線&lt;br&gt;割当 / 状態 / 履歴" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#D9E1F2;strokeColor=#4472C4;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="1190" y="765" width="245" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_events" value="&lt;b&gt;PBX event pipeline&lt;/b&gt;&lt;br&gt;マスク済みevent → spool → forwarder → Backend&lt;br&gt;Backend停止時も再送・重複防止" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#F3F6FA;strokeColor=#4472C4;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="615" y="915" width="550" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_registry" value="&lt;b&gt;番号ライフサイクル&lt;/b&gt;&lt;br&gt;Cloco番号 / 持込番号 / TEL・FAX用途 / 利用住所 / 状態 / 顧客割当" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="75" y="915" width="480" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_m1" value="管理操作" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=2;endArrow=block;" parent="1" source="L_admin" target="L_frontend" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_m2" value="OIDC" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=2;endArrow=block;" parent="1" source="L_frontend" target="L_auth" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_m3" value="管理API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=2;endArrow=block;" parent="1" source="L_auth" target="L_backend" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_m4" value="読書き" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="L_backend" target="L_db" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_m5" value="登録・割当" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;strokeWidth=1;dashed=1;endArrow=open;" parent="1" source="L_registry" target="L_backend" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_m6" value="通話/FAX event" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4472C4;strokeWidth=2;endArrow=block;" parent="1" source="L_events" target="L_backend" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_m7" value="PBXから" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4472C4;strokeWidth=1;dashed=1;endArrow=open;" parent="1" source="L_i_pbx" target="L_events" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_gate_phase1" value="&lt;b&gt;Phase 1で確認すること&lt;/b&gt;&lt;br&gt;・Cloco内でTEL/FAX各1番号を付替え&lt;br&gt;・外線着信 / 発信 / 双方向音声&lt;br&gt;・発信者番号通知&lt;br&gt;・FAX送受信と切戻し&lt;br&gt;・履歴 / 監視 / 障害時挙動" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=13;align=left;spacingLeft=10;" parent="1" vertex="1">
+                    <mxGeometry x="1590" y="770" width="460" height="150" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_gate_commercial" value="&lt;b&gt;商用化前の停止条件&lt;/b&gt;&lt;br&gt;・Cloco OEM契約の競業禁止等を修正&lt;br&gt;・電気通信事業届出 / 番号計画&lt;br&gt;・TLS/SRTP、冗長化、fraud対策&lt;br&gt;・0157等の全国番号調達&lt;br&gt;・緊急通報非対応の契約・UI説明&lt;br&gt;・SLA / API / 保存期間 / BCP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C00000;fontSize=13;align=left;spacingLeft=10;" parent="1" vertex="1">
+                    <mxGeometry x="1590" y="940" width="460" height="135" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_legend" value="&lt;b&gt;凡例&lt;/b&gt;　&lt;font color=&quot;#1F4E79&quot;&gt;━━ SIP信号&lt;/font&gt;　&lt;font color=&quot;#00A65A&quot;&gt;┅┅ RTP音声&lt;/font&gt;　&lt;font color=&quot;#8064A2&quot;&gt;━━ 管理/API&lt;/font&gt;　&lt;font color=&quot;#C00000&quot;&gt;■ 停止・未確定Gate&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#BFBFBF;fontSize=13;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="1130" width="2040" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="L_note" value="注記：ClocoのSIPトランク2から110・118・119へは発信不可。Phase 1の成功は、全国商用提供、法令適合、TLS/SRTP、冗長化又はAsterisk 22のClocoサポートを意味しない。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#7F0000;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="1195" width="2040" height="45" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+    <diagram id="physical-phase1" name="02_物理構成_Phase1">
+        <mxGraphModel dx="1784" dy="1088" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="2400" pageHeight="1500" math="0" shadow="0">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="P_title" value="Cloco × アンシンフォン　物理構成（Phase 1配置計画）" style="text;html=1;align=left;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#172B4D;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="20" width="2220" height="50" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_subtitle" value="VPS 153.126.164.14 上のDocker構成。外部公開はKamailioとRTPengineだけ。Asterisk・Backend・PostgreSQLは内部ネットワークへ隔離する。" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fontColor=#5E6C84;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="68" width="2220" height="34" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_external_zone" value="外部利用者 / 公衆電話網" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#F2F2F2;strokeColor=#7F8C8D;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="120" width="320" height="1150" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_cloco_zone" value="Cloco管理・電話網" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#E8EAF6;strokeColor=#5C6BC0;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="120" width="360" height="1150" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_internet_zone" value="Internet / 安全な端末経路" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#EAF2F8;strokeColor=#5B9BD5;" parent="1" vertex="1">
+                    <mxGeometry x="780" y="120" width="260" height="1150" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_vps_zone" value="アンシン VPS 153.126.164.14（/ops/anshin-phone-infra・配置計画）" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#F8F9F9;strokeColor=#34495E;" parent="1" vertex="1">
+                    <mxGeometry x="1070" y="120" width="1190" height="1150" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_ext_caller" value="&lt;b&gt;外部の電話発信者 / 受信者&lt;/b&gt;&lt;br&gt;固定電話・携帯電話" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#5B9BD5;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="220" width="240" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_ext_mobile" value="&lt;b&gt;アンシンフォン利用者&lt;/b&gt;&lt;br&gt;スマホSIPクライアント&lt;br&gt;固定IP Wi-Fi / WireGuard等" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#70AD47;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="430" width="240" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_ext_admin" value="&lt;b&gt;管理者ブラウザ&lt;/b&gt;&lt;br&gt;アンシンフォン管理画面&lt;br&gt;OIDCログイン" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8064A2;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="80" y="700" width="240" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_cloco_pstn" value="&lt;b&gt;Cloco PSTN接続&lt;/b&gt;&lt;br&gt;契約TEL/FAX番号（DID）&lt;br&gt;既存番号をCloco内で付替え" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#5C6BC0;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="435" y="205" width="270" height="115" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_cloco_trunk" value="&lt;b&gt;SIPトランク2&lt;/b&gt;&lt;br&gt;1トランク + 追加2チャネル&lt;br&gt;Phase 1：計3チャネル" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#D9E1F2;strokeColor=#5C6BC0;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="435" y="390" width="270" height="110" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_cloco_manager" value="&lt;b&gt;Cloco管理画面&lt;/b&gt;&lt;br&gt;電話番号一覧 → ユニーク変更&lt;br&gt;SIPトランク2へ付替え / 旧経路へ切戻し" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#5C6BC0;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="435" y="700" width="270" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_cloco_pending" value="&lt;b&gt;Cloco回答待ち&lt;/b&gt;&lt;br&gt;TLS/SRTP・冗長接続先・0157&lt;br&gt;T.38/G.711正式条件・CPS・API/CSV・SLA" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="435" y="930" width="270" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_net_pstn" value="PSTN" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#F2F2F2;strokeColor=#7F8C8D;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="815" y="215" width="190" height="90" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_net_public" value="Public Internet" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#DDEBF7;strokeColor=#5B9BD5;fontSize=14;" parent="1" vertex="1">
+                    <mxGeometry x="815" y="390" width="190" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_net_secure" value="端末用の制限経路&lt;br&gt;固定送信元IP / VPN" style="shape=cloud;whiteSpace=wrap;html=1;fillColor=#E2F0D9;strokeColor=#70AD47;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="815" y="535" width="190" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_keycloak" value="&lt;b&gt;auth.anshin.care&lt;/b&gt;&lt;br&gt;Keycloak OIDC&lt;br&gt;realm: anshin" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E4DFEC;strokeColor=#8064A2;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="815" y="700" width="190" height="100" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_firewall" value="&lt;b&gt;Host firewall / Docker publish&lt;/b&gt;&lt;br&gt;SIP：5060/UDP（Cloco・端末許可元だけ）&lt;br&gt;RTP：20000–20100/UDP（Cloco・端末許可元だけ）&lt;br&gt;SSHと既存マーケティング基盤を保護" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C00000;fontSize=13;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="1110" y="175" width="1110" height="105" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_edge_lane" value="Docker network: sip-edge 172.31.250.0/24（外部到達側）" style="swimlane;html=1;rounded=1;startSize=32;horizontal=1;fontSize=14;fontStyle=1;fillColor=#DDEBF7;strokeColor=#2F75B5;" parent="1" vertex="1">
+                    <mxGeometry x="1110" y="310" width="520" height="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_kam_edge" value="&lt;b&gt;Kamailio 5.6.3&lt;/b&gt;&lt;br&gt;edge: 172.31.250.40&lt;br&gt;public SIP 5060/UDP&lt;br&gt;接続元CIDR制限" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2F75B5;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1140" y="385" width="210" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="O-mHvfLaDAEPv0yHL1wO-1" value="" style="edgeStyle=none;html=1;" edge="1" parent="1" source="P_rtp_edge" target="P_kam_edge">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_rtp_edge" value="&lt;b&gt;RTPengine 10.5.3.5&lt;/b&gt;&lt;br&gt;external: 172.31.250.50&lt;br&gt;public RTP IPをadvertise&lt;br&gt;20000–20100/UDP" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#00A65A;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1380" y="385" width="220" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_internal_lane" value="Docker network: pbx-internal 172.31.251.0/24（internal=true）" style="swimlane;html=1;rounded=1;startSize=32;horizontal=1;fontSize=14;fontStyle=1;fillColor=#E9F7EF;strokeColor=#70AD47;" parent="1" vertex="1">
+                    <mxGeometry x="1660" y="310" width="560" height="260" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_kam_internal" value="&lt;b&gt;Kamailio internal&lt;/b&gt;&lt;br&gt;172.31.251.40:5060&lt;br&gt;外部SIPをAsteriskへ中継" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#2F75B5;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1685" y="385" width="160" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_rtp_internal" value="&lt;b&gt;RTPengine internal&lt;/b&gt;&lt;br&gt;172.31.251.50&lt;br&gt;Asterisk RTPとの境界" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#00A65A;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1865" y="385" width="160" height="120" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_asterisk" value="&lt;b&gt;Asterisk 22.10.1&lt;/b&gt;&lt;br&gt;172.31.251.20&lt;br&gt;SIP 5060 / RTP 10000–10100&lt;br&gt;hostへ非公開&lt;br&gt;TEL/FAX dialplan" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#548235;fontSize=13;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="2045" y="375" width="150" height="140" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_data_lane" value="Docker network: phone-data（internal=true）" style="swimlane;html=1;rounded=1;startSize=32;horizontal=1;fontSize=14;fontStyle=1;fillColor=#F4ECF7;strokeColor=#8064A2;" parent="1" vertex="1">
+                    <mxGeometry x="1110" y="610" width="1110" height="310" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_spool" value="&lt;b&gt;pbx-event-spool volume&lt;/b&gt;&lt;br&gt;pending / sent / dead-letter&lt;br&gt;マスク済み通話・FAX event" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#4472C4;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1140" y="700" width="220" height="105" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_forwarder" value="&lt;b&gt;PBX event forwarder&lt;/b&gt;&lt;br&gt;内部token&lt;br&gt;retry / idempotency" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4472C4;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1400" y="700" width="220" height="105" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_backend" value="&lt;b&gt;Anshin Phone Backend&lt;/b&gt;&lt;br&gt;container: 8000&lt;br&gt;host: 127.0.0.1:8010のみ&lt;br&gt;管理API / 内部PBX event API" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#4472C4;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1660" y="690" width="240" height="125" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_postgres" value="&lt;b&gt;PostgreSQL 16&lt;/b&gt;&lt;br&gt;phone-data内 5432&lt;br&gt;hostへ非公開&lt;br&gt;番号・endpoint・割当・履歴・監査" style="shape=cylinder;whiteSpace=wrap;html=1;boundedLbl=1;fillColor=#FFFFFF;strokeColor=#4472C4;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1940" y="685" width="245" height="135" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_fax_store" value="&lt;b&gt;fax-spool volume&lt;/b&gt;&lt;br&gt;Phase 1 FAX受信TIF&lt;br&gt;原本はGitへ保存しない" style="shape=folder;tabWidth=40;tabHeight=14;tabPosition=left;html=1;whiteSpace=wrap;fillColor=#FFFFFF;strokeColor=#D6B656;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1140" y="830" width="220" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_management_lane" value="管理系（別repo / Phase 1 Compose外）" style="swimlane;html=1;rounded=1;startSize=32;horizontal=1;fontSize=14;fontStyle=1;fillColor=#FFF4E5;strokeColor=#F5A623;" parent="1" vertex="1">
+                    <mxGeometry x="1110" y="950" width="1110" height="250" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_frontend" value="&lt;b&gt;anshin-phone 管理画面&lt;/b&gt;&lt;br&gt;anshin-frontend-monorepo&lt;br&gt;番号 / endpoint / 割当 / 履歴" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#8064A2;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1160" y="1030" width="245" height="105" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_secure_ingress" value="&lt;b&gt;安全な管理API ingress&lt;/b&gt;&lt;br&gt;TLS・OIDC・tenant/role&lt;br&gt;Phase 1 composeには未収容&lt;br&gt;Backend loopback公開を維持" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF2CC;strokeColor=#D6B656;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1490" y="1020" width="260" height="125" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_ops" value="&lt;b&gt;運用・監視&lt;/b&gt;&lt;br&gt;health / status / firewall / backup&lt;br&gt;秘密情報は外部secret directory&lt;br&gt;実番号・credential・録音をGitへ保存しない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#F5A623;fontSize=13;" parent="1" vertex="1">
+                    <mxGeometry x="1840" y="1020" width="320" height="125" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_pstn1" value="発着信" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="P_ext_caller" target="P_net_pstn" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_pstn2" value="番号 / PSTN" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="P_net_pstn" target="P_cloco_pstn" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_cloco_trunk" value="DID関連付け" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#5C6BC0;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="P_cloco_pstn" target="P_cloco_trunk" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_cloco_internet" value="SIP / RTP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="P_cloco_trunk" target="P_net_public" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_internet_firewall" value="Cloco接続元だけ許可" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#C00000;strokeWidth=2;endArrow=block;" parent="1" source="P_net_public" target="P_firewall" edge="1">
+                    <mxGeometry x="-0.1341" y="-20" relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="910" y="530"/>
+                            <mxPoint x="1665" y="530"/>
+                        </Array>
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_mobile_secure" value="SIP / RTP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#70AD47;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="P_ext_mobile" target="P_net_secure" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_secure_firewall" value="固定送信元IP / VPNだけ許可" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#C00000;strokeWidth=2;endArrow=block;" parent="1" source="P_net_secure" target="P_firewall" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_firewall_sip" value="SIP 5060/UDP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=3;startArrow=block;endArrow=block;exitX=0.25;exitY=1;entryX=0.5;entryY=0;" parent="1" source="P_firewall" target="P_kam_edge" edge="1">
+                    <mxGeometry x="0.1111" y="20" relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1388" y="350"/>
+                            <mxPoint x="1245" y="350"/>
+                        </Array>
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_firewall_rtp" value="RTP 20000–20100/UDP" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#00A65A;strokeWidth=3;dashed=1;startArrow=block;endArrow=block;exitX=0.55;exitY=1;entryX=0.5;entryY=0;" parent="1" source="P_firewall" target="P_rtp_edge" edge="1">
+                    <mxGeometry x="0.0164" y="-10" relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1721" y="360"/>
+                            <mxPoint x="1490" y="360"/>
+                        </Array>
+                        <mxPoint x="1" as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_kam_internal" value="同一Kamailio&lt;br&gt;edge ↔ internal" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;endArrow=block;" parent="1" source="P_kam_edge" target="P_kam_internal" edge="1">
+                    <mxGeometry x="0.0149" y="-15" relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1245" y="520"/>
+                            <mxPoint x="1765" y="520"/>
+                        </Array>
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_rtp_internal" value="同一RTPengine&lt;br&gt;external ↔ internal" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#00A65A;strokeWidth=3;dashed=1;endArrow=block;exitX=0.75;exitY=0;exitDx=0;exitDy=0;" parent="1" source="P_rtp_edge" target="P_rtp_internal" edge="1">
+                    <mxGeometry x="0.3023" y="-10" relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="1545" y="370"/>
+                            <mxPoint x="1945" y="370"/>
+                        </Array>
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_sip_pbx" value="内部SIP 5060" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#1F4E79;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="P_kam_internal" target="P_asterisk" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_rtp_pbx" value="内部RTP 10000–10100" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#00A65A;strokeWidth=3;dashed=1;startArrow=block;endArrow=block;" parent="1" source="P_rtp_internal" target="P_asterisk" edge="1">
+                    <mxGeometry x="1" y="-25" relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="2030" y="460"/>
+                            <mxPoint x="2030" y="460"/>
+                        </Array>
+                        <mxPoint x="15" y="-5" as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_spool" value="atomic event" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4472C4;strokeWidth=2;endArrow=block;" parent="1" source="P_asterisk" target="P_spool" edge="1">
+                    <mxGeometry x="-0.0047" y="10" relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="2120" y="600"/>
+                            <mxPoint x="1250" y="600"/>
+                        </Array>
+                        <mxPoint as="offset"/>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_forward" value="watch" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4472C4;strokeWidth=2;endArrow=block;" parent="1" source="P_spool" target="P_forwarder" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_backend" value="HTTP internal API :8000" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4472C4;strokeWidth=2;endArrow=block;" parent="1" source="P_forwarder" target="P_backend" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_db" value="PostgreSQL 5432" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#4472C4;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="P_backend" target="P_postgres" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_fax" value="ReceiveFAX / TIF" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#D6B656;strokeWidth=2;endArrow=block;" parent="1" source="P_asterisk" target="P_fax_store" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="2160" y="865"/>
+                            <mxPoint x="1390" y="865"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_admin_cloco" value="番号付替え / 切戻し" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=1;dashed=1;endArrow=open;" parent="1" source="P_ext_admin" target="P_cloco_manager" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_admin_auth" value="OIDC" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=2;startArrow=block;endArrow=block;" parent="1" source="P_ext_admin" target="P_keycloak" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_frontend" value="HTTPS" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=2;endArrow=block;" parent="1" source="P_ext_admin" target="P_frontend" edge="1">
+                    <mxGeometry relative="1" as="geometry">
+                        <Array as="points">
+                            <mxPoint x="920" y="900"/>
+                            <mxPoint x="1080" y="900"/>
+                        </Array>
+                    </mxGeometry>
+                </mxCell>
+                <mxCell id="P_e_ingress" value="管理API" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=2;endArrow=block;" parent="1" source="P_frontend" target="P_secure_ingress" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_e_loopback" value="loopback → backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=1;dashed=1;endArrow=open;" parent="1" source="P_secure_ingress" target="P_backend" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_gate" value="&lt;b&gt;重要な物理制約&lt;/b&gt;&lt;br&gt;1. AsteriskのSIP/RTPをhostへ公開しない。&lt;br&gt;2. Backend/PostgreSQL/event-forwarderはinternal networkのみ。&lt;br&gt;3. Phase 1のCloco接続はUDP/RTP。TLS/SRTPは未確定。&lt;br&gt;4. 110・118・119はCloco SIPトランク2から発信不可。&lt;br&gt;5. 実番号、SIP credential、録音、FAX原本をGitへ保存しない。&lt;br&gt;6. firewall適用、番号付替え、VPS再起動は本番mutationとして個別承認する。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C00000;fontSize=13;align=left;spacingLeft=10;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="390" y="1080" width="615" height="160" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_legend" value="&lt;b&gt;凡例&lt;/b&gt;　&lt;font color=&quot;#1F4E79&quot;&gt;━━ SIP / PSTN信号&lt;/font&gt;　&lt;font color=&quot;#00A65A&quot;&gt;┅┅ RTP音声&lt;/font&gt;　&lt;font color=&quot;#4472C4&quot;&gt;━━ event / DB&lt;/font&gt;　&lt;font color=&quot;#8064A2&quot;&gt;━━ 管理・認証&lt;/font&gt;　&lt;font color=&quot;#C00000&quot;&gt;■ 公開境界・停止条件&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#BFBFBF;fontSize=13;align=left;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="1300" width="2220" height="55" as="geometry"/>
+                </mxCell>
+                <mxCell id="P_note" value="状態の読み方：実装済み＝Compose/設定テンプレートに存在。配置計画＝VPSへ安全に配置する予定。未確定＝Cloco書面回答又は商用化設計が未完了。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#5E6C84;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="40" y="1365" width="2220" height="45" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

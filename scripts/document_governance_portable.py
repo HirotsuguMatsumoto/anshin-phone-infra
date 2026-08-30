@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-CONTRACT_VERSION = "2026-08-17.1"
+CONTRACT_VERSION = "2026-08-27.1"
 BUILD_CHECK_MARKER = "anshin-document-governance-build-check:v1"
 BUILD_CHECK_COMMAND = "bash scripts/run_document_governance_guard.sh"
 DOC_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]+$")
@@ -90,6 +90,16 @@ ALLOWED_PLAN_STATES = {
 }
 ALLOWED_RISKS = {"low", "normal", "high", "critical"}
 ALLOWED_SENSITIVITY = {"public", "internal", "restricted"}
+FORBIDDEN_GITHUB_ACTIONS_QUALITY_COMMANDS = (
+    "build_check.sh",
+    "run_document_governance_guard.sh",
+)
+ALLOWED_GITHUB_ACTIONS_WORKFLOWS = {
+    "backend-image.yml": "docker/build-push-action@",
+    "backend-image.yaml": "docker/build-push-action@",
+    "deploy-production.yml": "ssh",
+    "deploy-production.yaml": "ssh",
+}
 
 
 def validate_build_check_contract(
@@ -118,6 +128,53 @@ def validate_build_check_contract(
         errors.append(
             "scripts/build_check.sh does not invoke the document governance guard"
         )
+
+
+def validate_github_actions_usage(repository_root: Path, errors: list[str]) -> None:
+    """Keep repository quality checks local and outside GitHub-hosted runners."""
+    workflows = repository_root / ".github/workflows"
+    if not workflows.is_dir():
+        return
+    for path in sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml"))):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        required_signature = ALLOWED_GITHUB_ACTIONS_WORKFLOWS.get(path.name)
+        relative = path.relative_to(repository_root)
+        if required_signature is None:
+            errors.append(
+                f"{relative}: GitHub Actions workflow is outside the absolute "
+                "production image/deploy allowlist"
+            )
+        elif required_signature not in text.lower():
+            errors.append(
+                f"{relative}: allowed GitHub Actions workflow is missing its "
+                f"production release signature: {required_signature}"
+            )
+        if re.search(r"(?m)^\s+(?:pull_request|schedule):", text):
+            errors.append(
+                f"{relative}: pull_request/schedule GitHub Actions triggers are forbidden"
+            )
+        lines = text.splitlines()
+        for line_number, line in enumerate(lines, start=1):
+            stripped = line.lstrip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            command = next(
+                (
+                    value
+                    for value in FORBIDDEN_GITHUB_ACTIONS_QUALITY_COMMANDS
+                    if value in line
+                ),
+                None,
+            )
+            if command is None:
+                continue
+            errors.append(
+                f"{relative}:{line_number}: GitHub Actions must not invoke {command}; "
+                "run repository quality checks locally before commit/push"
+            )
 
 
 def validate_retired_metadata_templates(
@@ -646,6 +703,7 @@ def main() -> int:
             f"contract version mismatch: {metadata.get('contract_version')!r} != {CONTRACT_VERSION!r}"
         )
     validate_build_check_contract(repository_root, metadata, errors)
+    validate_github_actions_usage(repository_root, errors)
     validate_retired_metadata_templates(repository_root, errors)
     roots = metadata.get("roots")
     if not isinstance(roots, list) or not roots:
