@@ -31,6 +31,42 @@ sensitivity: internal
 
 # Phase 1 実番号接続手順
 
+## 専門用語一覧
+
+| 用語 | 正式名称・読み方 | 意味・本書での扱い |
+| --- | --- | --- |
+| TEL | Telephone | 音声通話に使用する電話又は電話番号 |
+| FAX | Facsimile | 電話網等を使って文書画像を送受信する通信サービス |
+| SIP | Session Initiation Protocol | IP網上で電話の発着信や通話sessionを制御する通信規約 |
+| IP | Internet Protocol | パケット通信網でデータの宛先と配送を制御する通信規約 |
+| DID | Direct Inward Dialing | 着信番号をPBX等へ通知し、番号別に着信先を制御する方式 |
+| PJSIP | PJSIP | SIP、SDP、RTP等を実装するopen source communication library |
+| Docker | Docker | アプリケーションと依存関係をcontainerとして実行・配布する基盤 |
+| backend | Backend | server側でAPI、業務処理及びdata管理等を担うsoftware領域 |
+| E2E | End-to-End | 利用者操作から最終処理までの一連の経路又はそのテスト |
+| UDP | User Datagram Protocol | 送達確認や再送を必須としないdatagram型の通信規約 |
+| TCP | Transmission Control Protocol | 送達確認、順序制御及び再送を行う接続型の通信規約 |
+| TLS | Transport Layer Security | 通信の暗号化、改ざん検知及び接続先認証を行うプロトコル |
+| RTP | Real-time Transport Protocol | SIP等で確立した通話の音声データを運ぶ通信規約 |
+| API | Application Programming Interface | システムやソフトウェア間で機能・データを利用するための接続仕様 |
+| 0AB-J番号 | ゼロエービージェイ番号 | 03、0157、06等の市外局番から始まる固定電話番号 |
+| 電気通信番号 | でんきつうしんばんごう | 電気通信役務の提供において端末や通信先等を識別する番号 |
+| 電気通信番号使用計画 | でんきつうしんばんごうしようけいかく | 電気通信番号の使用方法、管理及び設備等を定め、認定等の対象となる計画 |
+| Git | Git | ファイルの変更履歴とブランチを管理する分散型バージョン管理システム |
+| repository | Repository | source code、文書及び変更履歴を一まとまりで管理する単位 |
+| YAML | YAML Ain't Markup Language | indentとkey-valueで構造化データを表すテキスト形式 |
+| PostgreSQL | PostgreSQL | open sourceのリレーショナルデータベース管理システム |
+| PBX | Private Branch Exchange | 内線、外線、着信振分け及び転送等を制御する電話交換システム |
+| CLI | Command-Line Interface | コマンド文字列でソフトウェアを操作するインターフェース |
+| VPS | Virtual Private Server | 仮想化された専用環境として利用するserver |
+| VPN | Virtual Private Network | public network上に暗号化等でprivateな通信経路を構成する仕組み |
+| ID | Identifier | 利用者、会社、データ等を一意に識別する値 |
+| CDR | Content Disarm and Reconstruction | ファイルを分解し、危険なコンテンツを除去して再構成する無害化技術 |
+| UFW | Uncomplicated Firewall | Linuxのfirewall ruleを管理するtool |
+| MD | Markdown | 見出し、表、link等をplain textで記述する文書形式 |
+| SBC | Session Border Controller | SIP通信の境界で接続制御、セキュリティ及び相互接続を担う設備 |
+| SRTP | Secure Real-time Transport Protocol | 音声等のRTP packetを暗号化・認証するprotocol |
+
 ## 1. ゴール
 
 上位キャリアから払い出されたTEL番号とFAX番号をアンシンフォンへ収容し、次を実機で確認する。

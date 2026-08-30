@@ -22,6 +22,21 @@ sensitivity: internal
 
 # スマートフォン実機・音声品質検証
 
+## 専門用語一覧
+
+| 用語 | 正式名称・読み方 | 意味・本書での扱い |
+| --- | --- | --- |
+| SIP | Session Initiation Protocol | IP網上で電話の発着信や通話sessionを制御する通信規約 |
+| IP | Internet Protocol | パケット通信網でデータの宛先と配送を制御する通信規約 |
+| VPN | Virtual Private Network | public network上に暗号化等でprivateな通信経路を構成する仕組み |
+| Git | Git | ファイルの変更履歴とブランチを管理する分散型バージョン管理システム |
+| QRコード | Quick Response Code | カメラ等で読み取る二次元コード |
+| PBX | Private Branch Exchange | 内線、外線、着信振分け及び転送等を制御する電話交換システム |
+| RTP | Real-time Transport Protocol | SIP等で確立した通話の音声データを運ぶ通信規約 |
+| OS | Operating System | computerや端末のhardwareとapplicationを管理する基本software |
+| JSON | JavaScript Object Notation | keyとvalueの構造でデータを表現するテキスト形式 |
+| repository | Repository | source code、文書及び変更履歴を一まとまりで管理する単位 |
+
 ## 端末登録
 
 Phase 1はiOS・Android各1台を対象に、標準SIP、Digest認証、outbound proxy、G.711 μ-law/A-lawを扱えるクライアントで検証する。到達可能な固定IP又はVPN内IPから登録し、端末ごとに異なる内線・credentialを発行して共有credentialを禁止する。設定用バンドルはGit外へ`0600`で一度だけ作成し、端末取込直後に削除する。QR画像化する場合も同じ有効期限（最大15分）と削除条件を適用する。

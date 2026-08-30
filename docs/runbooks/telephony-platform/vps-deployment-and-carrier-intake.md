@@ -22,6 +22,26 @@ sensitivity: internal
 
 # VPS配備・キャリア接続情報受領手順
 
+## 専門用語一覧
+
+| 用語 | 正式名称・読み方 | 意味・本書での扱い |
+| --- | --- | --- |
+| VPS | Virtual Private Server | 仮想化された専用環境として利用するserver |
+| JSON | JavaScript Object Notation | keyとvalueの構造でデータを表現するテキスト形式 |
+| Git | Git | ファイルの変更履歴とブランチを管理する分散型バージョン管理システム |
+| SIP | Session Initiation Protocol | IP網上で電話の発着信や通話sessionを制御する通信規約 |
+| RTP | Real-time Transport Protocol | SIP等で確立した通話の音声データを運ぶ通信規約 |
+| DTMF | Dual-Tone Multi-Frequency | 電話機の数字キー等の押下情報を伝える信号方式 |
+| DID | Direct Inward Dialing | 着信番号をPBX等へ通知し、番号別に着信先を制御する方式 |
+| FAX | Facsimile | 電話網等を使って文書画像を送受信する通信サービス |
+| SHA-256 | Secure Hash Algorithm 256-bit | データから256bitのhash値を生成し、同一性・改ざん有無を確認するアルゴリズム |
+| Docker | Docker | アプリケーションと依存関係をcontainerとして実行・配布する基盤 |
+| PostgreSQL | PostgreSQL | open sourceのリレーショナルデータベース管理システム |
+| SSH | Secure Shell | 暗号化された通信でserverへログイン・コマンド実行するプロトコル |
+| E2E | End-to-End | 利用者操作から最終処理までの一連の経路又はそのテスト |
+| DB | Database | 業務データを永続的に保存・検索するデータベース |
+| schema | Schema | dataの項目、型、制約及び構造を定義したもの |
+
 ## 接続情報の取込み
 
 Cloco等から回答を受領したら、`configs/carrier-intake.example.json`をGit外へ複製し、SIP/RTP CIDR、認証方式、codec、DTMF、DID形式、FAX、チャネル、CPS、緊急通報条件を記録する。passwordは記録せず、外部secret保管先の識別子だけを設定する。
