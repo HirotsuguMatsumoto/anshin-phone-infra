@@ -1,7 +1,9 @@
 {
-  "checker_sha256": "8e8413d0dd09ef8eb6aabdb8f8c60a0c03705d9e4448286c6970bec444bfc6d1",
-  "contract_version": "2026-08-27.1",
-  "guard_test_sha256": "feb6d992850d2cda7aecb05e751d862ca8b0bbed1d0ec475e2619c7b1006cdb8",
+  "checker_sha256": "50183739c849b66d1468a3e8feae7d783f7cd3287f1346eddd0e58b964ef9bd5",
+  "contract_version": "2026-09-03.1",
+  "guard_test_sha256": "1910900f552c3151f90ab6d2a374d66de16c5f59c8c231736a7caf0e2420e015",
+  "required_ai_policy_doc_id": "anshin.governance.ai-driven-development",
+  "required_ai_policy_marker": "anshin-ai-driven-development-policy:v1",
   "required_build_check_command": "bash scripts/run_document_governance_guard.sh",
   "required_build_check_marker": "anshin-document-governance-build-check:v1",
   "roots": [

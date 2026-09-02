@@ -24,6 +24,8 @@ for path in (checker, runner, guard_test, metadata_path):
 metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
 required_marker = "anshin-document-governance-build-check:v1"
 required_command = "bash scripts/run_document_governance_guard.sh"
+required_ai_policy_marker = "anshin-ai-driven-development-policy:v1"
+required_ai_policy_doc_id = "anshin.governance.ai-driven-development"
 if metadata.get("required_build_check_marker") != required_marker:
     print(
         "[document-governance-distribution-test] ERROR: invalid build check marker contract",
@@ -33,6 +35,18 @@ if metadata.get("required_build_check_marker") != required_marker:
 if metadata.get("required_build_check_command") != required_command:
     print(
         "[document-governance-distribution-test] ERROR: invalid document guard command contract",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+if metadata.get("required_ai_policy_marker") != required_ai_policy_marker:
+    print(
+        "[document-governance-distribution-test] ERROR: invalid AI policy marker contract",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+if metadata.get("required_ai_policy_doc_id") != required_ai_policy_doc_id:
+    print(
+        "[document-governance-distribution-test] ERROR: invalid AI policy doc_id contract",
         file=sys.stderr,
     )
     raise SystemExit(1)

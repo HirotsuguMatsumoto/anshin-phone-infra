@@ -19,9 +19,18 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
 
-CONTRACT_VERSION = "2026-08-27.1"
+CONTRACT_VERSION = "2026-09-03.1"
 BUILD_CHECK_MARKER = "anshin-document-governance-build-check:v1"
 BUILD_CHECK_COMMAND = "bash scripts/run_document_governance_guard.sh"
+AI_POLICY_MARKER = "anshin-ai-driven-development-policy:v1"
+AI_POLICY_DOC_ID = "anshin.governance.ai-driven-development"
+AI_POLICY_REQUIRED_TEXT = (
+    AI_POLICY_DOC_ID,
+    "実際の業務経路による結合テスト",
+    "自動回帰テストへ固定",
+    "独立AI review",
+    "prompt injection",
+)
 DOC_ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]+$")
 DOMAIN_PATTERN = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
 MARKDOWN_LINK_PATTERN = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
@@ -99,7 +108,52 @@ ALLOWED_GITHUB_ACTIONS_WORKFLOWS = {
     "backend-image.yaml": "docker/build-push-action@",
     "deploy-production.yml": "ssh",
     "deploy-production.yaml": "ssh",
+    "production-image.yml": "docker/build-push-action@",
+    "production-image.yaml": "docker/build-push-action@",
 }
+
+
+def validate_ai_policy_contract(
+    repository_root: Path, metadata: dict[str, Any], errors: list[str]
+) -> None:
+    if metadata.get("required_ai_policy_marker") != AI_POLICY_MARKER:
+        errors.append("contract metadata has an invalid AI policy marker")
+    if metadata.get("required_ai_policy_doc_id") != AI_POLICY_DOC_ID:
+        errors.append("contract metadata has an invalid AI policy doc_id")
+
+    candidates = {repository_root / "AGENTS.md"}
+    completed = subprocess.run(
+        ["git", "ls-files", "*AGENTS.md"],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        errors.append("cannot discover tracked AGENTS.md files")
+        return
+    candidates.update(repository_root / line for line in completed.stdout.splitlines())
+    opening = f"<!-- {AI_POLICY_MARKER} -->"
+    closing = f"<!-- /{AI_POLICY_MARKER} -->"
+    for path in sorted(candidates):
+        relative = path.relative_to(repository_root)
+        if not path.is_file():
+            errors.append(f"{relative}: required AI agent entry is missing")
+            continue
+        text = path.read_text(encoding="utf-8")
+        if text.count(opening) != 1 or text.count(closing) != 1:
+            errors.append(
+                f"{relative}: AI-driven development policy marker is missing "
+                "or duplicated"
+            )
+            continue
+        block = text.split(opening, 1)[1].split(closing, 1)[0]
+        missing = [value for value in AI_POLICY_REQUIRED_TEXT if value not in block]
+        if missing:
+            errors.append(
+                f"{relative}: AI-driven development policy block is incomplete: "
+                + ", ".join(missing)
+            )
 
 
 def validate_build_check_contract(
@@ -154,7 +208,8 @@ def validate_github_actions_usage(repository_root: Path, errors: list[str]) -> N
             )
         if re.search(r"(?m)^\s+(?:pull_request|schedule):", text):
             errors.append(
-                f"{relative}: pull_request/schedule GitHub Actions triggers are forbidden"
+                f"{relative}: pull_request/schedule GitHub Actions triggers "
+                "are forbidden"
             )
         lines = text.splitlines()
         for line_number, line in enumerate(lines, start=1):
@@ -700,8 +755,10 @@ def main() -> int:
     errors: list[str] = []
     if metadata.get("contract_version") != CONTRACT_VERSION:
         errors.append(
-            f"contract version mismatch: {metadata.get('contract_version')!r} != {CONTRACT_VERSION!r}"
+            "contract version mismatch: "
+            f"{metadata.get('contract_version')!r} != {CONTRACT_VERSION!r}"
         )
+    validate_ai_policy_contract(repository_root, metadata, errors)
     validate_build_check_contract(repository_root, metadata, errors)
     validate_github_actions_usage(repository_root, errors)
     validate_retired_metadata_templates(repository_root, errors)
@@ -737,7 +794,8 @@ def main() -> int:
             if ignored_count:
                 errors.append(
                     f"{root_id}: document root contains {ignored_count} Git-ignored "
-                    f"unmanaged artifacts ({ignored_bytes} bytes); move restricted/runtime "
+                    f"unmanaged artifacts ({ignored_bytes} bytes); move "
+                    "restricted/runtime "
                     "data outside the document root or register reviewable files as "
                     "governed documents"
                 )
@@ -759,18 +817,21 @@ def main() -> int:
         physical = {path.resolve() for path in paths}
         if len(physical) > 1:
             errors.append(
-                f"duplicate document content {digest}: {', '.join(str(path) for path in paths)}"
+                f"duplicate document content {digest}: "
+                f"{', '.join(str(path) for path in paths)}"
             )
     if errors:
         for error in errors:
             print(f"[document-governance-portable] ERROR: {error}", file=sys.stderr)
         print(
-            f"[document-governance-portable] FAILED errors={len(errors)} roots={len(roots)} documents={documents}",
+            "[document-governance-portable] FAILED "
+            f"errors={len(errors)} roots={len(roots)} documents={documents}",
             file=sys.stderr,
         )
         return 1
     print(
-        f"[document-governance-portable] OK contract={CONTRACT_VERSION} roots={len(roots)} documents={documents}"
+        f"[document-governance-portable] OK contract={CONTRACT_VERSION} "
+        f"roots={len(roots)} documents={documents}"
     )
     return 0
 
