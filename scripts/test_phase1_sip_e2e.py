@@ -3,6 +3,8 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 import shutil
@@ -11,9 +13,31 @@ import tempfile
 import time
 import uuid
 import json
+import stat
 
 
 ROOT = Path(__file__).resolve().parents[1]
+DOCKER_HEAVY_LOCK_PATH = Path("/tmp/anshin-local-docker-heavy.lock")
+
+
+@contextmanager
+def docker_heavy_lease():
+    descriptor = os.open(DOCKER_HEAVY_LOCK_PATH, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    lock_stat = os.fstat(descriptor)
+    if (
+        lock_stat.st_uid != os.getuid()
+        or not stat.S_ISREG(lock_stat.st_mode)
+        or stat.S_IMODE(lock_stat.st_mode) != 0o600
+        or lock_stat.st_nlink != 1
+    ):
+        os.close(descriptor)
+        raise RuntimeError("Docker-heavy resource lease is not an owner-only regular file")
+    with os.fdopen(descriptor, "r+") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError("another Docker-heavy build, test, or cleanup owns the resource lease") from exc
+        yield
 
 
 def run(command: list[str], *, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -39,6 +63,54 @@ def compose_args(project: str) -> list[str]:
         "--file",
         str(ROOT / "compose.phase1.mock.yaml"),
     ]
+
+
+def cleanup_args(base: list[str]) -> list[str]:
+    """Remove every resource built for the unique ephemeral Compose project."""
+    return base + ["down", "--rmi", "local", "--volumes", "--remove-orphans"]
+
+
+def project_image_ids(project: str, env: dict[str, str]) -> list[str]:
+    result = run(
+        ["docker", "image", "ls", "--all", "--quiet", "--no-trunc", "--filter", f"reference={project}-*"],
+        env=env,
+        check=False,
+    )
+    if result.returncode != 0:
+        return []
+    return sorted({line.strip() for line in result.stdout.splitlines() if line.strip()})
+
+
+def cleanup_residue(
+    base: list[str], project: str, env: dict[str, str], expected_image_ids: list[str] | None = None
+) -> list[str]:
+    checks = {
+        "container": base + ["ps", "--all", "--quiet"],
+        "network": ["docker", "network", "ls", "--quiet", "--filter", f"label=com.docker.compose.project={project}"],
+        "volume": ["docker", "volume", "ls", "--quiet", "--filter", f"label=com.docker.compose.project={project}"],
+        "image": ["docker", "image", "ls", "--all", "--quiet", "--filter", f"reference={project}-*"],
+    }
+    residue: list[str] = []
+    for kind, command in checks.items():
+        result = run(command, env=env, check=False)
+        if result.returncode != 0 or result.stdout.strip():
+            residue.append(kind)
+    for image_id in expected_image_ids or []:
+        result = run(["docker", "image", "inspect", image_id], env=env, check=False)
+        if result.returncode == 0:
+            if "image" not in residue:
+                residue.append("image")
+            break
+    return residue
+
+
+def ensure_cleanup_succeeded(cleanup: subprocess.CompletedProcess[str], residue: list[str], test_failed: bool) -> None:
+    """Turn cleanup defects into a test failure without hiding an earlier failure."""
+    if not test_failed and (cleanup.returncode != 0 or residue):
+        raise RuntimeError(
+            "SIP E2E cleanup failed: "
+            f"exit={cleanup.returncode} residue={','.join(residue) or 'unknown'}"
+        )
 
 
 def wait_for_asterisk(base: list[str], env: dict[str, str]) -> None:
@@ -157,7 +229,7 @@ def finish(process: subprocess.Popen[str], label: str) -> None:
         raise RuntimeError(f"{label} failed with exit {process.returncode}:\n{output}")
 
 
-def main() -> int:
+def run_isolated_e2e() -> int:
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required")
 
@@ -457,14 +529,18 @@ def main() -> int:
             print(registration_trace.stdout, end="")
             raise
         finally:
-            cleanup = run(
-                base + ["down", "--volumes", "--remove-orphans"],
-                env=env,
-                check=False,
-            )
-            if cleanup.returncode != 0 or failed:
+            built_image_ids = project_image_ids(project, env)
+            cleanup = run(cleanup_args(base), env=env, check=False)
+            residue = cleanup_residue(base, project, env, built_image_ids)
+            if cleanup.returncode != 0 or residue or failed:
                 print(cleanup.stdout, end="")
+            ensure_cleanup_succeeded(cleanup, residue, failed)
     return 0
+
+
+def main() -> int:
+    with docker_heavy_lease():
+        return run_isolated_e2e()
 
 
 if __name__ == "__main__":
