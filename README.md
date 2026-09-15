@@ -64,13 +64,15 @@ flowchart LR
 - `scripts/phase1_status.sh`: secret値やevent本文を表示せず、service、SIP、Backend及びspool状態を点検
 - `docs/runbooks/telephony-platform/phase1_real_number_runbook.md`: キャリア情報の受領から実通話試験までの手順
 
-Backendは別リポジトリです。ローカルとVPSのどちらも、次の配置を前提とします。
+Backendは別リポジトリです。VPSでは次の入れ子配置を前提とします。
 
 ```text
 anshin-phone-infra/
 ├── compose.phase1.yaml
 └── anshin-phone-backend/   # separate git clone; infra側ではgitignore
 ```
+
+`scripts/verify_phase1.sh`は、開発用workspaceでは`anshin-phone-infra`と同じ階層の`anshin-phone-backend`も自動検出します。両方の配置が存在する場合は曖昧なrepository選択を停止します。検証対象を明示する場合は、backend repository rootの絶対pathを`ANSHIN_PHONE_BACKEND_DIR`へ設定してください。
 
 ## Secret管理
 

@@ -2,6 +2,20 @@
 set -eu
 
 repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+validation_root=$(mktemp -d "${TMPDIR:-/tmp}/anshin-phone-phase1-validation.XXXXXX")
+trap 'rm -rf -- "$validation_root"' EXIT
+mkdir -p "$validation_root/secrets"
+export PYTHONPYCACHEPREFIX="$validation_root/pycache"
+
+if [ -n "${ANSHIN_PHONE_BACKEND_DIR:-}" ]; then
+  ANSHIN_PHONE_BACKEND_DIR=$(python3 "$repo_dir/scripts/resolve_phone_backend.py" \
+    --infra-root "$repo_dir" \
+    --override "$ANSHIN_PHONE_BACKEND_DIR")
+else
+  ANSHIN_PHONE_BACKEND_DIR=$(python3 "$repo_dir/scripts/resolve_phone_backend.py" \
+    --infra-root "$repo_dir")
+fi
+export ANSHIN_PHONE_BACKEND_DIR
 
 required_files='compose.phase1.yaml
 deploy/asterisk/Dockerfile
@@ -18,11 +32,7 @@ deploy/rtpengine/scripts/entrypoint.sh
 scripts/test_phase1_render_config.py
 scripts/test_kamailio_render_config.py
 scripts/test_device_and_voice_tools.py
-scripts/test_carrier_and_firewall_tools.py
-anshin-phone-backend/Dockerfile
-anshin-phone-backend/app/main.py
-anshin-phone-backend/alembic.ini
-anshin-phone-backend/migrations/versions/20260822_0001_initial_phone_control_plane.py'
+scripts/test_carrier_and_firewall_tools.py'
 
 printf '%s\n' "$required_files" | while IFS= read -r item; do
   test -f "$repo_dir/$item" || {
@@ -46,12 +56,13 @@ python3 "$repo_dir/scripts/test_pbx_event_pipeline.py"
 python3 "$repo_dir/scripts/test_device_and_voice_tools.py"
 python3 "$repo_dir/scripts/test_carrier_and_firewall_tools.py"
 python3 "$repo_dir/scripts/test_phase1_sip_e2e_cleanup.py"
+python3 "$repo_dir/scripts/test_resolve_phone_backend.py"
 python3 -m py_compile "$repo_dir/scripts/create_sip_enrollment_bundle.py"
 python3 -m py_compile "$repo_dir/scripts/evaluate_voice_quality.py"
 python3 -m py_compile "$repo_dir/scripts/render_phase1_firewall.py"
 python3 -m py_compile "$repo_dir/scripts/validate_carrier_intake.py"
 
-ANSHIN_PHONE_SECRET_DIR=/private/tmp/anshin-phone-phase1-validation-secrets \
+ANSHIN_PHONE_SECRET_DIR="$validation_root/secrets" \
   CARRIER_AUTH_MODE=registration \
   CARRIER_HOST=carrier.invalid \
   CARRIER_SOURCE_CIDRS=198.51.100.10/32 \
