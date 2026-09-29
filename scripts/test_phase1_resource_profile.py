@@ -42,7 +42,7 @@ class Phase1ResourceProfileTest(unittest.TestCase):
                 self.assertIn(f"    mem_reservation: {reservation}\n", block)
                 self.assertIn(f"    pids_limit: {pids}\n", block)
 
-    def test_steady_state_memory_ceiling_fits_six_gib_phone_vm(self) -> None:
+    def test_steady_state_memory_ceiling_fits_five_gib_phone_vm(self) -> None:
         steady_state_mib = {
             "postgres": 1024,
             "backend": 1024,
@@ -53,7 +53,7 @@ class Phase1ResourceProfileTest(unittest.TestCase):
         }
 
         self.assertEqual(sum(steady_state_mib.values()), 4096)
-        self.assertLessEqual(sum(steady_state_mib.values()), 6 * 1024 - 1536)
+        self.assertLessEqual(sum(steady_state_mib.values()), 5 * 1024 - 1024)
 
     def test_migration_and_backend_do_not_start_concurrently(self) -> None:
         blocks = service_blocks(COMPOSE.read_text(encoding="utf-8"))

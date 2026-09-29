@@ -198,7 +198,7 @@
                 <mxCell id="P_internet_zone" value="Internet / 安全な端末経路" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#EAF2F8;strokeColor=#5B9BD5;" parent="1" vertex="1">
                     <mxGeometry x="780" y="120" width="260" height="1150" as="geometry"/>
                 </mxCell>
-                <mxCell id="P_vps_zone" value="MS-A2-2 Phone LXD VM（/ops/anshin-phone-infra・4 vCPU・6GiB）" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#F8F9F9;strokeColor=#34495E;" parent="1" vertex="1">
+                <mxCell id="P_vps_zone" value="MS-A2-2 Phone LXD VM（/ops/anshin-phone-infra・4 vCPU・5GiB）" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#F8F9F9;strokeColor=#34495E;" parent="1" vertex="1">
                     <mxGeometry x="1070" y="120" width="1190" height="1150" as="geometry"/>
                 </mxCell>
                 <mxCell id="P_ext_caller" value="&lt;b&gt;外部の電話発信者 / 受信者&lt;/b&gt;&lt;br&gt;固定電話・携帯電話" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#5B9BD5;fontSize=14;" parent="1" vertex="1">
