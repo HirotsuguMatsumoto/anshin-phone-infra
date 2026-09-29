@@ -133,7 +133,7 @@ RUN_PHASE1_SIP_E2E=1 ./scripts/verify_phase1.sh
 3. キャリアから受領した非secret接続値を、運用中のsecret manager又は起動プロセスの環境変数から渡す。
 4. `docker compose -f compose.phase1.yaml config` で展開結果を確認する。出力を保存する場合はsecret値を含めない。
 5. Kamailio、RTPengine、Asterisk、PostgreSQL、Backend及びPBX event forwarderを起動し、Kamailio/RTPengineのhealthcheckとAsterisk CLIのendpoint、registration、contactを確認する。
-6. VPSのSIP/RTP受信はキャリア接続元と試験端末経路だけに制限する。スマートフォンは、固定送信元IPを許可した試験用Wi-Fi又はWireGuard等のVPN経路から接続し、SIP/RTPを全世界公開したまま試験しない。
+6. MS-A2-2 Phone VMのSIP/RTPは、Clocoのoutbound registrationで成立する場合だけNAT越しに試験する。固定public inbound又はIP認証が必要な場合は別公開relay又は別回線の受入まで停止し、自宅routerへport forwardingしない。スマートフォンは試験用Wi-Fi又はWireGuard等の管理経路から接続する。
 
 Phase 1の発信ダイヤルプランは、国内の10桁・11桁番号だけを許可し、国際電話、110、118、119、0570及び0990を停止する。緊急通報は上位キャリア、登録住所及び位置通知の要件が確定した後に専用設計として開放する。
 
@@ -146,7 +146,7 @@ Phase 1の発信ダイヤルプランは、国内の10桁・11桁番号だけを
 - 通話相手番号はAsterisk側でマスクしてから耐障害スプールへ書き、Backendへはマスク済み番号だけを送る。
 - 送信済みeventは`sent`、入力不正は`dead-letter`へ移す。5分を超える未送信又はdead-letter発生時はforwarderをunhealthyとして扱う。
 - 日常点検は`./scripts/phase1_status.sh`でservice、Asterisk、SIP endpoint、Backend及びevent spool件数を確認する。event本文やsecret値は表示しない。
-- 実番号、SIP/RTPのhost firewall及びVPN経路が確定するまで、VPSでKamailioの`5060/UDP`及びRTPengineの`20000-20100/UDP`を公開しない。AsteriskのSIP及び内部RTP `10000-10100/UDP`はホストへ公開しない。
+- 実番号、Cloco接続方式、SIP/RTP経路、host firewall及びVPN経路が確定するまで、MS-A2-2 Phone VMで外部SIP/RTPを有効化しない。AsteriskのSIP及び内部RTP `10000-10100/UDP`はVM外へ公開しない。自宅routerのport forwardingは禁止する。
 
 ## 6. 実番号切替・切戻し台帳
 
@@ -189,11 +189,11 @@ Clocoから既存番号の付替え可否と手順を受領した後、切替作
 
 実際の電話番号、SIP認証情報、相手先電話番号、通話録音、FAX原本及び個人情報は公開リポジトリへ保存しない。試験台帳には日時、試験ID、DID末尾4桁をマスクした識別子、方向、結果、SIP response、音声品質、実施者、障害番号だけを残す。
 
-## 9. VPS配置前監査
+## 9. MS-A2-2 Phone VM配置前監査
 
 2026-08-22の読み取り専用再監査では、Disk空き約86GB、available memory約1.1GiB、Swapなし、既存コンテナ7件、SIP/RTP待受なしを確認した。UFWサービスはactiveだったが、実ルールは非対話sudoで取得できず、infra/Backendの両Git working treeには既存差分が残っていた。
 
-したがって、既存差分の統合、firewall実ルールと制御点、メモリ対策、secret保管、バックアップ及び切戻しを確定するまでVPSへ上書き配置しない。詳細は[VPS Phase 1配置前再監査](../../evidence/telephony-platform/vps_phase1_readiness_2026-08-22.md)を参照する。
+過去のVPS readiness evidenceは当時の調査記録として保持するが、現在の配置判断には流用しない。既存差分の統合、MS-A2-2のCore/Auth/Phone resource分離、Cloco接続方式、firewall制御点、secret保管、第2NVMe、別物理障害領域backup及び切戻しを確定するまで顧客通信を接続しない。詳細な現行値は全体infra正本とMS-A2-2 Phone colocation change contractを参照する。
 
 ## 10. Phase 1構成と商用化前の差分
 

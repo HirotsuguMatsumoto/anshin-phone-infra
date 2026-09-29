@@ -53,7 +53,7 @@ flowchart LR
   pbx --> faxstore["FAX受信保管（Phase 1検証）"]
 ```
 
-このリポジトリのPhase 1構成にはKamailio SBC、RTPengine及び非公開Asteriskが含まれ、隔離Docker環境で模擬キャリアとの接続を検証します。商用提供前に追加する対象は、SIP TLS/SRTP、レート制限・不正発信対策、冗長化、モバイルPush着信、監視及び課金です。Ubuntu 24.04のVPSへFreePBX 17を直接導入せず、Asterisk 22.10.1をDebian 12コンテナで固定します。
+このリポジトリのPhase 1構成にはKamailio SBC、RTPengine及び非公開Asteriskが含まれ、隔離Docker環境で模擬キャリアとの接続を検証します。商用提供前に追加する対象は、SIP TLS/SRTP、レート制限・不正発信対策、冗長化、モバイルPush着信、監視及び課金です。MS-A2-2のUbuntu 24.04 Phone VMへFreePBX 17を直接導入せず、Asterisk 22.10.1をDebian 12コンテナで固定します。
 
 ## 構成
 

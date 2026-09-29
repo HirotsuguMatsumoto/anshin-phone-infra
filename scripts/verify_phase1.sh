@@ -30,6 +30,7 @@ deploy/kamailio/scripts/entrypoint.sh
 deploy/rtpengine/Dockerfile
 deploy/rtpengine/scripts/entrypoint.sh
 scripts/test_phase1_render_config.py
+scripts/test_phase1_resource_profile.py
 scripts/test_kamailio_render_config.py
 scripts/test_device_and_voice_tools.py
 scripts/test_carrier_and_firewall_tools.py'
@@ -51,6 +52,7 @@ sh -n "$repo_dir/deploy/rtpengine/scripts/entrypoint.sh"
 sh -n "$repo_dir/scripts/phase1_status.sh"
 sh -n "$repo_dir/scripts/audit_phase1_host.sh"
 python3 "$repo_dir/scripts/test_phase1_render_config.py"
+python3 "$repo_dir/scripts/test_phase1_resource_profile.py"
 python3 "$repo_dir/scripts/test_kamailio_render_config.py"
 python3 "$repo_dir/scripts/test_pbx_event_pipeline.py"
 python3 "$repo_dir/scripts/test_device_and_voice_tools.py"

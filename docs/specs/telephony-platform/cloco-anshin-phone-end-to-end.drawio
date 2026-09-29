@@ -186,7 +186,7 @@
                 <mxCell id="P_title" value="Cloco × アンシンフォン　物理構成（Phase 1配置計画）" style="text;html=1;align=left;verticalAlign=middle;fontSize=24;fontStyle=1;fontColor=#172B4D;" parent="1" vertex="1">
                     <mxGeometry x="40" y="20" width="2220" height="50" as="geometry"/>
                 </mxCell>
-                <mxCell id="P_subtitle" value="Phone専用の公開計算基盤（provider・IP未選定）上のDocker構成。外部公開はKamailioとRTPengineだけ。Asterisk・Backend・PostgreSQLは内部networkへ隔離する。" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fontColor=#5E6C84;" parent="1" vertex="1">
+                <mxCell id="P_subtitle" value="MS-A2-2のPhone専用LXD VM上のDocker構成。Core/AuthとはVM分離し、Cloco接続方式・第2NVMe・法令Gate前は顧客通信を接続しない。" style="text;html=1;align=left;verticalAlign=middle;fontSize=13;fontColor=#5E6C84;" parent="1" vertex="1">
                     <mxGeometry x="40" y="68" width="2220" height="34" as="geometry"/>
                 </mxCell>
                 <mxCell id="P_external_zone" value="外部利用者 / 公衆電話網" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#F2F2F2;strokeColor=#7F8C8D;" parent="1" vertex="1">
@@ -198,7 +198,7 @@
                 <mxCell id="P_internet_zone" value="Internet / 安全な端末経路" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#EAF2F8;strokeColor=#5B9BD5;" parent="1" vertex="1">
                     <mxGeometry x="780" y="120" width="260" height="1150" as="geometry"/>
                 </mxCell>
-                <mxCell id="P_vps_zone" value="Phone専用公開基盤（/ops/anshin-phone-infra・provider/IP未選定）" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#F8F9F9;strokeColor=#34495E;" parent="1" vertex="1">
+                <mxCell id="P_vps_zone" value="MS-A2-2 Phone LXD VM（/ops/anshin-phone-infra・4 vCPU・6GiB）" style="swimlane;html=1;rounded=1;startSize=36;horizontal=1;fontSize=16;fontStyle=1;fillColor=#F8F9F9;strokeColor=#34495E;" parent="1" vertex="1">
                     <mxGeometry x="1070" y="120" width="1190" height="1150" as="geometry"/>
                 </mxCell>
                 <mxCell id="P_ext_caller" value="&lt;b&gt;外部の電話発信者 / 受信者&lt;/b&gt;&lt;br&gt;固定電話・携帯電話" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#5B9BD5;fontSize=14;" parent="1" vertex="1">
@@ -234,7 +234,7 @@
                 <mxCell id="P_keycloak" value="&lt;b&gt;auth.anshin.care&lt;/b&gt;&lt;br&gt;Keycloak OIDC&lt;br&gt;realm: anshin" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E4DFEC;strokeColor=#8064A2;fontSize=13;" parent="1" vertex="1">
                     <mxGeometry x="815" y="700" width="190" height="100" as="geometry"/>
                 </mxCell>
-                <mxCell id="P_firewall" value="&lt;b&gt;Host firewall / Docker publish&lt;/b&gt;&lt;br&gt;SIP：5060/UDP（Cloco・端末許可元だけ）&lt;br&gt;RTP：20000–20100/UDP（Cloco・端末許可元だけ）&lt;br&gt;SSH・PBX管理画面・DBは一般公開しない" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C00000;fontSize=13;fontStyle=1;" parent="1" vertex="1">
+                <mxCell id="P_firewall" value="&lt;b&gt;Phone VM firewall / Docker publish&lt;/b&gt;&lt;br&gt;outbound registration成立時だけSIP/RTPを有効化&lt;br&gt;固定public inbound時は別relayを設計&lt;br&gt;自宅port forwarding・SSH・PBX管理画面・DB公開は禁止" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C00000;fontSize=13;fontStyle=1;" parent="1" vertex="1">
                     <mxGeometry x="1110" y="175" width="1110" height="105" as="geometry"/>
                 </mxCell>
                 <mxCell id="P_edge_lane" value="Docker network: sip-edge 172.31.250.0/24（外部到達側）" style="swimlane;html=1;rounded=1;startSize=32;horizontal=1;fontSize=14;fontStyle=1;fillColor=#DDEBF7;strokeColor=#2F75B5;" parent="1" vertex="1">
@@ -412,13 +412,13 @@
                 <mxCell id="P_e_loopback" value="loopback → backend" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#8064A2;strokeWidth=1;dashed=1;endArrow=open;" parent="1" source="P_secure_ingress" target="P_backend" edge="1">
                     <mxGeometry relative="1" as="geometry"/>
                 </mxCell>
-                <mxCell id="P_gate" value="&lt;b&gt;重要な物理制約&lt;/b&gt;&lt;br&gt;1. AsteriskのSIP/RTPをhostへ公開しない。&lt;br&gt;2. Backend/PostgreSQL/event-forwarderはinternal networkのみ。&lt;br&gt;3. Phase 1のCloco接続はUDP/RTP。TLS/SRTPは未確定。&lt;br&gt;4. 110・118・119はCloco SIPトランク2から発信不可。&lt;br&gt;5. 実番号、SIP credential、録音、FAX原本をGitへ保存しない。&lt;br&gt;6. firewall適用、番号付替え、VPS再起動は本番mutationとして個別承認する。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C00000;fontSize=13;align=left;spacingLeft=10;fontStyle=1;" parent="1" vertex="1">
+                <mxCell id="P_gate" value="&lt;b&gt;重要な物理制約&lt;/b&gt;&lt;br&gt;1. AsteriskのSIP/RTPをPhone VM外へ公開しない。&lt;br&gt;2. Backend/PostgreSQL/event-forwarderはinternal networkのみ。&lt;br&gt;3. Cloco接続方式とTLS/SRTPは未確定。&lt;br&gt;4. 110・118・119はCloco SIPトランク2から発信不可。&lt;br&gt;5. 実番号、SIP credential、録音、FAX原本をGitへ保存しない。&lt;br&gt;6. Core/Auth resource変更とPhone VM作成は固定operationで実行する。&lt;br&gt;7. 第2NVMe前は顧客通信・録音・FAXを無効にする。" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FCE8E6;strokeColor=#C00000;fontSize=13;align=left;spacingLeft=10;fontStyle=1;" parent="1" vertex="1">
                     <mxGeometry x="390" y="1080" width="615" height="160" as="geometry"/>
                 </mxCell>
                 <mxCell id="P_legend" value="&lt;b&gt;凡例&lt;/b&gt;　&lt;font color=&quot;#1F4E79&quot;&gt;━━ SIP / PSTN信号&lt;/font&gt;　&lt;font color=&quot;#00A65A&quot;&gt;┅┅ RTP音声&lt;/font&gt;　&lt;font color=&quot;#4472C4&quot;&gt;━━ event / DB&lt;/font&gt;　&lt;font color=&quot;#8064A2&quot;&gt;━━ 管理・認証&lt;/font&gt;　&lt;font color=&quot;#C00000&quot;&gt;■ 公開境界・停止条件&lt;/font&gt;" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFFFFF;strokeColor=#BFBFBF;fontSize=13;align=left;" parent="1" vertex="1">
                     <mxGeometry x="40" y="1300" width="2220" height="55" as="geometry"/>
                 </mxCell>
-                <mxCell id="P_note" value="状態の読み方：実装済み＝Compose/設定テンプレートに存在。配置計画＝VPSへ安全に配置する予定。未確定＝Cloco書面回答又は商用化設計が未完了。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#5E6C84;fontStyle=1;" parent="1" vertex="1">
+                <mxCell id="P_note" value="状態の読み方：実装済み＝Compose/設定テンプレートに存在。Active構築＝MS-A2-2 Phone VMを顧客通信なしで作る。未確定＝Cloco接続方式、第2NVMe又は商用化Gateが未完了。" style="text;html=1;align=left;verticalAlign=middle;fontSize=12;fontColor=#5E6C84;fontStyle=1;" parent="1" vertex="1">
                     <mxGeometry x="40" y="1365" width="2220" height="45" as="geometry"/>
                 </mxCell>
             </root>
