@@ -32,3 +32,7 @@
 - commit、push、本番接続、実番号試験はユーザーの明示指示なしに行わない。
 
 <!-- anshin-document-governance:v2 -->
+
+## Checker配布の限定検査
+
+文書checkerの配布と定型adapterだけの変更は、`anshin.governance.document-management`の10.2に従い、`bash scripts/build_check.sh --document-distribution`をcanonical検査とする。それ以外の変更では本書の通常fast/full条件を維持する。専用profileが不適格を返した場合は検査を省略せず、通常の変更範囲検査へ戻す。

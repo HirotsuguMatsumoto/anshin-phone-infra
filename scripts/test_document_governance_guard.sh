@@ -90,3 +90,5 @@ if required_command not in executable_lines:
     raise SystemExit(1)
 print("[document-governance-distribution-test] OK")
 PY
+
+python3 "$CHECKER" --repository-root "$REPOSITORY_ROOT" --test-build-check-profile

@@ -11,6 +11,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -24,6 +25,52 @@ BUILD_CHECK_MARKER = "anshin-document-governance-build-check:v1"
 BUILD_CHECK_COMMAND = "bash scripts/run_document_governance_guard.sh"
 AI_POLICY_MARKER = "anshin-ai-driven-development-policy:v1"
 AI_POLICY_DOC_ID = "anshin.governance.ai-driven-development"
+DISTRIBUTION_PATHS = frozenset({
+    "scripts/document_governance_portable.py",
+    "scripts/run_document_governance_guard.sh",
+    "scripts/test_document_governance_guard.sh",
+    "scripts/document_governance_contract.json",
+})
+DISTRIBUTION_BUILD_ADAPTER = '''
+# anshin-document-distribution-profile:v1
+if [[ "${1:-}" == "--document-distribution" ]]; then
+  [[ $# -eq 1 ]] || { echo "[build_check] ERROR: distribution mode accepts no paths" >&2; exit 2; }
+  bash scripts/run_document_governance_guard.sh
+  DISTRIBUTION_SELECTION="$(bash scripts/run_document_governance_guard.sh --build-check-profile)"
+  read -r DISTRIBUTION_PROFILE DISTRIBUTION_BASE DISTRIBUTION_TARGET DISTRIBUTION_HEAD DISTRIBUTION_INPUT <<< "$DISTRIBUTION_SELECTION"
+  [[ "$DISTRIBUTION_PROFILE" == "document-distribution" ]] || {
+    echo "[build_check] ERROR: actual changes require the normal repository profile" >&2
+    exit 2
+  }
+  git diff --no-ext-diff --no-textconv --check "$DISTRIBUTION_BASE...HEAD" --
+  git diff --no-ext-diff --no-textconv --cached --check --
+  git diff --no-ext-diff --no-textconv --check --
+  bash -n scripts/build_check.sh scripts/run_document_governance_guard.sh scripts/test_document_governance_guard.sh
+  bash scripts/test_document_governance_guard.sh "$ROOT_DIR"
+  [[ "$(bash scripts/run_document_governance_guard.sh --build-check-profile)" == "$DISTRIBUTION_SELECTION" ]] || {
+    echo "[build_check] ERROR: distribution inputs changed during verification" >&2
+    exit 1
+  }
+  echo "[build_check] OK profile=document-distribution"
+  exit 0
+fi
+# /anshin-document-distribution-profile:v1
+'''
+DISTRIBUTION_AGENTS_ADAPTER = '''
+## Checker配布の限定検査
+
+文書checkerの配布と定型adapterだけの変更は、`anshin.governance.document-management`の10.2に従い、`bash scripts/build_check.sh --document-distribution`をcanonical検査とする。それ以外の変更では本書の通常fast/full条件を維持する。専用profileが不適格を返した場合は検査を省略せず、通常の変更範囲検査へ戻す。
+'''
+DISTRIBUTION_HOOK_PATH = ".githooks/pre-commit"
+DISTRIBUTION_HOOK_ADAPTER = '''
+# anshin-document-distribution-hook:v1
+distribution_selection="$(bash scripts/run_document_governance_guard.sh --build-check-profile)"
+if [[ "$distribution_selection" == document-distribution\\ * ]]; then
+  bash scripts/build_check.sh --document-distribution
+  exit 0
+fi
+# /anshin-document-distribution-hook:v1
+'''
 AI_POLICY_REQUIRED_TEXT = (
     AI_POLICY_DOC_ID,
     "実際の業務経路による結合テスト",
@@ -106,8 +153,8 @@ FORBIDDEN_GITHUB_ACTIONS_QUALITY_COMMANDS = (
 ALLOWED_GITHUB_ACTIONS_WORKFLOWS = {
     "backend-image.yml": "docker/build-push-action@",
     "backend-image.yaml": "docker/build-push-action@",
-    "deploy-production.yml": "ssh",
-    "deploy-production.yaml": "ssh",
+    "deploy-production.yml": "sh/release_workflow.py run",
+    "deploy-production.yaml": "sh/release_workflow.py run",
     "production-image.yml": "docker/build-push-action@",
     "production-image.yaml": "docker/build-push-action@",
 }
@@ -316,6 +363,272 @@ SKIP_PARTS = {".git", ".venv", "node_modules", "vendor"}
 
 class ContractError(Exception):
     pass
+
+
+def distribution_git(repository_root: Path, *arguments: str) -> bytes:
+    # Production callers only inspect Git. Use the same system Git as lifecycle
+    # checks; write authority and integration remain with the guarded runner.
+    environment = {
+        key: value for key, value in os.environ.items() if not key.startswith("GIT_")
+    }
+    if os.environ.get("GIT_INDEX_FILE"):
+        environment["GIT_INDEX_FILE"] = os.environ["GIT_INDEX_FILE"]
+    result = subprocess.run(
+        ["/usr/bin/git", "-C", str(repository_root), *arguments],
+        env=environment, capture_output=True, check=False,
+    )
+    if result.returncode:
+        raise ContractError("cannot determine distribution profile from Git")
+    return result.stdout
+
+
+def distribution_adapter(base: bytes) -> bytes:
+    anchor = b'\ncd "$ROOT_DIR"\n'
+    if base.count(anchor) != 1:
+        raise ContractError("build check has no unique repository-root entry")
+    return base.replace(anchor, anchor + DISTRIBUTION_BUILD_ADAPTER.encode(), 1)
+
+
+DISTRIBUTION_BROWSER_LINES = [
+  [
+    "- headless / 別 profile / in-app browser / token 注入だけで完全準拠確認済みと報告してはいけない。",
+    "- headless / 別 profile / token 注入だけで完全準拠確認済みと報告してはいけない。"
+  ],
+  [
+    "## Chrome ChatGPT 拡張による画面確認",
+    "## 右サイドのin-app browserによる画面確認"
+  ],
+  [
+    "## Google Drive / Google Docs / Google Sheets の Chrome 正本tab",
+    "## Google Drive / Google Docs / Google Sheets の in-app browser正本tab"
+  ],
+  [
+    "### Anshin app の Chrome 正本tab",
+    "### Anshin app の in-app browser正本tab"
+  ],
+  [
+    "### Chrome 比較確認",
+    "### in-app browser比較確認"
+  ],
+  [
+    "- ChatGPT 拡張が使えない、対象 URL を開けない、ログイン状態が確認できない場合は、代替手段へ切り替えず停止して報告する。",
+    "- 右サイドのin-app browserが使えない、対象 URL を開けない、ログイン状態が確認できない場合は、代替手段へ切り替えず停止して報告する。"
+  ],
+  [
+    "- Chrome 比較確認の結果",
+    "- in-app browser比較確認の結果"
+  ],
+  [
+    "- Google Drive、Google Docs又はGoogle SheetsをChromeで扱う前に、全live Chrome extension instanceと、各instanceの全`browser.user.openTabs()`を確認する。最初の1instance又は`browser.tabs.list()`だけで全Chromeを確認済みと判定してはいけない。",
+    "- Google Drive、Google Docs又はGoogle Sheetsをブラウザで扱う前に、右サイドのin-app browserの全open tabを確認する。一部のtabだけで全体を確認済みと判定してはいけない。"
+  ],
+  [
+    "- OAuth connectorとChrome loginを混同しない。回答には確認したinstance数、候補tab数、対象ID、画面上のaccountメール及び4段階の結果を区別して記載する。",
+    "- OAuth connectorとin-app browser loginを混同しない。回答には確認したinstance数、候補tab数、対象ID、画面上のaccountメール及び4段階の結果を区別して記載する。"
+  ],
+  [
+    "- `auth.anshin.care` のKeycloak画面、Chromeのprofile名・avatar、URL一致、ChatGPT拡張の接続状態だけでは `h@anshin.care` の正本証明にならない。",
+    "- `auth.anshin.care` のKeycloak画面、ブラウザの表示名・avatar、URL一致、ブラウザの接続状態だけでは `h@anshin.care` の正本証明にならない。"
+  ],
+  [
+    "- `https://app.anshin.care/...` または `http://localhost:3010/...` の画面確認を始める前に、Chrome ChatGPT拡張で確認できる全接続instance・全open tabを列挙し、対象hostが一致し、かつ画面内に `h@anshin.care` が表示されているtabを正本候補にする。",
+    "- `https://app.anshin.care/...` または `http://localhost:3010/...` の画面確認を始める前に、右サイドのin-app browserで確認できる全open tabを列挙し、対象hostが一致し、かつ画面内に `h@anshin.care` が表示されているtabを正本候補にする。"
+  ],
+  [
+    "- localhost の画面確認・画面テスト・スクリーンショット確認は、必ず app-local rule に従い、ユーザーが起動している Chrome の ChatGPT 拡張を使う。Playwright / CDP / headless / 別 profile / in-app browser / token 注入 / 認証 state 生成だけで確認済みにしない。",
+    "- localhost の画面確認・画面テスト・スクリーンショット確認は、必ず app-local rule に従い、右サイドのin-app browserを使う。Playwright / CDP / headless / 別 profile / token 注入 / 認証 state 生成だけで確認済みにしない。"
+  ],
+  [
+    "- ユーザーが `pnpm dev` などで起動した Chrome・localhost を正本にする。画面確認では Chrome の ChatGPT 拡張を使い、ユーザー指定の URL と port をそのまま開く。`127.0.0.1`、別 port、別 Chrome profile、Playwright / CDP / headless browser、in-app browser、token 注入へ置き換えない。",
+    "- ユーザーが `pnpm dev` などで起動した localhost を正本にする。画面確認では右サイドのin-app browserを使い、ユーザー指定の URL と port をそのまま開く。`127.0.0.1`、別 port、別 Chrome profile、Playwright / CDP / headless browser、token 注入へ置き換えない。"
+  ],
+  [
+    "- ユーザー指定 URL と port をそのまま開く。`localhost` を `127.0.0.1` に変えない。別 port、別 Chrome profile、Playwright / CDP / headless browser、in-app browser、token 注入へ置き換えない。",
+    "- ユーザー指定 URL と port をそのまま開く。`localhost` を `127.0.0.1` に変えない。別 port、別 Chrome profile、Playwright / CDP / headless browser、token 注入へ置き換えない。"
+  ],
+  [
+    "- 値はtool出力、ログ、スクリーンショット、報告、test fixture、生成物へ表示・転記せず、Chrome ChatGPT拡張の対象フォームへ直接入力する用途だけに使う。`.env` 自体は編集・生成・commitしてはいけない。",
+    "- 値はtool出力、ログ、スクリーンショット、報告、test fixture、生成物へ表示・転記せず、右サイドのin-app browserの対象フォームへ直接入力する用途だけに使う。`.env` 自体は編集・生成・commitしてはいけない。"
+  ],
+  [
+    "- 既存production app tabが0件でもlive extension instanceが一意なら、そのinstanceで`app.anshin.care`を開いてよい。sign-inへ到達した場合は同じtabでGoogle loginを開始し、`h@anshin.care`を選択する。callback後に画面内`h@anshin.care`を再確認して正本tabを確定し、依頼済み本番確認を続行する。別accountが表示された場合だけ停止する。",
+    "- 既存production app tabが0件でもin-app browser sessionが一意なら、そのsessionで`app.anshin.care`を開いてよい。sign-inへ到達した場合は同じtabでGoogle loginを開始し、`h@anshin.care`を選択する。callback後に画面内`h@anshin.care`を再確認して正本tabを確定し、依頼済み本番確認を続行する。別accountが表示された場合だけ停止する。"
+  ],
+  [
+    "- 正本tabを特定する前に、新しいChrome window / tabを作成したり、別profileへ切り替えたり、対象tabを遷移・reload・ログアウト・ログインしたりしてはいけない。別profile・別accountのtabを代用しない。",
+    "- 正本tabを特定する前に、新しいbrowser tabを作成したり、別profileへ切り替えたり、対象tabを遷移・reload・ログアウト・ログインしたりしてはいけない。別profile・別accountのtabを代用しない。"
+  ],
+  [
+    "- 画面確認・画面テスト・スクリーンショット確認の正本は、ユーザーが起動している Chrome の ChatGPT 拡張である。",
+    "- 画面確認・画面テスト・スクリーンショット確認の正本は、右サイドのin-app browserである。"
+  ],
+  [
+    "10. focused test、guard、実画面確認の手順と残リスク。Anshin frontend / customerの画面確認はChrome ChatGPT拡張を正本にする。",
+    "10. focused test、guard、実画面確認の手順と残リスク。Anshin frontend / customerの画面確認は右サイドのin-app browserを正本にする。"
+  ],
+  [
+    "backend source、generated、Python library、Docker runtimeの変更をアンシンアプリ実画面で確認する場合は、focused checkと必要なlocal migrationの後、Chrome確認より先にinfra正本 `/Users/matsumotoyuuji/dev/anshin/sh/rebuild_local.sh` を実行する。",
+    "backend source、generated、Python library、Docker runtimeの変更をアンシンアプリ実画面で確認する場合は、focused checkと必要なlocal migrationの後、in-app browser確認より先にinfra正本 `/Users/matsumotoyuuji/dev/anshin/sh/rebuild_local.sh` を実行する。"
+  ],
+  [
+    "実装後は `差分・mode選択 → focused check / migration → rebuild → /healthz log確認 → Chrome ChatGPT拡張で画面確認 → 原因層を切り分けて根本修正 → focused checkから再実行` を1サイクルとする。API 5xx、backend log、migration head、OpenAPI / generated同期、library反映を確認せずUIだけを修正しない。正本の詳細手順は `/Users/matsumotoyuuji/dev/anshin/AGENTS.md` の `anshin-local-screen-pdca:v1` とする。",
+    "実装後は `差分・mode選択 → focused check / migration → rebuild → /healthz log確認 → 右サイドのin-app browserで画面確認 → 原因層を切り分けて根本修正 → focused checkから再実行` を1サイクルとする。API 5xx、backend log、migration head、OpenAPI / generated同期、library反映を確認せずUIだけを修正しない。正本の詳細手順は `/Users/matsumotoyuuji/dev/anshin/AGENTS.md` の `anshin-local-screen-pdca:v1` とする。"
+  ],
+  [
+    "画面確認が必要な場合は、Chrome ChatGPT 拡張で次を確認する。",
+    "画面確認が必要な場合は、右サイドのin-app browserで次を確認する。"
+  ]
+]
+
+
+def distribution_agents_adapter(base: bytes) -> bytes:
+    replacements = {old.encode(): new.encode() for old, new in DISTRIBUTION_BROWSER_LINES}
+    fixed = b"".join(replacements.get(line.rstrip(b"\n"), line.rstrip(b"\n")) + (b"\n" if line.endswith(b"\n") else b"") for line in base.splitlines(keepends=True))
+    return fixed + DISTRIBUTION_AGENTS_ADAPTER.encode()
+
+def distribution_hook_adapter(base: bytes) -> bytes:
+    anchor = b'\ncd "$repo_root"\n'
+    if not base.startswith(b"#!/usr/bin/bash\n") or base.count(anchor) != 1:
+        raise ContractError("pre-commit hook has no unique supported entry")
+    fixed = b"#!/bin/bash\n" + base.split(b"\n", 1)[1]
+    return fixed.replace(anchor, anchor + DISTRIBUTION_HOOK_ADAPTER.encode(), 1)
+
+
+def distribution_paths_eligible(
+    paths: set[str], *, base_build: bytes | None = None,
+    current_build: bytes | None = None, base_agents: bytes | None = None,
+    current_agents: bytes | None = None,
+    base_hook: bytes | None = None, current_hook: bytes | None = None,
+) -> bool:
+    if not paths.intersection(DISTRIBUTION_PATHS):
+        return False
+    if not paths.issubset(DISTRIBUTION_PATHS | {"scripts/build_check.sh", "AGENTS.md", DISTRIBUTION_HOOK_PATH}):
+        return False
+    migration = paths.intersection({"scripts/build_check.sh", "AGENTS.md"})
+    if migration:
+        if migration != {"scripts/build_check.sh", "AGENTS.md"}:
+            return False
+        if base_build is None or base_agents is None:
+            return False
+        try:
+            expected_build = distribution_adapter(base_build)
+        except ContractError:
+            return False
+        if current_build != expected_build:
+            return False
+        if current_agents != distribution_agents_adapter(base_agents):
+            return False
+    if DISTRIBUTION_HOOK_PATH in paths:
+        if migration != {"scripts/build_check.sh", "AGENTS.md"} or base_hook is None:
+            return False
+        try:
+            if current_hook != distribution_hook_adapter(base_hook):
+                return False
+        except ContractError:
+            return False
+    return True
+
+
+def distribution_selection(repository_root: Path) -> str:
+    target = distribution_git(repository_root, "rev-parse", "--verify", "origin/main").strip().decode("ascii")
+    head = distribution_git(repository_root, "rev-parse", "HEAD").strip().decode("ascii")
+    base = distribution_git(repository_root, "merge-base", target, head).strip().decode("ascii")
+    common_diff = ("diff", "--no-ext-diff", "--no-textconv", "--no-renames")
+    path_commands = (
+        (*common_diff, "--name-only", "-z", f"{base}...{head}", "--"),
+        (*common_diff, "--name-only", "-z", "--cached", "--"),
+        (*common_diff, "--name-only", "-z", "--"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    )
+    paths: set[str] = set()
+    for command in path_commands:
+        for raw in distribution_git(repository_root, *command).split(b"\0"):
+            if raw:
+                paths.add(os.fsdecode(raw))
+    extra: dict[str, bytes] = {}
+    if "scripts/build_check.sh" in paths or "AGENTS.md" in paths:
+        for name, path in (("build", "scripts/build_check.sh"), ("agents", "AGENTS.md")):
+            current = repository_root / path
+            if not current.is_file() or current.is_symlink():
+                return f"repository-fast {base} {target} {head} -"
+            extra[f"current_{name}"] = current.read_bytes()
+            extra[f"base_{name}"] = distribution_git(repository_root, "show", f"{base}:{path}")
+    if DISTRIBUTION_HOOK_PATH in paths:
+        hook = repository_root / DISTRIBUTION_HOOK_PATH
+        if not hook.is_file() or hook.is_symlink():
+            return f"repository-fast {base} {target} {head} -"
+        extra["current_hook"] = hook.read_bytes()
+        extra["base_hook"] = distribution_git(repository_root, "show", f"{base}:{DISTRIBUTION_HOOK_PATH}")
+    if not distribution_paths_eligible(paths, **extra):
+        return f"repository-fast {base} {target} {head} -"
+    # Fingerprinting an arbitrary index only proves it did not change, not that
+    # its payload was verified. Every layer must contain the old or new asset.
+    trees = []
+    for revision in (base, head):
+        entries = {}
+        for row in distribution_git(repository_root, "ls-tree", "-z", revision, "--", *sorted(paths)).split(b"\0"):
+            if row:
+                metadata, name = row.split(b"\t", 1)
+                mode, kind, oid = metadata.split()
+                entries[os.fsdecode(name)] = (mode, kind, oid)
+        trees.append(entries)
+    index = {}
+    for row in distribution_git(repository_root, "ls-files", "--stage", "-z", "--", *sorted(paths)).split(b"\0"):
+        if row:
+            metadata, name = row.split(b"\t", 1)
+            mode, oid, stage = metadata.split()
+            if stage != b"0":
+                raise ContractError("distribution index has unresolved entries")
+            index[os.fsdecode(name)] = (mode, b"blob", oid)
+    digest = hashlib.sha256()
+    for path in sorted(paths):
+        current = repository_root / path
+        if not current.is_file() or current.is_symlink():
+            raise ContractError("distribution asset is missing or is not a regular file")
+        previous = trees[0].get(path)
+        if previous is None or previous[0] not in {b"100644", b"100755"} or previous[1] != b"blob":
+            raise ContractError("distribution baseline is not a regular tracked asset")
+        allowed = {
+            distribution_git(repository_root, "cat-file", "blob", previous[2].decode("ascii")),
+            current.read_bytes(),
+        }
+        for layer in (trees[1], index):
+            entry = layer.get(path)
+            if entry is None or entry[:2] != previous[:2]:
+                raise ContractError("distribution asset mode or presence changed")
+            if distribution_git(repository_root, "cat-file", "blob", entry[2].decode("ascii")) not in allowed:
+                raise ContractError("distribution commit/index contains unverified bytes")
+        digest.update(os.fsencode(path) + b"\0")
+        digest.update(hashlib.sha256(current.read_bytes()).digest())
+    for arguments in (
+        (*common_diff, "--raw", "-z", "--cached", "--"),
+        (*common_diff, "--raw", "-z", "--"),
+        ("ls-files", "--stage", "-z", "--", *sorted(paths)),
+    ):
+        digest.update(distribution_git(repository_root, *arguments))
+    return f"document-distribution {base} {target} {head} {digest.hexdigest()}"
+
+
+def test_distribution_profile() -> None:
+    base = b'#!/usr/bin/env bash\ncd "$ROOT_DIR"\nlegacy\n'
+    agents = b"existing policy\n"
+    migration = set(DISTRIBUTION_PATHS) | {"scripts/build_check.sh", "AGENTS.md"}
+    values = {"base_build": base, "current_build": distribution_adapter(base),
+              "base_agents": agents, "current_agents": agents + DISTRIBUTION_AGENTS_ADAPTER.encode()}
+    cases = [
+        (set(DISTRIBUTION_PATHS), {}, True),
+        (set(), {}, False),
+        ({"AGENTS.md"}, {}, False),
+        (set(DISTRIBUTION_PATHS) | {"app/business.py"}, {}, False),
+        (set(DISTRIBUTION_PATHS) | {"docs/日本語\n境界.md"}, {}, False),
+        (migration, values, True),
+        (migration, {**values, "current_build": values["current_build"] + b"extra\n"}, False),
+        (migration, {**values, "current_agents": b"arbitrary policy\n"}, False),
+    ]
+    for paths, kwargs, expected in cases:
+        if distribution_paths_eligible(paths, **kwargs) != expected:
+            raise ContractError("distribution profile regression failed")
+    print("[document-governance-distribution-profile-test] OK cases=8")
 
 
 def scalar(value: str) -> Any:
@@ -748,9 +1061,24 @@ def validate_root(
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository-root", type=Path, required=True)
-    parser.add_argument("--contract-metadata", type=Path, required=True)
+    parser.add_argument("--contract-metadata", type=Path)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--build-check-profile", action="store_true")
+    mode.add_argument("--test-build-check-profile", action="store_true")
     args = parser.parse_args()
     repository_root = args.repository_root.resolve()
+    if args.build_check_profile or args.test_build_check_profile:
+        try:
+            if args.test_build_check_profile:
+                test_distribution_profile()
+            else:
+                print(distribution_selection(repository_root))
+        except (ContractError, OSError, UnicodeError) as error:
+            print(f"[document-governance-profile] ERROR: {error}", file=sys.stderr)
+            return 1
+        return 0
+    if args.contract_metadata is None:
+        parser.error("--contract-metadata is required for document validation")
     metadata = json.loads(args.contract_metadata.read_text(encoding="utf-8"))
     errors: list[str] = []
     if metadata.get("contract_version") != CONTRACT_VERSION:

@@ -1,7 +1,7 @@
 {
-  "checker_sha256": "50183739c849b66d1468a3e8feae7d783f7cd3287f1346eddd0e58b964ef9bd5",
+  "checker_sha256": "25d65907a1c2b5f474a46ea8eed0ab19b795fc2e0c531b98d988248b092f8496",
   "contract_version": "2026-09-03.1",
-  "guard_test_sha256": "1910900f552c3151f90ab6d2a374d66de16c5f59c8c231736a7caf0e2420e015",
+  "guard_test_sha256": "7ad7cd45c1ad6df08ec8d7c43c3cf22a0e5fe6b42e9e294d327ccde98ad001c3",
   "required_ai_policy_doc_id": "anshin.governance.ai-driven-development",
   "required_ai_policy_marker": "anshin-ai-driven-development-policy:v1",
   "required_build_check_command": "bash scripts/run_document_governance_guard.sh",
@@ -12,6 +12,6 @@
       "id": "anshin-phone"
     }
   ],
-  "runner_sha256": "37ddb99bcaeed661770129073ff4a1fc35162f0d706ea3ed94108ac71b723d64",
+  "runner_sha256": "21c452a37aecb67120d9aa0bc7fd15edecc460279a90920b0ffb6e98368b80d4",
   "schema_version": 1
 }
