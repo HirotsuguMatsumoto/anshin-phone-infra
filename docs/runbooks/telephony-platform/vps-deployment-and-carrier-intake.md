@@ -15,7 +15,7 @@ consumers: [anshin-phone-infra]
 code_paths: [compose.phase1.yaml, scripts/render_phase1_firewall.py, scripts/validate_carrier_intake.py]
 contract_paths: [configs/carrier-intake.example.json]
 test_paths: [scripts/test_carrier_and_firewall_tools.py]
-last_reviewed: "2026-08-21"
+last_reviewed: "2026-09-30"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -43,6 +43,8 @@ sensitivity: internal
 | schema | Schema | dataの項目、型、制約及び構造を定義したもの |
 
 ## 接続情報の取込み
+
+2026年9月30日に確認したClocoの返信・添付図は[接続・責任分界の確認仕様](../../specs/telephony-platform/cloco-sip-trunk-interface.md)に記録した。インターネット経由SIPトランク接続と概略責任分界は確認済みだが、具体的な接続先、認証、SIP/RTP、FAX及びチャネル容量は未受領である。番号数の上限なしを同時通話容量の確定値として入力しない。物理配置先も当該添付図から確定しない。
 
 Cloco等から回答を受領したら、`configs/carrier-intake.example.json`をGit外へ複製し、SIP/RTP CIDR、認証方式、codec、DTMF、DID形式、FAX、チャネル、CPS、緊急通報条件を記録する。passwordは記録せず、外部secret保管先の識別子だけを設定する。
 

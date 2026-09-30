@@ -17,7 +17,7 @@ consumers:
 code_paths: []
 contract_paths: []
 test_paths: []
-last_reviewed: null
+last_reviewed: "2026-09-30"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -38,6 +38,8 @@ sensitivity: internal
 このルートは、Anshin Phone の通信・infra運用文書を管理する。登録時点では正本を宣言せず、実装、契約、法令・キャリア条件との照合が完了した文書だけを別途canonical候補として審査する。
 
 ## 現在の文書
+
+- [Cloco SIPトランク接続・責任分界の確認仕様](specs/telephony-platform/cloco-sip-trunk-interface.md): 2026年9月30日に確認したCloco返信・添付図の確定範囲、当社予定構成への対応及び未受領の詳細仕様。
 
 - [Cloco × アンシンフォン 論理・物理構成図](specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio): 電話発信者・受信者、Cloco SIPトランク2、SBC、RTPengine、Asterisk、Backend及び管理系を発着信方向別に示すdraw.io XML。
 - [Phase 1 実番号接続手順](runbooks/telephony-platform/phase1_real_number_runbook.md): 実番号試験の参照runbook。`reference / inventory`であり、商用提供可否や法令適合の正本ではない。
