@@ -22,7 +22,7 @@
 
 <!-- /anshin-ai-driven-development-policy:v1 -->
 
-このrepositoryは、Anshin PhoneのSIP / PBX / Phase 1通信基盤を管理する。上位の`/Users/matsumotoyuuji/dev/AGENTS.md`と、このファイルを併用する。
+このrepositoryは、Anshin PhoneのSIP / PBX / Phase 1通信基盤を管理する。上位の`${WORKSPACE_ROOT}/AGENTS.md`と、このファイルを併用する。 `WORKSPACE_ROOT`は各repositoryの親directoryを指し、この上位fileとrepository内の`AGENTS.md`を区別する。
 
 - `.env*`、secret、実電話番号、SIP credential、通話・FAX原本を読み書き・追跡しない。
 - キャリア契約、番号利用、緊急通報、電気通信事業、第三者提供の可否を実装だけから確定しない。
