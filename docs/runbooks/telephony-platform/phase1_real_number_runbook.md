@@ -120,7 +120,9 @@ RUN_PHASE1_SIP_E2E=1 ./scripts/verify_phase1.sh
 
 ## 4. 配置
 
-1. `/ops/anshin-phone-infra` と `/ops/anshin-phone-infra/anshin-phone-backend` がそれぞれ正しいGitリポジトリであることを確認する。
+本節では、server上の既存deployment rootを`DEPLOYMENT_ROOT=/ops`とする。
+
+1. `${DEPLOYMENT_ROOT}/anshin-phone-infra` と `${DEPLOYMENT_ROOT}/anshin-phone-infra/anshin-phone-backend` がそれぞれ正しいGitリポジトリであることを確認する。
 2. Git管理外かつアクセス制限された専用ディレクトリへ4つのsecretを配置する。`.env`は作らない。
 3. キャリアから受領した非secret接続値を、運用中のsecret manager又は起動プロセスの環境変数から渡す。
 4. `docker compose -f compose.phase1.yaml config` で展開結果を確認する。出力を保存する場合はsecret値を含めない。
