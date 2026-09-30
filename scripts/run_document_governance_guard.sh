@@ -3,6 +3,11 @@
 set -euo pipefail
 
 REPOSITORY_ROOT="$(git rev-parse --show-toplevel)"
+if [[ "${1:-}" == "--build-check-profile" ]]; then
+  [[ $# -eq 1 ]] || { echo "[document-governance-profile] ERROR: unexpected arguments" >&2; exit 2; }
+  exec python3 "$REPOSITORY_ROOT/scripts/document_governance_portable.py" \
+    --repository-root "$REPOSITORY_ROOT" --build-check-profile
+fi
 EXPLICIT_GOVERNANCE_ROOT=false
 
 if [[ -n "${ANSHIN_GOVERNANCE_ROOT:-}" ]]; then
