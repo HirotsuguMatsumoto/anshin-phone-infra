@@ -64,6 +64,12 @@ flowchart LR
 - `scripts/phase1_status.sh`: secret値やevent本文を表示せず、service、SIP、Backend及びspool状態を点検
 - `docs/runbooks/telephony-platform/phase1_real_number_runbook.md`: キャリア情報の受領から実通話試験までの手順
 
+## Resource上限の現状
+
+Phase 1の各serviceには、CPU、memory及びprocess数の上限を設定する方針とする。ただし、対象host又はVMにおける通話・FAX負荷をまだ計測しておらず、`compose.phase1.yaml`には検証済みの`cpus`、`mem_limit`、`mem_reservation`又は`pids_limit`を設定していない。未計測の容量値、過去の別環境の値又は他serviceの割当から上限を推測しない。
+
+顧客通信を有効化する前に、[Phase 1実番号接続手順](docs/runbooks/telephony-platform/phase1_real_number_runbook.md)のresource計測を対象環境で行う。計測結果に基づくservice別予算、Compose上限、監視閾値及び切戻しは、別の実装changeで固定して検証する。この方針を理由にCore又はAuthのCPU、memory、storage若しくは配置を変更しない。
+
 Backendは別リポジトリです。VPSでは次の入れ子配置を前提とします。
 
 ```text

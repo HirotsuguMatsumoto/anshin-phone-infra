@@ -66,6 +66,12 @@ sensitivity: internal
 | MD | Markdown | 見出し、表、link等をplain textで記述する文書形式 |
 | SBC | Session Border Controller | SIP通信の境界で接続制御、セキュリティ及び相互接続を担う設備 |
 | SRTP | Secure Real-time Transport Protocol | 音声等のRTP packetを暗号化・認証するprotocol |
+| CPU | Central Processing Unit | serviceの処理を実行する演算resource。使用量と飽和時間を計測する。 |
+| memory | Memory | serviceとOSが実行中のdataを保持するresource。通常値、peak及び回収後の値を計測する。 |
+| process数 | Process count | serviceが同時に作成するprocess及びthreadの規模。Composeでは`pids_limit`の候補となる。 |
+| latency | Latency | 通話確立、API又はevent配送が完了するまでの遅延。 |
+| packet loss | Packet loss | 送信されたRTP packetのうち受信側へ届かなかった割合。 |
+| OOM | Out Of Memory | 利用可能なmemoryを使い切り、OS等がprocessを強制終了する状態。 |
 
 ## 1. ゴール
 
@@ -194,3 +200,19 @@ Clocoから既存番号の付替え可否と手順を受領した後、切替作
 Phase 1の外部SIPはKamailio SBCだけで受け、RTPはRTPengineへ固定し、Asteriskを内部networkへ隔離する。隔離モックではスマホREGISTER、キャリア着信、スマホ発信、RTPengineのSDP書換えまで自動検査する。実キャリア接続情報を受領するまでは実疎通や実音声の合格とは扱わない。
 
 外部顧客へ提供する前に、TLS/SRTP、モバイルPush、fraud検知・rate limit、冗長化、監視、暗号化backup、災害時切替、端末provisioning lifecycle及び実負荷試験を必須追加する。Phase 1の成功を、そのまま商用提供可能の判定に使わない。
+
+### 10.1 顧客通信有効化前のresource計測
+
+現時点では、対象host又はVM上の通話・FAX負荷を計測しておらず、`compose.phase1.yaml`にもservice別のCPU、memory又はprocess数上限を設定していない。顧客通信を有効化する前に、対象環境で少なくともidle、想定同時通話、通話中のevent配送、FAX処理及びDB処理を再現し、次をservice別に記録する。
+
+- CPU使用量と飽和時間
+- memoryの通常値、peak及び回収後の値
+- process数とthread数のpeak
+- 通話確立時間、API及びevent配送のlatency
+- RTP packet loss、片通話、無音及び切断
+- OOM kill、process異常終了、healthcheck失敗及びrestart回数
+- host又はVM全体に残るCPU、memory、process及びstorageの余白
+
+計測fixture、同時通話数、FAX件数、継続時間、対象SHA及び対象環境を証跡へ固定する。実電話番号、SIP credential、相手先番号、録音又はFAX原本は証跡へ保存しない。計測中に音声品質低下、event欠落、OOM、予期しないrestart又はhost余白不足が一件でもあれば、有効化を停止する。
+
+計測結果からservice別のCPU、memory及びprocess数予算を決め、Compose上限、監視閾値、異常時停止条件及び切戻し手順を別の実装changeへ記録する。そのfixed SHAで隔離E2Eと同じ負荷条件を再実行し、上限内で品質と余白を維持できるまで顧客通信を有効化しない。未計測値又は過去の別環境の値を流用せず、この作業に伴ってCore又はAuthのresource若しくは配置を変更しない。

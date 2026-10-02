@@ -1,0 +1,79 @@
+schema_version: 1
+change_id: anshin.phone.resource-ceiling-policy.2026-10-02
+title: Phone service別resource上限を実測後に固定する方針
+owner: anshin-phone-infra
+status: review
+risk_level: high
+production_change: false
+spec_ids:
+  - anshin.governance.ai-driven-development
+  - anshin.governance.document-management
+  - anshin.phone.phase1-real-number-runbook
+repositories:
+  - anshin-phone-infra
+code_paths:
+  - anshin-phone-infra/README.md
+  - anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md
+contract_paths:
+  - anshin-phone-infra/docs/specs/changes/2026-10-02-phone-resource-ceiling-policy.change.yaml
+generated_artifacts: []
+test_paths:
+  - anshin-phone-infra/scripts/build_check.sh
+invariants:
+  - CPU、memory及びprocess数の上限を設ける方針だけを採用し、未計測の数値をruntime設定へ入れない
+  - 現行composeに検証済みのservice別resource上限がないことを明示する
+  - 通話・FAX・event配送・DB処理を対象環境で計測し、品質とhost余白を確認するまで顧客通信を有効化しない
+  - 計測結果に基づく予算、Compose上限、監視閾値及び切戻しは別の実装changeで固定する
+  - Core又はAuthのresource、storage若しくは配置を変更しない
+  - 実番号、credential、相手先番号、録音、FAX原本又はsecretをGitへ保存しない
+  - production SSH、service起動、顧客通信、負荷注入又は外部送信を行わない
+acceptance_criteria:
+  - READMEが未計測であること、現行Composeに検証済み上限がないこと及び別実装changeが必要であることを示す
+  - runbookがservice別CPU、memory、process数、latency、packet loss、OOM、restart及びhost余白の計測を要求する
+  - 計測fixture、同時通話数、FAX件数、継続時間、対象SHA及び対象環境を証跡へ固定する条件がある
+  - 品質低下、event欠落、OOM、予期しないrestart又はhost余白不足で有効化を停止する
+  - 未計測値と過去の別環境の値を流用せず、Core及びAuthのresourceを変更しない
+  - documents-only build checkと独立reviewが成功する
+out_of_scope:
+  - compose.phase1.yaml又はruntimeのresource上限設定
+  - CPU、memory、process、storage又は同時通話数の具体値決定
+  - Phone、Core又はAuthの配置若しくはresource再配分
+  - production SSH、service起動、顧客通信、外部送信又は負荷試験の実行
+  - 新しいrelease gate、checker、receipt又は文書authorityの追加
+concurrency:
+  strategy: isolated-worktree
+  branches:
+    anshin-phone-infra: docs/phone-resource-ceiling-policy-20261002
+  base_commits:
+    anshin-phone-infra: cf09be14a9aa7b3db1b705594fa3ba1919e1a6c1
+  integration_order:
+    - anshin-phone-infra
+  owned_paths:
+    - anshin-phone-infra/README.md
+    - anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md
+    - anshin-phone-infra/docs/specs/changes/2026-10-02-phone-resource-ceiling-policy.change.yaml
+  pre_edit_blob_ids:
+    anshin-phone-infra:README.md: 2f65507aa3820cd25e544cea82937d5809c0511b
+    anshin-phone-infra:docs/runbooks/telephony-platform/phase1_real_number_runbook.md: 3aa33d9aa5b678ad54b0d8149eba93eecc9d510b
+    anshin-phone-infra:docs/specs/changes/2026-10-02-phone-resource-ceiling-policy.change.yaml: null
+rollout:
+  strategy: documents-only-review
+  steps:
+    - 未計測状態と顧客通信有効化前のresource計測条件を文書へ固定する
+    - documents-only build checkと独立reviewを実行する
+  triggers:
+    - CPU、memory及びprocess数の上限方針を現行Phone正本へ採用する
+rollback:
+  strategy: scoped-revert
+  steps:
+    - 本changeのfixed SHAを対象にexact 3 pathsをrevertする
+  triggers:
+    - 現行構成又は承認済みresource方針との不一致が判明した場合
+monitoring:
+  owner: anshin-phone-infra
+  signals:
+    - 対象環境のservice別CPU、memory及びprocess数計測の有無
+    - latency、packet loss、OOM、restart及びhost余白の計測結果
+    - resource上限を固定する別実装changeの状態
+  observation_period: 顧客通信有効化前のresource上限実装と負荷検証完了まで
+approvals: []
