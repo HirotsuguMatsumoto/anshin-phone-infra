@@ -57,7 +57,7 @@ Cloco回答で確認できたのは、インターネット経由のSIPトラン
 | 接続境界 | SIPトランクと当社IP-PBXの間 | 具体的なアドレス・port・interface・障害対応の分担は未確定 |
 | 当社通信設備 | 図にはIP-PBXと端末を例示 | 当社計画はKamailio SBC、RTPengine、非公開Asterisk及びSIP端末 |
 | 当社管理系 | Cloco図には記載なし | 当社API・番号台帳・DBは音声の直列経路へ含めず、管理経路として扱う |
-| 物理配置 | Cloco図に記載なし | 届出準備時の東京都・MS-A2-2と全体インフラ正本の独立Phone専用server方針を照合する |
+| 物理配置 | Cloco図に記載なし | 当社予定は東京都・MS-A2-2のPhone専用LXD VM内のDocker。Core/Authと物理fault domainを共有し、DB・credential・Docker daemonは分離する。未配置・未実測でありCloco側接続条件を別途照合する |
 
 ## 接続情報受領時の未確定項目
 
