@@ -10,10 +10,6 @@ services:
   postgres:
     image: postgres:16-bookworm
     restart: unless-stopped
-    cpus: 1.0
-    mem_limit: 1g
-    mem_reservation: 512m
-    pids_limit: 128
     environment:
       POSTGRES_DB: anshin_phone
       POSTGRES_USER: anshin_phone
@@ -35,10 +31,6 @@ services:
     build:
       context: ${ANSHIN_PHONE_BACKEND_DIR:-./anshin-phone-backend}
     restart: unless-stopped
-    cpus: 1.0
-    mem_limit: 1g
-    mem_reservation: 512m
-    pids_limit: 256
     environment:
       ANSHIN_PHONE_ENVIRONMENT: phase1
       ANSHIN_PHONE_DB_HOST: postgres
@@ -76,10 +68,6 @@ services:
     build:
       context: ${ANSHIN_PHONE_BACKEND_DIR:-./anshin-phone-backend}
     restart: "no"
-    cpus: 1.0
-    mem_limit: 1g
-    mem_reservation: 512m
-    pids_limit: 256
     command: ["alembic", "upgrade", "head"]
     environment:
       ANSHIN_PHONE_ENVIRONMENT: phase1
@@ -107,10 +95,6 @@ services:
     build:
       context: ./deploy/pbx-event-forwarder
     restart: unless-stopped
-    cpus: 0.5
-    mem_limit: 256m
-    mem_reservation: 128m
-    pids_limit: 64
     environment:
       PBX_EVENT_SPOOL_DIR: /var/spool/anshin-phone/events
       PBX_EVENT_BACKEND_URL: http://backend:8000
@@ -144,10 +128,6 @@ services:
       args:
         RTPENGINE_VERSION: "10.5.3.5-1+deb12u1"
     restart: unless-stopped
-    cpus: 2.0
-    mem_limit: 512m
-    mem_reservation: 256m
-    pids_limit: 128
     environment:
       RTPENGINE_INTERNAL_IP: 172.31.251.50
       RTPENGINE_EXTERNAL_IP: 172.31.250.50
@@ -178,10 +158,6 @@ services:
       args:
         KAMAILIO_VERSION: "5.6.3-2"
     restart: unless-stopped
-    cpus: 0.5
-    mem_limit: 256m
-    mem_reservation: 128m
-    pids_limit: 128
     environment:
       SBC_ADVERTISED_IP: ${PUBLIC_SIP_IP:?set VPS public SIP IP}
       SBC_EDGE_IP: 172.31.250.40
@@ -223,10 +199,6 @@ services:
         ASTERISK_SHA256: "0953564c44fa49827f3c9d70ca6e80db83828c9848440852c6be44c961855353"
         ASTERISK_BUILD_JOBS: "1"
     restart: unless-stopped
-    cpus: 2.0
-    mem_limit: 1g
-    mem_reservation: 512m
-    pids_limit: 256
     environment:
       CARRIER_AUTH_MODE: ${CARRIER_AUTH_MODE:?set registration or ip}
       CARRIER_HOST: ${CARRIER_HOST:?set carrier SIP host}

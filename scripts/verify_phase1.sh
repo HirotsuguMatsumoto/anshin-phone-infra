@@ -18,6 +18,7 @@ fi
 export ANSHIN_PHONE_BACKEND_DIR
 
 required_files='compose.phase1.yaml
+compose.phase1.resources.experimental.yaml
 deploy/asterisk/Dockerfile
 deploy/asterisk/config/pjsip.conf.template
 deploy/asterisk/config/extensions.conf.template

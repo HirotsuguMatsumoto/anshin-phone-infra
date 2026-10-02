@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPOSE = ROOT / "compose.phase1.yaml"
+EXPERIMENTAL = ROOT / "compose.phase1.resources.experimental.yaml"
 
 EXPECTED = {
     "postgres": ("1.0", "1g", "512m", "128"),
@@ -30,8 +31,12 @@ def service_blocks(text: str) -> dict[str, str]:
 
 
 class Phase1ResourceProfileTest(unittest.TestCase):
-    def test_every_runtime_service_has_the_approved_resource_limits(self) -> None:
-        blocks = service_blocks(COMPOSE.read_text(encoding="utf-8"))
+    def test_unmeasured_limits_are_not_deployment_defaults(self) -> None:
+        text = COMPOSE.read_text(encoding="utf-8")
+        self.assertIsNone(re.search(r"^    (cpus|mem_limit|mem_reservation|pids_limit):", text, re.MULTILINE))
+
+    def test_isolated_experimental_services_preserve_candidate_limits(self) -> None:
+        blocks = service_blocks(EXPERIMENTAL.read_text(encoding="utf-8"))
 
         self.assertEqual(set(EXPECTED), set(blocks).intersection(EXPECTED))
         for service, (cpus, memory, reservation, pids) in EXPECTED.items():
@@ -42,7 +47,7 @@ class Phase1ResourceProfileTest(unittest.TestCase):
                 self.assertIn(f"    mem_reservation: {reservation}\n", block)
                 self.assertIn(f"    pids_limit: {pids}\n", block)
 
-    def test_steady_state_memory_ceiling_fits_five_gib_phone_vm(self) -> None:
+    def test_candidate_memory_arithmetic_is_not_a_capacity_measurement(self) -> None:
         steady_state_mib = {
             "postgres": 1024,
             "backend": 1024,

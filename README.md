@@ -66,11 +66,17 @@ flowchart LR
 
 ## Resource上限の現状
 
+2026年10月2日のowner指示に基づく予定配置は、MS-A2-2上の専用LXD VM `ms-a2-2-phone` 内のPhone専用Docker Composeとする。Core/Auth VMのDocker daemon、network、DB、volume及びrelease lockは共有しない。現行runtime又は構築済みを意味せず、Core/Authと物理host・電源・回線の障害を共有するため、carrier側BCPと別障害領域backup・復元を必要とする。
+
 Phase 1の各serviceには、CPU、memory及びprocess数の上限を設定する方針とする。ただし、対象host又はVMにおける通話・FAX負荷をまだ計測しておらず、`compose.phase1.yaml`には検証済みの`cpus`、`mem_limit`、`mem_reservation`又は`pids_limit`を設定していない。未計測の容量値、過去の別環境の値又は他serviceの割当から上限を推測しない。
 
 顧客通信を有効化する前に、[Phase 1実番号接続手順](docs/runbooks/telephony-platform/phase1_real_number_runbook.md)のresource計測を対象環境で行う。計測結果に基づくservice別予算、Compose上限、監視閾値及び切戻しは、別の実装changeで固定して検証する。この方針を理由にCore又はAuthのCPU、memory、storage若しくは配置を変更しない。
 
-Backendは別リポジトリです。VPSでは次の入れ子配置を前提とします。
+旧branchの未計測なservice別上限候補は`compose.phase1.resources.experimental.yaml`へ分離し、通常の起動・実番号手順には含めない。隔離fixtureの比較実験専用であり、memory上限の合計値を対象hostの実測余力又は商用収容能力とみなさない。対象環境での負荷計測と受入が完了するまでproductionで採用しない。
+
+Core/Auth再配分、Phone VM作成及び第2NVMeは全体infraの別のcritical changeで管理する。Phone用の正規operation・本番deploy経路は未整備であり、通常SSHや他serviceのrelease経路で代替しない。Cloco接続方式、番号使用計画・契約、network、storage及びbackup受入前は顧客通信・production writer・録音・FAXを有効化しない。
+
+Backendは別リポジトリです。予定Phone VMでは次の入れ子配置を前提とします。
 
 ```text
 anshin-phone-infra/
