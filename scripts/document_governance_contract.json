@@ -1,5 +1,5 @@
 {
-  "checker_sha256": "2f5714ac7cb093c303fbc073852191893ccc7e6ad3fedde8920c191e5569e12d",
+  "checker_sha256": "01d6dc7abd1d3a478acc5220f074817f54711a0d5a6d7378eb528d0cbcf887d7",
   "contract_version": "2026-09-03.1",
   "guard_test_sha256": "7ad7cd45c1ad6df08ec8d7c43c3cf22a0e5fe6b42e9e294d327ccde98ad001c3",
   "required_ai_policy_doc_id": "anshin.governance.ai-driven-development",
