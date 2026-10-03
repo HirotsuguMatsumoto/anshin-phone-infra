@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import hashlib
 import json
 import os
+import platform
 import re
+import shlex
 import subprocess
 import sys
 from collections import defaultdict
@@ -23,6 +26,8 @@ from urllib.parse import unquote
 CONTRACT_VERSION = "2026-09-03.1"
 BUILD_CHECK_MARKER = "anshin-document-governance-build-check:v1"
 BUILD_CHECK_COMMAND = "bash scripts/run_document_governance_guard.sh"
+QUALITY_PLAN_MARKER = "anshin-quality-plan-handoff:v1"
+QUALITY_PLAN_SCHEMA = "anshin.repository-quality-plan.v1"
 AI_POLICY_MARKER = "anshin-ai-driven-development-policy:v1"
 AI_POLICY_DOC_ID = "anshin.governance.ai-driven-development"
 DISTRIBUTION_PATHS = frozenset(
@@ -33,7 +38,61 @@ DISTRIBUTION_PATHS = frozenset(
         "scripts/document_governance_contract.json",
     }
 )
-DISTRIBUTION_BUILD_ADAPTER = """
+DISTRIBUTION_BUILD_ADAPTER_TEMPLATE = """
+# anshin-quality-plan-handoff:v1
+# anshin-quality-plan-producer:v1
+{adapter_metadata}
+# anshin-quality-plan-dependency: scripts/document_governance_contract.json
+# anshin-quality-plan-dependency: scripts/document_governance_portable.py
+# anshin-quality-plan-dependency: scripts/run_document_governance_guard.sh
+# anshin-quality-plan-dependency: scripts/test_document_governance_guard.sh
+{native_dependencies}
+if [[ "${1:-}" == "--print-plan" ]]; then
+  shift
+  [[ "${1:-}" == "--" ]] && shift
+  python3 scripts/document_governance_portable.py \
+    --repository-root "$ROOT_DIR" --build-check-plan -- "$@"
+  exit $?
+fi
+if [[ "${1:-}" == "--auto" && "${2:-}" == "--plan" ]]; then
+  [[ $# -eq 3 || ( $# -eq 5 && "${4:-}" == "--result" ) ]] || {
+    echo "[build_check] ERROR: --auto --plan requires a plan and optional result path" >&2
+    exit 2
+  }
+  DISTRIBUTION_PLAN_PATH="$3"
+  DISTRIBUTION_RESULT_PATH="${5:-${ANSHIN_BUILD_CHECK_RESULT_PATH:-}}"
+  DISTRIBUTION_RESULT_WRITTEN=0
+  write_distribution_failure_result() {
+    local distribution_rc=$?
+    if [[ $distribution_rc -ne 0 && -n "${DISTRIBUTION_RESULT_PATH:-}" && "$DISTRIBUTION_RESULT_WRITTEN" -eq 0 ]]; then
+      python3 scripts/document_governance_portable.py \
+        --repository-root "$ROOT_DIR" \
+        --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" failed \
+        >/dev/null 2>&1 || true
+    fi
+    exit "$distribution_rc"
+  }
+  trap write_distribution_failure_result EXIT
+  DISTRIBUTION_PROFILE="$(python3 scripts/document_governance_portable.py \
+    --repository-root "$ROOT_DIR" --build-check-plan-profile "$3")"
+  if [[ "$DISTRIBUTION_PROFILE" == "document-distribution" ]]; then
+    set -- --document-distribution
+  else
+    python3 scripts/document_governance_portable.py \
+      --repository-root "$ROOT_DIR" \
+      --execute-build-check-plan "$3"
+    if [[ -n "${DISTRIBUTION_RESULT_PATH:-}" ]]; then
+      python3 scripts/document_governance_portable.py \
+        --repository-root "$ROOT_DIR" \
+        --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
+      DISTRIBUTION_RESULT_WRITTEN=1
+    fi
+    trap - EXIT
+    echo "[build_check] OK profile=$DISTRIBUTION_PROFILE"
+    exit 0
+  fi
+fi
+# /anshin-quality-plan-handoff:v1
 # anshin-document-distribution-profile:v1
 if [[ "${1:-}" == "--document-distribution" ]]; then
   [[ $# -eq 1 ]] || { echo "[build_check] ERROR: distribution mode accepts no paths" >&2; exit 2; }
@@ -53,6 +112,13 @@ if [[ "${1:-}" == "--document-distribution" ]]; then
     echo "[build_check] ERROR: distribution inputs changed during verification" >&2
     exit 1
   }
+  if [[ -n "${DISTRIBUTION_RESULT_PATH:-}" ]]; then
+    python3 scripts/document_governance_portable.py \
+      --repository-root "$ROOT_DIR" \
+      --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
+    DISTRIBUTION_RESULT_WRITTEN=1
+  fi
+  trap - EXIT
   echo "[build_check] OK profile=document-distribution"
   exit 0
 fi
@@ -61,15 +127,26 @@ fi
 DISTRIBUTION_AGENTS_ADAPTER = """
 ## Checker配布の限定検査
 
-文書checkerの配布と定型adapterだけの変更は、`anshin.governance.document-management`の10.2に従い、`bash scripts/build_check.sh --document-distribution`をcanonical検査とする。それ以外の変更では本書の通常fast/full条件を維持する。専用profileが不適格を返した場合は検査を省略せず、通常の変更範囲検査へ戻す。
+文書checkerの配布と定型adapterだけの変更は、`anshin.governance.document-management`の10.2に従い、repository-local planを一度生成し、`bash scripts/build_check.sh --auto --plan <path>`へ渡す。それ以外の変更ではrepository固有の通常selectorを維持する。専用profileが不適格を返した場合は検査を省略せず、通常の変更範囲検査へ戻す。
 """
 DISTRIBUTION_HOOK_PATH = ".githooks/pre-commit"
 DISTRIBUTION_HOOK_ADAPTER = """
 # anshin-document-distribution-hook:v1
+distribution_repo_root="$(git rev-parse --show-toplevel)"
 distribution_selection="$(bash scripts/run_document_governance_guard.sh --build-check-profile)"
 if [[ "$distribution_selection" == document-distribution\\ * ]]; then
-  bash scripts/build_check.sh --document-distribution
-  exit 0
+  distribution_plan="$(mktemp "${TMPDIR:-/tmp}/anshin-document-plan.XXXXXX")"
+  python3 scripts/document_governance_portable.py \
+    --repository-root "$distribution_repo_root" --build-check-plan > "$distribution_plan"
+  chmod 600 "$distribution_plan"
+  if bash scripts/build_check.sh --auto --plan "$distribution_plan"; then
+    rm -f "$distribution_plan"
+    exit 0
+  else
+    distribution_rc=$?
+    rm -f "$distribution_plan"
+    exit "$distribution_rc"
+  fi
 fi
 # /anshin-document-distribution-hook:v1
 """
@@ -554,6 +631,10 @@ def validate_build_check_contract(
         errors.append(
             "scripts/build_check.sh does not invoke the document governance guard"
         )
+    if QUALITY_PLAN_MARKER not in text or "--auto" not in text or "--plan" not in text:
+        errors.append(
+            "scripts/build_check.sh does not expose the required quality plan handoff"
+        )
 
 
 def validate_github_actions_usage(repository_root: Path, errors: list[str]) -> None:
@@ -709,11 +790,191 @@ def distribution_git(repository_root: Path, *arguments: str) -> bytes:
     return result.stdout
 
 
-def distribution_adapter(base: bytes) -> bytes:
+ADAPTER_SPEC_PREFIX = "# anshin-quality-plan-adapter-spec: "
+
+
+def _adapter_spec_bytes(spec: dict[str, Any]) -> str:
+    return base64.urlsafe_b64encode(_quality_plan_json(spec)).decode("ascii")
+
+
+def _adapter_spec_from_build(build: bytes) -> dict[str, Any]:
+    for raw_line in build.decode("utf-8", errors="strict").splitlines():
+        if raw_line.startswith(ADAPTER_SPEC_PREFIX):
+            try:
+                value = json.loads(
+                    base64.urlsafe_b64decode(
+                        raw_line[len(ADAPTER_SPEC_PREFIX) :].encode("ascii")
+                    )
+                )
+            except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+                raise ContractError("build-check adapter metadata is invalid") from exc
+            if not isinstance(value, dict) or set(value) != {
+                "kind",
+                "invocation",
+                "selector",
+                "plan_args",
+                "execution_args",
+            }:
+                raise ContractError("build-check adapter metadata is invalid")
+            return value
+    raise ContractError("build-check adapter metadata is missing")
+
+
+def _legacy_invocation(base_hook: bytes | None) -> list[str]:
+    if base_hook is None:
+        return []
+    invocations: list[list[str]] = []
+    for raw_line in base_hook.decode("utf-8", errors="strict").splitlines():
+        line = raw_line.strip()
+        if "scripts/build_check.sh" not in line or line.startswith("#"):
+            continue
+        try:
+            words = shlex.split(line)
+        except ValueError as exc:
+            raise ContractError(
+                "pre-commit build-check invocation is ambiguous"
+            ) from exc
+        if "--documents-only" in words or "--auto" in words:
+            continue
+        try:
+            index = words.index("scripts/build_check.sh")
+        except ValueError as exc:
+            raise ContractError(
+                "pre-commit build-check invocation is ambiguous"
+            ) from exc
+        if index == 0 or words[index - 1] != "bash":
+            raise ContractError("pre-commit build-check invocation is ambiguous")
+        argv = words[index + 1 :]
+        if argv and argv[-1] == ";;":
+            argv = argv[:-1]
+        if argv not in invocations:
+            invocations.append(argv)
+    if len(invocations) > 1:
+        raise ContractError("pre-commit build-check invocation is ambiguous")
+    return invocations[0] if invocations else []
+
+
+def repository_adapter_spec(
+    base: bytes, base_hook: bytes | None = None
+) -> dict[str, Any]:
+    """Describe the exact existing selector/executor without inventing a new one."""
+    text = base.decode("utf-8", errors="strict")
+    candidates: list[dict[str, Any]] = []
+    core_selector = "scripts/select_ai_targeted_tests.py" in text
+    if core_selector:
+        if "--execution" not in text:
+            raise ContractError("build-check native selector signature is partial")
+        candidates.append(
+            {
+                "kind": "core-native",
+                "invocation": [],
+                "selector": "scripts/select_ai_targeted_tests.py",
+                "plan_args": ["--quality-plan", "auto"],
+                "execution_args": ["--execution"],
+            }
+        )
+    infrastructure_selector = "scripts/select_build_check.py --mode" in text
+    python_selector = "scripts/select_build_check.py" in text
+    if infrastructure_selector:
+        candidates.append(
+            {
+                "kind": "legacy",
+                "invocation": ["--auto"],
+                "selector": "",
+                "plan_args": [],
+                "execution_args": [],
+            }
+        )
+    elif python_selector:
+        if "--execution" not in text:
+            raise ContractError("build-check native selector signature is partial")
+        adapter_marker = "adapter_" in text
+        execution_kind_marker = "--execution-kind" in text
+        if adapter_marker != execution_kind_marker:
+            raise ContractError("build-check native selector signature is partial")
+        candidates.append(
+            {
+                "kind": "build-focus" if adapter_marker else "selector-direct",
+                "invocation": [],
+                "selector": "scripts/select_build_check.py",
+                "plan_args": ["--profile", "auto"],
+                "execution_args": ["--execution"],
+            }
+        )
+    javascript_selector = "scripts/select-build-check.js" in text
+    if javascript_selector:
+        if "--root-quality-plan" not in text:
+            raise ContractError("build-check native selector signature is partial")
+        candidates.append(
+            {
+                "kind": "build-focus",
+                "invocation": [],
+                "selector": "scripts/select-build-check.js",
+                "plan_args": ["--root-quality-plan", "--"],
+                "execution_args": ["--execute-root"],
+            }
+        )
+    if "scripts/build-check-plan.mjs" in text:
+        candidates.append(
+            {
+                "kind": "legacy",
+                "invocation": ["--fast"],
+                "selector": "",
+                "plan_args": [],
+                "execution_args": [],
+            }
+        )
+    frontend_root = all(
+        marker in text
+        for marker in (
+            'elif [[ "$file" == apps/anshin-frontend/* ]]',
+            "cd apps/anshin-frontend",
+            'bash scripts/build_check.sh --fast "${APP_FILES[@]}"',
+            "pnpm --dir apps/anshin-frontend run -s guard:build-check-references",
+        )
+    )
+    if frontend_root:
+        candidates.append(
+            {
+                "kind": "frontend-root",
+                "invocation": [],
+                "selector": "apps/anshin-frontend/scripts/select-build-check.js",
+                "plan_args": [],
+                "execution_args": [],
+            }
+        )
+    if len(candidates) > 1:
+        raise ContractError("build-check native selector signature is ambiguous")
+    if candidates:
+        return candidates[0]
+    return {
+        "kind": "legacy",
+        "invocation": _legacy_invocation(base_hook),
+        "selector": "",
+        "plan_args": [],
+        "execution_args": [],
+    }
+
+
+def distribution_adapter(base: bytes, base_hook: bytes | None = None) -> bytes:
     anchor = b'\ncd "$ROOT_DIR"\n'
     if base.count(anchor) != 1:
         raise ContractError("build check has no unique repository-root entry")
-    return base.replace(anchor, anchor + DISTRIBUTION_BUILD_ADAPTER.encode(), 1)
+    spec = repository_adapter_spec(base, base_hook)
+    dependencies = [spec["selector"]] if spec["selector"] else []
+    adapter = (
+        DISTRIBUTION_BUILD_ADAPTER_TEMPLATE.replace(
+            "{adapter_metadata}", ADAPTER_SPEC_PREFIX + _adapter_spec_bytes(spec)
+        )
+        .replace(
+            "{native_dependencies}",
+            "\n".join(
+                f"# anshin-quality-plan-dependency: {path}" for path in dependencies
+            ),
+        )
+        .encode()
+    )
+    return base.replace(anchor, anchor + adapter, 1)
 
 
 DISTRIBUTION_BROWSER_LINES = [
@@ -902,10 +1163,19 @@ def distribution_agents_adapter(base: bytes) -> bytes:
 
 
 def distribution_hook_adapter(base: bytes) -> bytes:
-    anchor = b'\ncd "$repo_root"\n'
-    if not base.startswith(b"#!/usr/bin/bash\n") or base.count(anchor) != 1:
+    supported = (
+        (b"#!/usr/bin/bash\n", b'\ncd "$repo_root"\n', b"#!/bin/bash\n"),
+        (b"#!/usr/bin/env bash\n", b'\ncd "$ROOT_DIR"\n', b"#!/usr/bin/env bash\n"),
+    )
+    matches = [
+        item
+        for item in supported
+        if base.startswith(item[0]) and base.count(item[1]) == 1
+    ]
+    if len(matches) != 1:
         raise ContractError("pre-commit hook has no unique supported entry")
-    fixed = b"#!/bin/bash\n" + base.split(b"\n", 1)[1]
+    shebang, anchor, replacement = matches[0]
+    fixed = replacement + base[len(shebang) :]
     return fixed.replace(anchor, anchor + DISTRIBUTION_HOOK_ADAPTER.encode(), 1)
 
 
@@ -932,7 +1202,7 @@ def distribution_paths_eligible(
             return False
         if "scripts/build_check.sh" in migration:
             try:
-                expected_build = distribution_adapter(base_build)
+                expected_build = distribution_adapter(base_build, base_hook)
             except ContractError:
                 return False
             if current_build != expected_build:
@@ -1071,6 +1341,420 @@ def distribution_selection(repository_root: Path) -> str:
     ):
         digest.update(distribution_git(repository_root, *arguments))
     return f"document-distribution {base} {target} {head} {digest.hexdigest()}"
+
+
+def _quality_plan_json(value: dict[str, Any]) -> bytes:
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+
+
+def _distribution_changed_paths(repository_root: Path) -> list[str]:
+    target = (
+        distribution_git(repository_root, "rev-parse", "--verify", "origin/main")
+        .strip()
+        .decode("ascii")
+    )
+    head = (
+        distribution_git(repository_root, "rev-parse", "HEAD").strip().decode("ascii")
+    )
+    base = (
+        distribution_git(repository_root, "merge-base", target, head)
+        .strip()
+        .decode("ascii")
+    )
+    values: set[str] = set()
+    for arguments in (
+        ("diff", "--name-only", "--no-renames", "-z", f"{base}...{head}", "--"),
+        ("diff", "--cached", "--name-only", "--no-renames", "-z", "--"),
+        ("diff", "--name-only", "--no-renames", "-z", "--"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ):
+        values.update(
+            path.decode("utf-8", errors="surrogateescape")
+            for path in distribution_git(repository_root, *arguments).split(b"\0")
+            if path
+        )
+    return sorted(values)
+
+
+def _adapter_spec(repository_root: Path) -> dict[str, Any]:
+    build = repository_root / "scripts/build_check.sh"
+    if not build.is_file() or build.is_symlink():
+        raise ContractError("build-check adapter is missing")
+    return _adapter_spec_from_build(build.read_bytes())
+
+
+def _native_selected_checks(
+    repository_root: Path, spec: dict[str, Any], paths: list[str]
+) -> tuple[list[str], str, bool]:
+    selector = spec["selector"]
+    selector_paths = paths
+    if spec["kind"] == "frontend-root":
+        prefix = "apps/anshin-frontend/"
+        if not all(path.startswith(prefix) for path in paths):
+            return ["frontend-root-full"], "high", True
+        selector_paths = [path[len(prefix) :] for path in paths]
+    command = [
+        "node" if selector.endswith(".js") else sys.executable,
+        selector,
+        *spec["plan_args"],
+        *selector_paths,
+    ]
+    completed = subprocess.run(
+        command,
+        cwd=repository_root,
+        check=False,
+        text=True,
+        capture_output=True,
+    )
+    if completed.returncode != 0:
+        raise ContractError(
+            completed.stderr.strip() or "repository-native quality plan failed"
+        )
+    if spec["kind"] == "frontend-root":
+        lines = completed.stdout.splitlines()
+        modes = [
+            line.removeprefix("mode: ") for line in lines if line.startswith("mode: ")
+        ]
+        command_markers = [
+            index for index, line in enumerate(lines) if line == "commands:"
+        ]
+        if (
+            len(modes) != 1
+            or modes[0] not in {"fast", "full"}
+            or len(command_markers) != 1
+        ):
+            raise ContractError("repository-native quality plan is invalid")
+        marker = command_markers[0]
+        command_lines = [
+            line.strip() for line in lines[marker + 1 :] if line.startswith("  ")
+        ]
+        if len(command_lines) != 1:
+            raise ContractError("repository-native quality plan is invalid")
+        try:
+            native_argv = shlex.split(command_lines[0])
+        except ValueError as exc:
+            raise ContractError("repository-native quality plan is invalid") from exc
+        expected = (
+            ["./scripts/build_check.sh", "--fast", *selector_paths]
+            if modes[0] == "fast"
+            else ["./scripts/build_check.sh"]
+        )
+        if native_argv != expected:
+            raise ContractError("repository-native quality plan command differs")
+        if modes[0] == "fast":
+            return ["frontend-root-fast"], "normal", False
+        return ["frontend-root-full"], "high", True
+    try:
+        native = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise ContractError("repository-native quality plan is not JSON") from exc
+    candidate = native.get("candidate", native) if isinstance(native, dict) else None
+    if not isinstance(candidate, dict):
+        raise ContractError("repository-native quality plan is invalid")
+    raw_checks = candidate.get("checks", native.get("checks", []))
+    if not isinstance(raw_checks, list):
+        raise ContractError("repository-native quality plan is invalid")
+    checks: list[str] = []
+    for item in raw_checks:
+        name = item.get("id") if isinstance(item, dict) else item
+        if not isinstance(name, str) or not name or name in checks:
+            raise ContractError("repository-native quality plan has invalid check IDs")
+        checks.append(name)
+    checks.sort()
+    if not checks:
+        raise ContractError("repository-native quality plan selected no checks")
+    native_paths = candidate.get("paths", native.get("paths"))
+    if native_paths is not None and sorted(native_paths) != paths:
+        raise ContractError("repository-native quality plan paths differ")
+    full = bool(
+        candidate.get("full_risk", candidate.get("requires_full", False))
+        or native.get("full_risk", native.get("requires_full", False))
+    )
+    if spec["kind"] == "core-native" and "core-full-static" in checks:
+        checks = ["core-full-static"]
+    risk = "high" if full else "normal"
+    return checks, risk, full
+
+
+def _plan_dependencies(repository_root: Path, spec: dict[str, Any]) -> list[str]:
+    dependencies = sorted(
+        set(DISTRIBUTION_PATHS) | ({spec["selector"]} if spec["selector"] else set())
+    )
+    for relative in dependencies:
+        target = repository_root / relative
+        if not target.is_file() or target.is_symlink():
+            raise ContractError(f"quality-plan dependency is unavailable: {relative}")
+    return dependencies
+
+
+def distribution_quality_plan(
+    repository_root: Path, paths: list[str] | None = None
+) -> dict[str, Any]:
+    """Return the exact local plan for the existing distribution profile."""
+    selected_paths = (
+        _distribution_changed_paths(repository_root)
+        if paths is None
+        else sorted(set(paths))
+    )
+    allowed = set(DISTRIBUTION_PATHS) | {
+        "AGENTS.md",
+        "scripts/build_check.sh",
+        DISTRIBUTION_HOOK_PATH,
+    }
+    if not selected_paths:
+        raise ContractError("quality plan requires changed paths")
+    document_only = set(selected_paths).issubset(allowed)
+    spec = _adapter_spec(repository_root)
+    if document_only:
+        checks = ["document-governance-distribution"]
+        profile = "document-distribution"
+        risk = "normal"
+        requires_full = False
+        reasons = ["SELECTED_DOCUMENT_DISTRIBUTION"]
+        deferred = ["repository-runtime", "business-test"]
+    elif spec["kind"] == "legacy":
+        checks = ["repository-canonical"]
+        profile = "repository-canonical"
+        risk, requires_full = "normal", False
+        reasons = ["SELECTED_REPOSITORY_CANONICAL"]
+        deferred = []
+    else:
+        checks, risk, requires_full = _native_selected_checks(
+            repository_root, spec, selected_paths
+        )
+        profile = "repository-native"
+        reasons = ["SELECTED_REPOSITORY_NATIVE"]
+        deferred = []
+    dependencies = _plan_dependencies(repository_root, spec)
+    dependency = hashlib.sha256()
+    for relative in dependencies:
+        dependency.update(relative.encode() + b"\0")
+        dependency.update((repository_root / relative).read_bytes())
+    value: dict[str, Any] = {
+        "schema": QUALITY_PLAN_SCHEMA,
+        "profile": profile,
+        "risk": risk,
+        "reasons": reasons,
+        "paths": selected_paths,
+        "deferred": deferred,
+        "owner_ids": checks,
+        "selected_tests": [],
+        "selected_checks": checks,
+        "requires_fixed_sha": True,
+        "requires_full": requires_full,
+        "producer_command": ["bash", "scripts/build_check.sh", "--print-plan"],
+        "producer_dependencies": dependencies,
+        "command_sha256": hashlib.sha256(
+            (repository_root / "scripts/build_check.sh").read_bytes()
+        ).hexdigest(),
+        "dependency_sha256": dependency.hexdigest(),
+    }
+    value["plan_sha256"] = hashlib.sha256(_quality_plan_json(value)).hexdigest()
+    return value
+
+
+def execute_distribution_quality_plan(repository_root: Path, plan_path: Path) -> None:
+    validate_distribution_quality_plan(repository_root, plan_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    if plan["profile"] == "document-distribution":
+        raise ContractError("document-distribution is executed by the shell adapter")
+    spec = _adapter_spec(repository_root)
+    if plan["profile"] == "repository-canonical":
+        if spec["kind"] != "legacy" or plan["selected_checks"] != [
+            "repository-canonical"
+        ]:
+            raise ContractError("repository canonical plan does not match its adapter")
+        command = ["bash", "scripts/build_check.sh", *spec["invocation"]]
+        completed = subprocess.run(command, cwd=repository_root, check=False)
+        if completed.returncode:
+            raise ContractError("repository canonical build check failed")
+        return
+    if plan["profile"] != "repository-native" or spec["kind"] == "legacy":
+        raise ContractError("repository-native plan does not match its adapter")
+    if spec["kind"] == "frontend-root":
+        selected = set(plan["selected_checks"])
+        if (
+            not selected
+            or not selected.issubset({"frontend-root-fast", "frontend-root-full"})
+            or plan["requires_full"] != ("frontend-root-full" in selected)
+        ):
+            raise ContractError("repository-native frontend plan is invalid")
+    if spec["kind"] == "core-native" and "core-full-static" in plan["selected_checks"]:
+        completed = subprocess.run(
+            ["bash", "scripts/build_check.sh", "--full"],
+            cwd=repository_root,
+            check=False,
+        )
+        if completed.returncode:
+            raise ContractError("repository-native check failed: core-full-static")
+        return
+    for check_id in plan["selected_checks"]:
+        if spec["kind"] == "selector-direct":
+            command = [
+                sys.executable,
+                spec["selector"],
+                *spec["execution_args"],
+                check_id,
+            ]
+        elif spec["kind"] == "build-focus":
+            command = ["bash", "scripts/build_check.sh", "--focus", check_id]
+        elif spec["kind"] == "core-native":
+            if check_id == "core-fast":
+                command = ["bash", "scripts/build_check.sh", "--fast", *plan["paths"]]
+            else:
+                command = [
+                    sys.executable,
+                    spec["selector"],
+                    *spec["execution_args"],
+                    check_id,
+                ]
+        elif spec["kind"] == "frontend-root":
+            if check_id == "frontend-root-fast":
+                command = ["bash", "scripts/build_check.sh", "--fast", *plan["paths"]]
+            elif check_id == "frontend-root-full":
+                command = ["bash", "scripts/build_check.sh", "--full"]
+            else:
+                raise ContractError(f"repository-native check is unknown: {check_id}")
+        else:
+            raise ContractError("repository-native execution kind is unsupported")
+        completed = subprocess.run(command, cwd=repository_root, check=False)
+        if completed.returncode:
+            raise ContractError(f"repository-native check failed: {check_id}")
+
+
+def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -> None:
+    if not plan_path.is_file() or plan_path.is_symlink():
+        raise ContractError("quality plan is missing or is not a regular file")
+    try:
+        actual = json.loads(plan_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise ContractError("quality plan is not valid JSON") from exc
+    required_keys = {
+        "schema",
+        "profile",
+        "risk",
+        "reasons",
+        "paths",
+        "deferred",
+        "owner_ids",
+        "selected_tests",
+        "selected_checks",
+        "requires_fixed_sha",
+        "requires_full",
+        "producer_command",
+        "producer_dependencies",
+        "command_sha256",
+        "dependency_sha256",
+        "plan_sha256",
+    }
+    unsigned = dict(actual) if isinstance(actual, dict) else {}
+    actual_hash = unsigned.pop("plan_sha256", None)
+    if (
+        set(actual) != required_keys
+        or actual.get("schema") != QUALITY_PLAN_SCHEMA
+        or actual_hash != hashlib.sha256(_quality_plan_json(unsigned)).hexdigest()
+        or actual.get("paths") != _distribution_changed_paths(repository_root)
+        or actual.get("selected_checks")
+        != sorted(set(actual.get("selected_checks", [])))
+        or not actual.get("selected_checks")
+        or actual.get("owner_ids") != actual.get("selected_checks")
+        or actual.get("producer_command")
+        != ["bash", "scripts/build_check.sh", "--print-plan"]
+        or actual.get("risk") not in {"low", "normal", "high", "critical"}
+        or not isinstance(actual.get("requires_fixed_sha"), bool)
+        or not isinstance(actual.get("requires_full"), bool)
+    ):
+        raise ContractError("quality plan does not match the current repository input")
+    spec = _adapter_spec(repository_root)
+    dependencies = _plan_dependencies(repository_root, spec)
+    digest = hashlib.sha256()
+    for relative in dependencies:
+        digest.update(relative.encode() + b"\0")
+        digest.update((repository_root / relative).read_bytes())
+    document_only = set(actual["paths"]).issubset(
+        set(DISTRIBUTION_PATHS)
+        | {"AGENTS.md", "scripts/build_check.sh", DISTRIBUTION_HOOK_PATH}
+    )
+    if (
+        actual.get("producer_dependencies") != dependencies
+        or actual.get("command_sha256")
+        != hashlib.sha256(
+            (repository_root / "scripts/build_check.sh").read_bytes()
+        ).hexdigest()
+        or actual.get("dependency_sha256") != digest.hexdigest()
+        or (actual.get("profile") == "document-distribution") != document_only
+        or (
+            actual.get("profile") == "repository-canonical"
+            and (
+                spec["kind"] != "legacy"
+                or actual.get("selected_checks") != ["repository-canonical"]
+            )
+        )
+        or (actual.get("profile") == "repository-native" and spec["kind"] == "legacy")
+        or actual.get("profile")
+        not in {"document-distribution", "repository-canonical", "repository-native"}
+    ):
+        raise ContractError("quality plan does not match the current repository input")
+
+
+def write_distribution_check_result(
+    repository_root: Path, plan_path: Path, result_path: Path, status: str
+) -> None:
+    """Write the existing v2 check-result family for one direct or staged run."""
+    if status not in {"passed", "failed"}:
+        raise ContractError("quality result status is invalid")
+    validate_distribution_quality_plan(repository_root, plan_path)
+    plan = json.loads(plan_path.read_text(encoding="utf-8"))
+    revision = distribution_git(repository_root, "rev-parse", "HEAD").decode().strip()
+    tree = distribution_git(repository_root, "write-tree").decode().strip()
+    staged = subprocess.run(
+        ["git", "-C", str(repository_root), "diff", "--cached", "--quiet", "--"],
+        check=False,
+    )
+    if staged.returncode not in {0, 1}:
+        raise ContractError("unable to inspect staged distribution input")
+    base_revision = revision
+    if staged.returncode == 0:
+        base_revision = (
+            distribution_git(repository_root, "merge-base", "HEAD", "origin/main")
+            .decode()
+            .strip()
+        )
+    result: dict[str, Any] = {
+        "schema": "anshin.check-results.v2",
+        "kind": "check-results",
+        "revision": revision,
+        "check_plan_sha256": plan["plan_sha256"],
+        "checks": [
+            {"name": name, "status": status} for name in plan["selected_checks"]
+        ],
+        "status": status,
+        "identities": {
+            "base_revision": base_revision,
+            "tree": tree,
+            "paths": plan["paths"],
+            "policy_revision": "AI-DD-20260920.1",
+            "plan_sha256": plan["plan_sha256"],
+            "command_sha256": plan["command_sha256"],
+            "dependency_sha256": plan["dependency_sha256"],
+            "toolchain": {"python": platform.python_version()},
+            "image": "none",
+            "environment": platform.system().lower(),
+        },
+    }
+    result["result_sha256"] = hashlib.sha256(
+        json.dumps(
+            result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+    ).hexdigest()
+    descriptor = os.open(result_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "wb") as stream:
+        stream.write(
+            json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True).encode()
+        )
+        stream.write(b"\n")
 
 
 def test_distribution_profile() -> None:
@@ -1537,12 +2221,65 @@ def main() -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--build-check-profile", action="store_true")
     mode.add_argument("--test-build-check-profile", action="store_true")
+    mode.add_argument("--build-check-plan", action="store_true")
+    mode.add_argument("--build-check-plan-profile", type=Path)
+    mode.add_argument("--validate-build-check-plan", type=Path)
+    mode.add_argument("--execute-build-check-plan", type=Path)
+    mode.add_argument(
+        "--write-build-check-result",
+        nargs=3,
+        metavar=("PLAN", "RESULT", "STATUS"),
+    )
+    parser.add_argument("plan_paths", nargs="*")
     args = parser.parse_args()
     repository_root = args.repository_root.resolve()
-    if args.build_check_profile or args.test_build_check_profile:
+    if (
+        args.build_check_profile
+        or args.test_build_check_profile
+        or args.build_check_plan
+        or args.build_check_plan_profile is not None
+        or args.validate_build_check_plan is not None
+        or args.execute_build_check_plan is not None
+        or args.write_build_check_result is not None
+    ):
         try:
             if args.test_build_check_profile:
                 test_distribution_profile()
+            elif args.build_check_plan:
+                sys.stdout.buffer.write(
+                    json.dumps(
+                        distribution_quality_plan(
+                            repository_root, args.plan_paths or None
+                        ),
+                        ensure_ascii=False,
+                        indent=2,
+                        sort_keys=True,
+                    ).encode("utf-8")
+                    + b"\n"
+                )
+            elif args.build_check_plan_profile is not None:
+                validate_distribution_quality_plan(
+                    repository_root, args.build_check_plan_profile
+                )
+                value = json.loads(
+                    args.build_check_plan_profile.read_text(encoding="utf-8")
+                )
+                print(value["profile"])
+            elif args.validate_build_check_plan is not None:
+                validate_distribution_quality_plan(
+                    repository_root, args.validate_build_check_plan
+                )
+            elif args.execute_build_check_plan is not None:
+                execute_distribution_quality_plan(
+                    repository_root, args.execute_build_check_plan
+                )
+            elif args.write_build_check_result is not None:
+                write_distribution_check_result(
+                    repository_root,
+                    Path(args.write_build_check_result[0]),
+                    Path(args.write_build_check_result[1]),
+                    args.write_build_check_result[2],
+                )
             else:
                 print(distribution_selection(repository_root))
         except (ContractError, OSError, UnicodeError) as error:
