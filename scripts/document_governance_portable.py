@@ -16,6 +16,7 @@ import os
 import platform
 import re
 import shlex
+import stat
 import subprocess
 import sys
 from collections import defaultdict
@@ -47,6 +48,7 @@ DISTRIBUTION_BUILD_ADAPTER_TEMPLATE = """
 # anshin-quality-plan-dependency: scripts/run_document_governance_guard.sh
 # anshin-quality-plan-dependency: scripts/test_document_governance_guard.sh
 {native_dependencies}
+{internal_guard}
 if [[ "${1:-}" == "--print-plan" ]]; then
   shift
   [[ "${1:-}" == "--" ]] && shift
@@ -64,9 +66,26 @@ if [[ "${1:-}" == "--auto" && "${2:-}" == "--plan" ]]; then
   DISTRIBUTION_RESULT_WRITTEN=0
   write_distribution_failure_result() {
     local distribution_rc=$?
+    if [[ $distribution_rc -eq 0 && "${DISTRIBUTION_CORE_STORED_PLAN:-0}" == "1" && "$DISTRIBUTION_RESULT_WRITTEN" -eq 0 ]]; then
+      if [[ "$(git write-tree)" != "$AUTO_INDEX_TREE" ]] || ! git diff --quiet -- || [[ -n "$(git ls-files --others --exclude-standard)" ]]; then
+        distribution_rc=1
+      elif [[ -n "${DISTRIBUTION_RESULT_PATH:-}" ]]; then
+        python3 scripts/document_governance_portable.py \
+          --repository-root "$ROOT_DIR" \
+          --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed || distribution_rc=$?
+        [[ $distribution_rc -ne 0 ]] || DISTRIBUTION_RESULT_WRITTEN=1
+      fi
+    fi
     if [[ $distribution_rc -ne 0 && -n "${DISTRIBUTION_RESULT_PATH:-}" && "$DISTRIBUTION_RESULT_WRITTEN" -eq 0 ]]; then
+      # Keep the argv non-empty so Bash 3 with nounset can expand it safely
+      # even when no optional completed/failed check arguments exist.
+      DISTRIBUTION_FAILURE_ARGS=(--repository-root "$ROOT_DIR")
+      for completed_id in "${DISTRIBUTION_COMPLETED_CHECK_IDS[@]:-}"; do
+        [[ -n "$completed_id" ]] && DISTRIBUTION_FAILURE_ARGS+=(--completed-check "$completed_id")
+      done
+      [[ -n "${DISTRIBUTION_CURRENT_CHECK_ID:-}" ]] && DISTRIBUTION_FAILURE_ARGS+=(--failed-check "$DISTRIBUTION_CURRENT_CHECK_ID")
       python3 scripts/document_governance_portable.py \
-        --repository-root "$ROOT_DIR" \
+        "${DISTRIBUTION_FAILURE_ARGS[@]}" \
         --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" failed \
         >/dev/null 2>&1 || true
     fi
@@ -77,6 +96,7 @@ if [[ "${1:-}" == "--auto" && "${2:-}" == "--plan" ]]; then
     --repository-root "$ROOT_DIR" --build-check-plan-profile "$3")"
   if [[ "$DISTRIBUTION_PROFILE" == "document-distribution" ]]; then
     set -- --document-distribution
+{native_plan_branch}
   else
     python3 scripts/document_governance_portable.py \
       --repository-root "$ROOT_DIR" \
@@ -129,6 +149,12 @@ DISTRIBUTION_AGENTS_ADAPTER = """
 
 文書checkerの配布と定型adapterだけの変更は、`anshin.governance.document-management`の10.2に従い、repository-local planを一度生成し、`bash scripts/build_check.sh --auto --plan <path>`へ渡す。それ以外の変更ではrepository固有の通常selectorを維持する。専用profileが不適格を返した場合は検査を省略せず、通常の変更範囲検査へ戻す。
 """
+LEGACY_DISTRIBUTION_AGENTS_ADAPTER = """
+## Checker配布の限定検査
+
+文書checkerの配布と定型adapterだけの変更は、`anshin.governance.document-management`の10.2に従い、`bash scripts/build_check.sh --document-distribution`をcanonical検査とする。それ以外の変更では本書の通常fast/full条件を維持する。専用profileが不適格を返した場合は検査を省略せず、通常の変更範囲検査へ戻す。
+"""
+WORKSPACE_ROOT_EXPLANATION = "本書のcommand例で使う`WORKSPACE_ROOT`は、対象repositoryを置く親directoryとして利用環境で設定する。repository名付きのcommand pathはこのrootから解決し、実行directoryに依存しない。"
 DISTRIBUTION_HOOK_PATH = ".githooks/pre-commit"
 DISTRIBUTION_HOOK_ADAPTER = """
 # anshin-document-distribution-hook:v1
@@ -168,15 +194,15 @@ ABSOLUTE_SOURCE_PATH_PATTERN = re.compile(
 )
 FILE_URI_PATTERN = re.compile(
     r"""file://[^\s`<>\[\]()"'、。）」|]+""",
-    re.I,
+    re.IGNORECASE,
 )
 QUOTED_FILE_URI_PATTERN = re.compile(
     r"""(?P<quote>[`"'])(?P<path>file://.*?)(?P=quote)""",
-    re.I,
+    re.IGNORECASE,
 )
 QUOTED_ABSOLUTE_PATH_PATTERN = re.compile(
     r"""(?P<quote>[`"'])(?P<path>(?:file://)?(?:[A-Za-z]:[\\/]|\\\\|/).*?)(?P=quote)""",
-    re.I,
+    re.IGNORECASE,
 )
 REPOSITORY_NAMES = (
     "anshin",
@@ -206,7 +232,7 @@ REPOSITORY_COMPONENT_PATTERN = re.compile(
     r"(?:^|/)(?:"
     + "|".join(map(re.escape, REPOSITORY_NAMES))
     + r"|anshin[a-z0-9_.-]*worktree[a-z0-9_.-]*)(?:/|$)",
-    re.I,
+    re.IGNORECASE,
 )
 WINDOWS_UNC_REPOSITORY_PATH_PATTERN = re.compile(
     r"""(?<![A-Za-z0-9_.])(?:[A-Za-z]:[\\/]|\\\\)"""
@@ -214,7 +240,7 @@ WINDOWS_UNC_REPOSITORY_PATH_PATTERN = re.compile(
     r"""(?:"""
     + "|".join(map(re.escape, REPOSITORY_NAMES))
     + r"""|anshin[a-z0-9_.-]*worktree[a-z0-9_.-]*)(?=[\\/]|$)""",
-    re.I,
+    re.IGNORECASE,
 )
 POSIX_SPACED_REPOSITORY_PATH_PATTERN = re.compile(
     r"""(?<![A-Za-z0-9_./>~])/(?=[^=`<>\[\]()"'、。）」|,\r\n]*[ \t])"""
@@ -223,7 +249,7 @@ POSIX_SPACED_REPOSITORY_PATH_PATTERN = re.compile(
     + "|".join(map(re.escape, REPOSITORY_NAMES))
     + r"""|anshin[a-z0-9_.-]*worktree[a-z0-9_.-]*)(?=/|[ =\t`<>\[\]()"'、。）」|,]|$)"""
     r"""(?:/[^ =\t`<>\[\]()"'、。）」|,\r\n]+)*""",
-    re.I,
+    re.IGNORECASE,
 )
 SPACED_FILE_URI_REPOSITORY_PATH_PATTERN = re.compile(
     r"""file://(?=[^`<>\[\]()"'、。）」|,\r\n]*[ \t])"""
@@ -232,7 +258,7 @@ SPACED_FILE_URI_REPOSITORY_PATH_PATTERN = re.compile(
     + "|".join(map(re.escape, REPOSITORY_NAMES))
     + r"""|anshin[a-z0-9_.-]*worktree[a-z0-9_.-]*)(?=[/\\]|[ =\t`<>\[\]()"'、。）」|,]|$)"""
     r"""(?:[/\\][^ =\t`<>\[\]()"'、。）」|,\r\n]+)*""",
-    re.I,
+    re.IGNORECASE,
 )
 # Fixed server installation namespaces; nested clone/checkouts remain forbidden.
 DEPLOYMENT_ROOT_PREFIXES = tuple(
@@ -269,22 +295,22 @@ WEB_ROUTE_PREFIXES = (
 )
 KEYCLOAK_ASSET_ROUTE_PATTERN = re.compile(
     r"^/resources/(?:<cache-key>|[a-z0-9._-]+)/login/[a-z0-9._-]+(?:/|$)",
-    re.I,
+    re.IGNORECASE,
 )
 HTTP_OPERATION_PATTERN = r"GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|TRACE"
 HTTP_METHOD_ROUTE_CONTEXT = re.compile(
     rf"""(?:^|[\s|])[`"']?(?:{HTTP_OPERATION_PATTERN})[`"']?"""
     r"""\s+(?:[`"']\s*)?$""",
-    re.I,
+    re.IGNORECASE,
 )
 HTTP_METHOD_TABLE_BEFORE_ROUTE_CONTEXT = re.compile(
     rf"""(?:^|\|)\s*[`"']?(?:{HTTP_OPERATION_PATTERN})[`"']?"""
     r"""\s*\|\s*(?:[`"']\s*)?$""",
-    re.I,
+    re.IGNORECASE,
 )
 HTTP_METHOD_TABLE_AFTER_ROUTE_CONTEXT = re.compile(
     rf"""^[`"']?\s*\|\s*[`"']?(?:{HTTP_OPERATION_PATTERN})""" r"""[`"']?\s*(?:\||$)""",
-    re.I,
+    re.IGNORECASE,
 )
 API_PATH_KEY_PATTERN = re.compile(
     r"""^\s*(?P<quote>["']?)(?P<path>/[^\s`"']+?)(?P=quote)\s*:\s*(?:\{\s*)?(?:#.*)?$"""
@@ -292,18 +318,18 @@ API_PATH_KEY_PATTERN = re.compile(
 INLINE_API_OPERATION_PATH_PATTERN = re.compile(
     r"""^\s*(?P<quote>["']?)(?P<path>/[^\s`"']+?)(?P=quote)\s*:\s*\{\s*"""
     rf"""(?P<operation_quote>["']?)(?:{HTTP_OPERATION_PATTERN})(?P=operation_quote)\s*:""",
-    re.I,
+    re.IGNORECASE,
 )
 API_OPERATION_KEY_PATTERN = re.compile(
     rf"""^(?P<indent>[ \t]+)(?P<quote>["']?)(?:{HTTP_OPERATION_PATTERN})"""
     r"""(?P=quote)\s*:(?:\s|$)""",
-    re.I,
+    re.IGNORECASE,
 )
 
 
 def _normalized_source_path(value: str) -> str:
     path = unquote(value)
-    path = re.sub(r"^file://(?:[^/\s]+)?(?=/)", "", path, flags=re.I)
+    path = re.sub(r"^file://(?:[^/\s]+)?(?=/)", "", path, flags=re.IGNORECASE)
     path = path.replace("\\", "/")
     if re.match(r"^/[A-Za-z]:/", path):
         path = path[1:]
@@ -373,17 +399,19 @@ def nonportable_markdown_path_lines(text: str) -> list[int]:
     source_lines = text.splitlines()
     for index, line in enumerate(source_lines):
         number = index + 1
-        source = re.sub(r"https?://[^\s<>`]+", "", line, flags=re.I)
+        source = re.sub(r"https?://[^\s<>`]+", "", line, flags=re.IGNORECASE)
         extracted_paths: list[tuple[str, int, int]] = []
 
-        def remember_quoted_path(match: re.Match[str]) -> str:
-            extracted_paths.append(
-                (match.group("path"), match.start("path"), match.end("path"))
-            )
+        def remember_quoted_path(
+            match: re.Match[str], paths: list[tuple[str, int, int]] = extracted_paths
+        ) -> str:
+            paths.append((match.group("path"), match.start("path"), match.end("path")))
             return " " * len(match.group())
 
-        def remember_unquoted_path(match: re.Match[str]) -> str:
-            extracted_paths.append((match.group(), match.start(), match.end()))
+        def remember_unquoted_path(
+            match: re.Match[str], paths: list[tuple[str, int, int]] = extracted_paths
+        ) -> str:
+            paths.append((match.group(), match.start(), match.end()))
             return " " * len(match.group())
 
         source = QUOTED_FILE_URI_PATTERN.sub(remember_quoted_path, source)
@@ -457,6 +485,7 @@ def validate_repository_markdown_paths(
         cwd=repository_root,
         capture_output=True,
         text=True,
+        check=False,
     )
     if result.returncode:
         errors.append("cannot enumerate repository Markdown paths")
@@ -597,6 +626,9 @@ def validate_ai_policy_contract(
             )
             continue
         block = text.split(opening, 1)[1].split(closing, 1)[0]
+        expected_hash = metadata.get("ai_policy_block_sha256")
+        if expected_hash is not None and hashlib.sha256(block.encode("utf-8")).hexdigest() != expected_hash:
+            errors.append(f"{relative}: AI policy differs from the common canonical distribution")
         missing = [value for value in AI_POLICY_REQUIRED_TEXT if value not in block]
         if missing:
             errors.append(
@@ -731,6 +763,7 @@ def validate_retired_metadata_templates(
 
 ALLOWED_TOP_LEVEL = {
     "_governance",
+    "changes",
     "decisions",
     "evidence",
     "generated",
@@ -791,6 +824,104 @@ def distribution_git(repository_root: Path, *arguments: str) -> bytes:
 
 
 ADAPTER_SPEC_PREFIX = "# anshin-quality-plan-adapter-spec: "
+GENERATED_HANDOFF_RE = re.compile(
+    rb"\n?# anshin-quality-plan-handoff:v1\n.*?# /anshin-quality-plan-handoff:v1\n",
+    re.DOTALL,
+)
+GENERATED_DISTRIBUTION_RE = re.compile(
+    rb"\n?# anshin-document-distribution-profile:v1\n.*?# /anshin-document-distribution-profile:v1\n",
+    re.DOTALL,
+)
+GENERATED_BUILD_BLOCKS_RE = re.compile(
+    rb"\n?# anshin-quality-plan-handoff:v1\n.*?# /anshin-quality-plan-handoff:v1\n"
+    rb"# anshin-document-distribution-profile:v1\n.*?# /anshin-document-distribution-profile:v1\n",
+    re.DOTALL,
+)
+CORE_NATIVE_INIT_RE = re.compile(
+    rb"# anshin-core-stored-plan-init:v1\n.*?# /anshin-core-stored-plan-init:v1\n",
+    re.DOTALL,
+)
+CORE_NATIVE_COMPLETION_RE = re.compile(
+    rb"# anshin-core-stored-plan-completion:v1\n.*?# /anshin-core-stored-plan-completion:v1\n",
+    re.DOTALL,
+)
+CORE_NATIVE_EXECUTION_RE = re.compile(
+    rb"# anshin-core-stored-plan-execution:v1\n.*?# /anshin-core-stored-plan-execution:v1\n",
+    re.DOTALL,
+)
+CORE_NATIVE_SUCCESS_RE = re.compile(
+    rb"# anshin-core-stored-plan-success:v1\n.*?# /anshin-core-stored-plan-success:v1\n",
+    re.DOTALL,
+)
+
+
+def _strip_generated_build_blocks(base: bytes) -> bytes:
+    base = GENERATED_BUILD_BLOCKS_RE.sub(b"\n", base)
+    base = GENERATED_HANDOFF_RE.sub(b"\n", base)
+    return GENERATED_DISTRIBUTION_RE.sub(b"\n", base)
+
+
+def _strip_core_native_handoff(base: bytes) -> bytes:
+    # Frontend stored-plan shims retain the existing native commands as anchors.
+    front_init = b"""    AUTO_PLAN_FILE="$(mktemp)"
+    trap 'rm -f "${AUTO_PLAN_FILE:-}"' EXIT
+    node apps/anshin-frontend/scripts/select-build-check.js --root-quality-plan > "$AUTO_PLAN_FILE"
+"""
+    base = re.sub(
+        rb"(?ms)^# anshin-frontend-stored-plan-init:v1\n.*?^# /anshin-frontend-stored-plan-init:v1\n",
+        lambda _m: front_init,
+        base,
+    )
+    base = re.sub(
+        rb"(?ms)^# anshin-frontend-stored-plan-execution:v1\n.*?^# /anshin-frontend-stored-plan-execution:v1\n",
+        lambda m: (
+            b'      *) node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$selected_id" ;;\n'
+            if b"$selected_id" in m[0]
+            else re.search(
+                rb"(?m)^ *node apps/anshin-frontend/scripts/select-build-check.js --execute-root [^\n]+\n",
+                m[0],
+            )[0]
+        ),
+        base,
+    )
+    base = re.sub(
+        rb"(?ms)^# anshin-frontend-stored-plan-(?:policy|success):v1\n.*?^# /anshin-frontend-stored-plan-(?:policy|success):v1\n",
+        b"",
+        base,
+    )
+    marker_counts = {
+        "initialization": (
+            base.count(b"# anshin-core-stored-plan-init:v1"),
+            base.count(b"# /anshin-core-stored-plan-init:v1"),
+            1,
+        ),
+        "completion": (
+            base.count(b"# anshin-core-stored-plan-completion:v1"),
+            base.count(b"# /anshin-core-stored-plan-completion:v1"),
+            2,
+        ),
+        "execution": (
+            base.count(b"# anshin-core-stored-plan-execution:v1"),
+            base.count(b"# /anshin-core-stored-plan-execution:v1"),
+            2,
+        ),
+        "success": (
+            base.count(b"# anshin-core-stored-plan-success:v1"),
+            base.count(b"# /anshin-core-stored-plan-success:v1"),
+            1,
+        ),
+    }
+    if any(begin or end for begin, end, _expected in marker_counts.values()):
+        for name, (begin, end, expected) in marker_counts.items():
+            if begin != expected or end != expected:
+                raise ContractError(f"generated Core {name} block count differs")
+    initialization = b'MODE="full"\nAUTO_ACTIVE=0\nAUTO_CHECK_IDS=()\n'
+    execution = b'        "$PREFLIGHT_PYTHON" scripts/select_ai_targeted_tests.py --execution "$check_id"\n'
+    success = b"printf '%s\\n' \"[build_check] OK\"\n"
+    base = CORE_NATIVE_INIT_RE.sub(lambda _match: initialization, base)
+    base = CORE_NATIVE_COMPLETION_RE.sub(lambda _match: b"", base)
+    base = CORE_NATIVE_EXECUTION_RE.sub(lambda _match: execution, base)
+    return CORE_NATIVE_SUCCESS_RE.sub(lambda _match: success, base)
 
 
 def _adapter_spec_bytes(spec: dict[str, Any]) -> str:
@@ -808,13 +939,27 @@ def _adapter_spec_from_build(build: bytes) -> dict[str, Any]:
                 )
             except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
                 raise ContractError("build-check adapter metadata is invalid") from exc
-            if not isinstance(value, dict) or set(value) != {
+            legacy_keys = {
                 "kind",
                 "invocation",
                 "selector",
                 "plan_args",
                 "execution_args",
+            }
+            if not isinstance(value, dict) or set(value) not in {
+                frozenset(legacy_keys),
+                frozenset(legacy_keys | {"dependencies"}),
             }:
+                raise ContractError("build-check adapter metadata is invalid")
+            if "dependencies" not in value:
+                value["dependencies"] = [value["selector"]] if value["selector"] else []
+            if value["dependencies"] != sorted(set(value["dependencies"])) or any(
+                not isinstance(path, str)
+                or not path
+                or Path(path).is_absolute()
+                or ".." in Path(path).parts
+                for path in value["dependencies"]
+            ):
                 raise ContractError("build-check adapter metadata is invalid")
             return value
     raise ContractError("build-check adapter metadata is missing")
@@ -869,6 +1014,10 @@ def repository_adapter_spec(
                 "kind": "core-native",
                 "invocation": [],
                 "selector": "scripts/select_ai_targeted_tests.py",
+                "dependencies": [
+                    "config/quality_gate/heavy_test_inventory.json",
+                    "scripts/select_ai_targeted_tests.py",
+                ],
                 "plan_args": ["--quality-plan", "auto"],
                 "execution_args": ["--execution"],
             }
@@ -881,6 +1030,7 @@ def repository_adapter_spec(
                 "kind": "legacy",
                 "invocation": ["--auto"],
                 "selector": "",
+                "dependencies": [],
                 "plan_args": [],
                 "execution_args": [],
             }
@@ -897,19 +1047,87 @@ def repository_adapter_spec(
                 "kind": "build-focus" if adapter_marker else "selector-direct",
                 "invocation": [],
                 "selector": "scripts/select_build_check.py",
+                "dependencies": ["scripts/select_build_check.py"],
                 "plan_args": ["--profile", "auto"],
                 "execution_args": ["--execution"],
             }
         )
-    javascript_selector = "scripts/select-build-check.js" in text
-    if javascript_selector:
-        if "--root-quality-plan" not in text:
+    javascript_selector_paths: dict[str, list[list[str]]] = {
+        "scripts/select-build-check.js": [],
+        "apps/anshin-frontend/scripts/select-build-check.js": [],
+    }
+    for line in text.splitlines():
+        if "select-build-check.js" not in line:
+            continue
+        try:
+            words = shlex.split(line, comments=True)
+        except ValueError as exc:
+            raise ContractError(
+                "build-check native selector signature is partial"
+            ) from exc
+        matches = [
+            (index, word)
+            for index, word in enumerate(words)
+            if word in javascript_selector_paths
+        ]
+        if not words:
+            continue
+        if len(matches) != 1:
             raise ContractError("build-check native selector signature is partial")
+        index, selector_path = matches[0]
+        prefix = words[:index]
+        is_syntax_check = len(prefix) >= 2 and prefix[-2:] == ["node", "--check"]
+        if not prefix or not (prefix[-1] == "node" or is_syntax_check):
+            raise ContractError("build-check native selector signature is partial")
+        argv = words[index + 1 :]
+        if is_syntax_check:
+            if argv:
+                raise ContractError("build-check native selector signature is partial")
+            continue
+        if argv and argv[-1] == ";;":
+            argv = argv[:-1]
+        if (
+            len(argv) >= 2
+            and argv[-2] == ">"
+            and argv[-1]
+            in {
+                "$AUTO_PLAN_FILE",
+                "/dev/null",
+            }
+        ):
+            argv = argv[:-2]
+        elif argv and argv[-1] == ">/dev/null":
+            argv = argv[:-1]
+        javascript_selector_paths[selector_path].append(argv)
+
+    def validate_javascript_invocations(invocations: list[list[str]]) -> None:
+        planner = [argv for argv in invocations if argv == ["--root-quality-plan"]]
+        executor = [
+            argv
+            for argv in invocations
+            if len(argv) == 2
+            and argv[0] == "--execute-root"
+            and argv[1]
+            and not argv[1].startswith("--")
+        ]
+        if (
+            len(planner) + len(executor) != len(invocations)
+            or not planner
+            or not executor
+        ):
+            raise ContractError("build-check native selector signature is partial")
+
+    root_javascript_invocations = javascript_selector_paths[
+        "scripts/select-build-check.js"
+    ]
+    if root_javascript_invocations:
+        validate_javascript_invocations(root_javascript_invocations)
         candidates.append(
             {
                 "kind": "build-focus",
                 "invocation": [],
                 "selector": "scripts/select-build-check.js",
+                "dependencies": ["scripts/select-build-check.js"],
                 "plan_args": ["--root-quality-plan", "--"],
                 "execution_args": ["--execute-root"],
             }
@@ -920,26 +1138,49 @@ def repository_adapter_spec(
                 "kind": "legacy",
                 "invocation": ["--fast"],
                 "selector": "",
+                "dependencies": [],
                 "plan_args": [],
                 "execution_args": [],
             }
         )
-    frontend_root = all(
-        marker in text
-        for marker in (
-            'elif [[ "$file" == apps/anshin-frontend/* ]]',
-            "cd apps/anshin-frontend",
-            'bash scripts/build_check.sh --fast "${APP_FILES[@]}"',
-            "pnpm --dir apps/anshin-frontend run -s guard:build-check-references",
-        )
+    frontend_markers = (
+        'elif [[ "$file" == apps/anshin-frontend/* ]]',
+        "cd apps/anshin-frontend",
+        'bash scripts/build_check.sh --fast "${APP_FILES[@]}"',
+        "pnpm --dir apps/anshin-frontend run -s guard:build-check-references",
     )
+    frontend_marker_presence = [marker in text for marker in frontend_markers]
+    frontend_invocations = javascript_selector_paths[
+        "apps/anshin-frontend/scripts/select-build-check.js"
+    ]
+    if frontend_invocations:
+        validate_javascript_invocations(frontend_invocations)
+    frontend_root = all(frontend_marker_presence)
+    if (frontend_invocations and not frontend_root) or (
+        any(frontend_marker_presence) and not frontend_root
+    ):
+        raise ContractError("build-check native selector signature is partial")
     if frontend_root:
         candidates.append(
             {
                 "kind": "frontend-root",
                 "invocation": [],
                 "selector": "apps/anshin-frontend/scripts/select-build-check.js",
-                "plan_args": [],
+                "dependencies": sorted(
+                    [
+                        "apps/anshin-frontend/scripts/build_check.sh",
+                        "apps/anshin-frontend/scripts/select-build-check.js",
+                    ]
+                    + (
+                        [
+                            "apps/anshin-frontend/scripts/build-check.config.json",
+                            "apps/anshin-frontend/scripts/build-check-plan.js",
+                        ]
+                        if frontend_invocations
+                        else []
+                    )
+                ),
+                "plan_args": ["--root-quality-plan"] if frontend_invocations else [],
                 "execution_args": [],
             }
         )
@@ -947,25 +1188,167 @@ def repository_adapter_spec(
         raise ContractError("build-check native selector signature is ambiguous")
     if candidates:
         return candidates[0]
+    marketing_markers = (
+        'MODE="${1:---full}"',
+        "--full|--fast|--documents-only",
+        "tests.test_marketing_retirement_guard tests.test_release_impact",
+        'if [[ "$MODE" == "--full" ]]; then',
+        "bash tests/test_marketing_retirement_integration.sh",
+    )
+    if all(marker in text for marker in marketing_markers):
+        return {
+            "kind": "marketing-legacy",
+            "invocation": [],
+            "selector": "",
+            "dependencies": [],
+            "plan_args": [],
+            "execution_args": [],
+        }
     return {
         "kind": "legacy",
         "invocation": _legacy_invocation(base_hook),
         "selector": "",
+        "dependencies": [],
         "plan_args": [],
         "execution_args": [],
     }
 
 
+def _frontend_stored_plan_adapter(generated: bytes) -> bytes:
+    def replace_once(anchor: bytes, replacement: bytes) -> None:
+        nonlocal generated
+        if generated.count(anchor) != 1:
+            raise ContractError("Frontend native stored-plan anchor differs")
+        generated = generated.replace(anchor, replacement, 1)
+
+    replace_once(
+        b"    local distribution_rc=$?\n",
+        b'    local distribution_rc="${1:-$?}"\n',
+    )
+    initialization = b"""    AUTO_PLAN_FILE="$(mktemp)"
+    trap 'rm -f "${AUTO_PLAN_FILE:-}"' EXIT
+    node apps/anshin-frontend/scripts/select-build-check.js --root-quality-plan > "$AUTO_PLAN_FILE"
+"""
+    replacement = rb"""# anshin-frontend-stored-plan-init:v1
+    AUTO_PLAN_FILE="$(mktemp)"
+    if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then
+      trap 'frontend_rc=$?; rm -f "${AUTO_PLAN_FILE:-}"; write_distribution_failure_result "$frontend_rc"' EXIT
+      python3 - "$DISTRIBUTION_PLAN_PATH" > "$AUTO_PLAN_FILE" <<'PY'
+import json,subprocess,sys
+p=json.load(open(sys.argv[1],encoding="utf-8"))
+tree=subprocess.check_output(["git","write-tree"],text=True).strip()
+clean=subprocess.run(["git","diff","--quiet","--"],check=False).returncode==0 and not subprocess.check_output(["git","ls-files","--others","--exclude-standard","-z"])
+print(json.dumps({"checks":p["selected_checks"],"rootFullRisk":p["requires_full"],"candidate":{"exactCandidate":clean,"executableTree":tree if clean else None,"qualification":False}}))
+PY
+      DISTRIBUTION_COMPLETED_CHECK_IDS=()
+      DISTRIBUTION_CURRENT_CHECK_ID="root-local-quality-policy"
+    else
+      trap 'rm -f "${AUTO_PLAN_FILE:-}"' EXIT
+      node apps/anshin-frontend/scripts/select-build-check.js --root-quality-plan > "$AUTO_PLAN_FILE"
+    fi
+# /anshin-frontend-stored-plan-init:v1
+"""
+    replace_once(initialization, replacement)
+    policy_end = b"PY\n\nfor root_check in root-workflow-policy"
+    policy_state = rb"""# anshin-frontend-stored-plan-policy:v1
+if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then
+  DISTRIBUTION_COMPLETED_CHECK_IDS+=("root-local-quality-policy")
+  DISTRIBUTION_CURRENT_CHECK_ID=""
+fi
+# /anshin-frontend-stored-plan-policy:v1
+"""
+    replace_once(
+        policy_end, b"PY\n\n" + policy_state + b"for root_check in root-workflow-policy"
+    )
+    execution = rb'(?m)^([ ]*)node apps/anshin-frontend/scripts/select-build-check.js --execute-root "\$(root_check)"\n'
+
+    def execution_state(match: re.Match[bytes]) -> bytes:
+        indent, variable = match[1], match[2]
+        return (
+            b"# anshin-frontend-stored-plan-execution:v1\n"
+            + indent
+            + b'if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_CURRENT_CHECK_ID="$'
+            + variable
+            + b'"; fi\n'
+            + match[0]
+            + indent
+            + b'if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_COMPLETED_CHECK_IDS+=("$'
+            + variable
+            + b'"); DISTRIBUTION_CURRENT_CHECK_ID=""; fi\n'
+            + b"# /anshin-frontend-stored-plan-execution:v1\n"
+        )
+
+    generated, count = re.subn(execution, execution_state, generated)
+    if count != 2:
+        raise ContractError("Frontend native execution anchors differ")
+    selected = b'      *) node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$selected_id" ;;\n'
+    selected_state = b"""# anshin-frontend-stored-plan-execution:v1
+      *) if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_CURRENT_CHECK_ID="$selected_id"; fi;
+         node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$selected_id";
+         if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_COMPLETED_CHECK_IDS+=("$selected_id"); DISTRIBUTION_CURRENT_CHECK_ID=""; fi ;;
+# /anshin-frontend-stored-plan-execution:v1
+"""
+    replace_once(selected, selected_state)
+    success = rb"""# anshin-frontend-stored-plan-success:v1
+  if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then
+    if [[ -n "${DISTRIBUTION_RESULT_PATH:-}" ]]; then
+      python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
+      DISTRIBUTION_RESULT_WRITTEN=1
+    fi
+    rm -f "${AUTO_PLAN_FILE:-}"
+    trap - EXIT
+  fi
+# /anshin-frontend-stored-plan-success:v1
+"""
+    for mode in (b"--full", b"--auto"):
+        anchor = b'  echo "[build_check] OK mode=' + mode + b'"\n'
+        replace_once(anchor, success + anchor)
+    return generated
+
+
 def distribution_adapter(base: bytes, base_hook: bytes | None = None) -> bytes:
+    handoff_count = base.count(b"# anshin-quality-plan-handoff:v1")
+    handoff_end_count = base.count(b"# /anshin-quality-plan-handoff:v1")
+    distribution_count = base.count(b"# anshin-document-distribution-profile:v1")
+    distribution_end_count = base.count(b"# /anshin-document-distribution-profile:v1")
+    if (
+        handoff_count != handoff_end_count
+        or distribution_count != distribution_end_count
+    ):
+        raise ContractError("generated build-check block is incomplete")
+    base = _strip_core_native_handoff(_strip_generated_build_blocks(base))
     anchor = b'\ncd "$ROOT_DIR"\n'
     if base.count(anchor) != 1:
         raise ContractError("build check has no unique repository-root entry")
     spec = repository_adapter_spec(base, base_hook)
-    dependencies = [spec["selector"]] if spec["selector"] else []
+    dependencies = spec["dependencies"]
+    native_branch = ""
+    internal_guard = ""
+    if spec["kind"] == "frontend-root" and spec["plan_args"] == ["--root-quality-plan"]:
+        internal_guard = """if [[ -n "${DISTRIBUTION_FRONTEND_STORED_PLAN+x}${DISTRIBUTION_PLAN_PATH+x}${DISTRIBUTION_COMPLETED_CHECK_IDS+x}${DISTRIBUTION_CURRENT_CHECK_ID+x}" ]]; then
+  printf '%s\\n' "[build_check:auto] ERROR: internal stored-plan state was supplied by the caller" >&2
+  exit 2
+fi
+"""
+        native_branch = """  elif [[ "$DISTRIBUTION_PROFILE" == "repository-native" ]]; then
+    DISTRIBUTION_FRONTEND_STORED_PLAN=1
+    set -- --auto
+"""
+    elif spec["kind"] == "core-native":
+        internal_guard = """if [[ -n "${DISTRIBUTION_CORE_STORED_PLAN+x}${DISTRIBUTION_PLAN_PATH+x}${DISTRIBUTION_COMPLETED_CHECK_IDS+x}${DISTRIBUTION_CURRENT_CHECK_ID+x}" ]]; then
+  printf '%s\\n' "[build_check:auto] ERROR: internal stored-plan state was supplied by the caller" >&2
+  exit 2
+fi
+"""
+        native_branch = """  elif [[ "$DISTRIBUTION_PROFILE" == "repository-native" ]]; then
+    DISTRIBUTION_CORE_STORED_PLAN=1
+"""
     adapter = (
         DISTRIBUTION_BUILD_ADAPTER_TEMPLATE.replace(
             "{adapter_metadata}", ADAPTER_SPEC_PREFIX + _adapter_spec_bytes(spec)
         )
+        .replace("{native_plan_branch}", native_branch)
+        .replace("{internal_guard}", internal_guard)
         .replace(
             "{native_dependencies}",
             "\n".join(
@@ -973,8 +1356,93 @@ def distribution_adapter(base: bytes, base_hook: bytes | None = None) -> bytes:
             ),
         )
         .encode()
+        .lstrip(b"\n")
     )
-    return base.replace(anchor, anchor + adapter, 1)
+    generated = base.replace(anchor, anchor + adapter, 1)
+    if spec["kind"] == "core-native":
+        initialization = b'MODE="full"\nAUTO_ACTIVE=0\nAUTO_CHECK_IDS=()\n'
+        replacement = (
+            b"# anshin-core-stored-plan-init:v1\n"
+            + initialization
+            + rb"""if [[ "${DISTRIBUTION_CORE_STORED_PLAN:-0}" == "1" ]]; then
+  AUTO_PLAN="$(cat -- "$DISTRIBUTION_PLAN_PATH")"
+  AUTO_INDEX_TREE="$(git write-tree)"
+  while IFS= read -r check_id; do AUTO_CHECK_IDS+=("$check_id"); done < <(python3 -c 'import json,sys;[print(v) for v in json.load(open(sys.argv[1],encoding="utf-8"))["selected_checks"]]' "$DISTRIBUTION_PLAN_PATH")
+  AUTO_PATHS=()
+  while IFS= read -r -d '' path_arg; do AUTO_PATHS+=("$path_arg"); done < <(python3 -c 'import json,sys;[sys.stdout.buffer.write(v.encode()+b"\0") for v in json.load(open(sys.argv[1],encoding="utf-8"))["paths"]]' "$DISTRIBUTION_PLAN_PATH")
+  [[ ${#AUTO_CHECK_IDS[@]} -gt 0 && ( " ${AUTO_CHECK_IDS[*]} " == *" core-full-static "* || " ${AUTO_CHECK_IDS[*]} " == *" core-fast "* ) ]] || { printf '%s\n' "[build_check:auto] ERROR: stored Core plan is incomplete" >&2; exit 2; }
+  if [[ " ${AUTO_CHECK_IDS[*]} " == *" core-full-static "* ]]; then MODE="full-static"; else MODE="fast"; fi
+  AUTO_ACTIVE=1
+  DISTRIBUTION_COMPLETED_CHECK_IDS=()
+  if [[ "$MODE" == "fast" ]]; then
+    DISTRIBUTION_CURRENT_CHECK_ID="core-fast"
+    set -- "${AUTO_PATHS[@]}"
+  else
+    DISTRIBUTION_CURRENT_CHECK_ID="core-full-static"
+    set --
+  fi
+fi
+"""
+            + b"# /anshin-core-stored-plan-init:v1\n"
+        )
+        if generated.count(initialization) != 1:
+            raise ContractError("Core build-check initialization anchor differs")
+        generated = generated.replace(initialization, replacement, 1)
+        for aggregate, check_id in (
+            (b"  printf '%s\\n' \"[build_check:fast] OK\"\n", b"core-fast"),
+            (b'elif [ "$AUTO_ACTIVE" = "1" ]; then\n', b"core-full-static"),
+        ):
+            if generated.count(aggregate) != 1:
+                raise ContractError("Core aggregate completion anchor differs")
+            completion = (
+                aggregate
+                + b"# anshin-core-stored-plan-completion:v1\n"
+                + b'  if [[ " ${AUTO_CHECK_IDS[*]} " == *" '
+                + check_id
+                + b' "* ]]; then\n'
+                + b'    DISTRIBUTION_COMPLETED_CHECK_IDS+=("'
+                + check_id
+                + b'")\n'
+                + b'    DISTRIBUTION_CURRENT_CHECK_ID=""\n'
+                + b"  fi\n"
+                + b"# /anshin-core-stored-plan-completion:v1\n"
+            )
+            generated = generated.replace(aggregate, completion, 1)
+        execution = b'        "$PREFLIGHT_PYTHON" scripts/select_ai_targeted_tests.py --execution "$check_id"\n'
+        execution_with_state = (
+            b"# anshin-core-stored-plan-execution:v1\n"
+            + b'        DISTRIBUTION_CURRENT_CHECK_ID="$check_id"\n'
+            + execution
+            + b'        DISTRIBUTION_COMPLETED_CHECK_IDS+=("$check_id")\n'
+            + b'        DISTRIBUTION_CURRENT_CHECK_ID=""\n'
+            + b"# /anshin-core-stored-plan-execution:v1\n"
+        )
+        if generated.count(execution) != 2:
+            raise ContractError("Core selected-check execution anchor differs")
+        generated = generated.replace(execution, execution_with_state)
+        success = b"printf '%s\\n' \"[build_check] OK\"\n"
+        success_replacement = rb"""# anshin-core-stored-plan-success:v1
+if [[ "${DISTRIBUTION_CORE_STORED_PLAN:-0}" == "1" ]]; then
+  [[ "$(git write-tree)" == "$AUTO_INDEX_TREE" ]] || { printf '%s\n' "[build_check:auto] ERROR: index tree changed during verification" >&2; exit 1; }
+  git diff --quiet -- || { printf '%s\n' "[build_check:auto] ERROR: working tree changed during verification" >&2; exit 1; }
+  [[ -z "$(git ls-files --others --exclude-standard)" ]] || { printf '%s\n' "[build_check:auto] ERROR: untracked input appeared during verification" >&2; exit 1; }
+  if [[ -n "${DISTRIBUTION_RESULT_PATH:-}" ]]; then
+    python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
+    DISTRIBUTION_RESULT_WRITTEN=1
+  fi
+  trap - EXIT
+  printf '%s\n' "[build_check] OK mode=--auto"
+else
+  printf '%s\n' "[build_check] OK"
+fi
+# /anshin-core-stored-plan-success:v1
+"""
+        if generated.count(success) != 1:
+            raise ContractError("Core build-check success anchor differs")
+        generated = generated.replace(success, success_replacement, 1)
+    if spec["kind"] == "frontend-root" and spec["plan_args"] == ["--root-quality-plan"]:
+        generated = _frontend_stored_plan_adapter(generated)
+    return generated
 
 
 DISTRIBUTION_BROWSER_LINES = [
@@ -1156,7 +1624,23 @@ def distribution_agents_adapter(base: bytes) -> bytes:
         for line in base.splitlines(keepends=True)
     )
     migrated_text = migrate_active_agent_policy(fixed.decode("utf-8"))
+    misplaced = f"\n{WORKSPACE_ROOT_EXPLANATION}\n\n## 専門用語一覧\n"
+    if misplaced in migrated_text:
+        migrated_text = migrated_text.replace(misplaced, "\n## 専門用語一覧\n", 1)
+        glossary = re.search(r"(?s)(## 専門用語一覧\n\n(?:\|[^\n]*\n)+)", migrated_text)
+        if glossary is None:
+            raise ContractError("AGENTS glossary has no deterministic table boundary")
+        migrated_text = (
+            migrated_text[: glossary.end()]
+            + "\n"
+            + WORKSPACE_ROOT_EXPLANATION
+            + "\n"
+            + migrated_text[glossary.end() :]
+        )
     existing_adapter = DISTRIBUTION_AGENTS_ADAPTER.strip() + "\n"
+    migrated_text = migrated_text.replace(
+        LEGACY_DISTRIBUTION_AGENTS_ADAPTER.strip() + "\n", ""
+    )
     migrated_text = migrated_text.replace(existing_adapter, "")
     migrated = migrated_text.rstrip().encode("utf-8") + b"\n"
     return migrated + DISTRIBUTION_AGENTS_ADAPTER.encode()
@@ -1350,6 +1834,32 @@ def _quality_plan_json(value: dict[str, Any]) -> bytes:
 
 
 def _distribution_changed_paths(repository_root: Path) -> list[str]:
+    # The native commit hook has already rejected partial staging and emits
+    # exact index paths. Its stored plan must be validated against that same
+    # index, including GIT_INDEX_FILE, rather than earlier branch commits or
+    # unrelated working files. Direct/branch qualification keeps all inputs.
+    if (
+        os.environ.get("ANSHIN_BUILD_CHECK_CALLER") == "pre-commit"
+        and os.environ.get("ANSHIN_BUILD_CHECK_CHANGE_SCOPE") == "staged"
+    ):
+        reader = repository_root / "scripts/pre_commit_plan.py"
+        if not reader.is_file() or reader.is_symlink():
+            raise ContractError("native staged-path reader is unavailable")
+        completed = subprocess.run(
+            [sys.executable, "-I", str(reader), "--staged-paths"],
+            cwd=repository_root,
+            capture_output=True,
+            check=False,
+        )
+        if completed.returncode:
+            raise ContractError("native staged-path reader rejected repository input")
+        return sorted(
+            {
+                path.decode("utf-8", errors="surrogateescape")
+                for path in completed.stdout.split(b"\0")
+                if path
+            }
+        )
     target = (
         distribution_git(repository_root, "rev-parse", "--verify", "origin/main")
         .strip()
@@ -1390,17 +1900,66 @@ def _native_selected_checks(
 ) -> tuple[list[str], str, bool]:
     selector = spec["selector"]
     selector_paths = paths
-    if spec["kind"] == "frontend-root":
+    modern_frontend = spec["kind"] == "frontend-root" and spec["plan_args"] == [
+        "--root-quality-plan"
+    ]
+    if spec["kind"] == "frontend-root" and not modern_frontend:
         prefix = "apps/anshin-frontend/"
         if not all(path.startswith(prefix) for path in paths):
             return ["frontend-root-full"], "high", True
         selector_paths = [path[len(prefix) :] for path in paths]
-    command = [
-        "node" if selector.endswith(".js") else sys.executable,
-        selector,
-        *spec["plan_args"],
-        *selector_paths,
-    ]
+    if spec["kind"] == "core-native":
+        wrapper = """import importlib.util,json,sys
+from pathlib import Path
+sys.dont_write_bytecode=True
+root=Path.cwd().resolve(); selector=(root/sys.argv[1]).resolve()
+if root not in selector.parents: raise SystemExit('selector escaped snapshot')
+spec=importlib.util.spec_from_file_location('_anshin_exact_selector',selector)
+if spec is None or spec.loader is None: raise SystemExit('selector import failed')
+module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+if not callable(getattr(module,'quality_plan',None)) or not callable(getattr(module,'_quality_candidate_identity',None)): raise SystemExit('selector pure planner is unavailable')
+module._quality_candidate_identity=lambda:{'qualification':False}
+try: plan=module.quality_plan(sys.argv[2:],profile='auto')
+except module.SelectionError as exc: print(str(exc),file=sys.stderr); raise SystemExit(2)
+print(json.dumps(plan,sort_keys=True))
+"""
+        command = [sys.executable, "-I", "-c", wrapper, selector, *selector_paths]
+    elif modern_frontend:
+        wrapper = """const path=require('node:path');
+const selector=path.resolve(process.argv[1]);
+// Historical native selectors read Git identity at module load and planning.
+// Supply nonqualification identity only; evaluate owners/checks from source.
+const cp=require('node:child_process');
+cp.execFileSync=(command,args,options={})=>{
+ if(command!=='git') throw new Error('snapshot process launch is forbidden');
+ let value;
+ if(args[0]==='rev-parse' && args[1]==='--show-toplevel') value=process.cwd()+'\\n';
+ else if(args[0]==='rev-parse' && args[1]==='--show-object-format') value='sha1\\n';
+ else if((args[0]==='rev-parse' && ['HEAD','HEAD^{tree}'].includes(args[1])) ||
+         (args[0]==='merge-base' && args.join(' ')==='merge-base HEAD origin/main')) value='0'.repeat(40)+'\\n';
+ else if([
+  ['diff','--cached','--binary','--no-ext-diff'],
+  ['diff','--name-only','-z','--no-renames','--'],
+  ['diff','--name-only','-z','--no-renames','0'.repeat(40),'HEAD','--'],
+  ['ls-files','--stage','-z'],
+  ['ls-files','-z','--others','--exclude-standard'],
+ ].some(allowed=>JSON.stringify(allowed)===JSON.stringify(args))) value='';
+ else throw new Error('snapshot Git command is not identity-only');
+ return options.encoding ? value : Buffer.from(value);
+};
+const modulePlan=require(selector);
+if(typeof modulePlan.rootQualityPlan!=='function') throw new Error('root pure planner unavailable');
+const plan=modulePlan.rootQualityPlan(process.argv.slice(2),{identity:()=>({qualification:false})});
+console.log(JSON.stringify(plan));
+"""
+        command = ["node", "-e", wrapper, selector, *selector_paths]
+    else:
+        command = [
+            "node" if selector.endswith(".js") else sys.executable,
+            selector,
+            *spec["plan_args"],
+            *selector_paths,
+        ]
     completed = subprocess.run(
         command,
         cwd=repository_root,
@@ -1412,7 +1971,7 @@ def _native_selected_checks(
         raise ContractError(
             completed.stderr.strip() or "repository-native quality plan failed"
         )
-    if spec["kind"] == "frontend-root":
+    if spec["kind"] == "frontend-root" and not modern_frontend:
         lines = completed.stdout.splitlines()
         modes = [
             line.removeprefix("mode: ") for line in lines if line.startswith("mode: ")
@@ -1450,6 +2009,32 @@ def _native_selected_checks(
         native = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise ContractError("repository-native quality plan is not JSON") from exc
+    if modern_frontend:
+        if (
+            not isinstance(native, dict)
+            or not isinstance(native.get("rootFullRisk"), bool)
+            or native.get("files") != paths
+        ):
+            raise ContractError("repository-native root quality plan is invalid")
+        checks = native.get("checks")
+        if (
+            not isinstance(checks, list)
+            or not checks
+            or any(not isinstance(check, str) or not check for check in checks)
+            or len(set(checks)) != len(checks)
+        ):
+            raise ContractError(
+                "repository-native root quality plan has invalid check IDs"
+            )
+        return (
+            sorted(checks),
+            (
+                "high"
+                if native["rootFullRisk"] or native.get("appMode") == "full"
+                else "normal"
+            ),
+            native["rootFullRisk"],
+        )
     candidate = native.get("candidate", native) if isinstance(native, dict) else None
     if not isinstance(candidate, dict):
         raise ContractError("repository-native quality plan is invalid")
@@ -1472,21 +2057,65 @@ def _native_selected_checks(
         candidate.get("full_risk", candidate.get("requires_full", False))
         or native.get("full_risk", native.get("requires_full", False))
     )
-    if spec["kind"] == "core-native" and "core-full-static" in checks:
-        checks = ["core-full-static"]
     risk = "high" if full else "normal"
     return checks, risk, full
 
 
 def _plan_dependencies(repository_root: Path, spec: dict[str, Any]) -> list[str]:
-    dependencies = sorted(
-        set(DISTRIBUTION_PATHS) | ({spec["selector"]} if spec["selector"] else set())
-    )
+    dependencies = sorted(set(DISTRIBUTION_PATHS) | set(spec["dependencies"]))
     for relative in dependencies:
         target = repository_root / relative
         if not target.is_file() or target.is_symlink():
             raise ContractError(f"quality-plan dependency is unavailable: {relative}")
     return dependencies
+
+
+def _document_distribution_eligible(repository_root: Path, paths: list[str]) -> bool:
+    allowed = set(DISTRIBUTION_PATHS) | {
+        "AGENTS.md",
+        "scripts/build_check.sh",
+        DISTRIBUTION_HOOK_PATH,
+    }
+    if not set(paths).issubset(allowed):
+        return False
+    try:
+        contract = json.loads(
+            (repository_root / "scripts/document_governance_contract.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return False
+    expected_hashes = {
+        "checker_sha256": "scripts/document_governance_portable.py",
+        "runner_sha256": "scripts/run_document_governance_guard.sh",
+        "guard_test_sha256": "scripts/test_document_governance_guard.sh",
+    }
+    for key, relative in expected_hashes.items():
+        target = repository_root / relative
+        if (
+            not target.is_file()
+            or target.is_symlink()
+            or contract.get(key) != hashlib.sha256(target.read_bytes()).hexdigest()
+        ):
+            return False
+    if (repository_root / ".git").exists():
+        try:
+            return distribution_selection(repository_root).startswith(
+                "document-distribution "
+            )
+        except ContractError:
+            return False
+    expected_modes = {
+        "scripts/document_governance_portable.py": 0o755,
+        "scripts/run_document_governance_guard.sh": 0o755,
+        "scripts/test_document_governance_guard.sh": 0o755,
+        "scripts/document_governance_contract.json": 0o644,
+    }
+    return all(
+        stat.S_IMODE((repository_root / relative).stat().st_mode) == mode
+        for relative, mode in expected_modes.items()
+    )
 
 
 def distribution_quality_plan(
@@ -1498,14 +2127,12 @@ def distribution_quality_plan(
         if paths is None
         else sorted(set(paths))
     )
-    allowed = set(DISTRIBUTION_PATHS) | {
-        "AGENTS.md",
-        "scripts/build_check.sh",
-        DISTRIBUTION_HOOK_PATH,
-    }
     if not selected_paths:
         raise ContractError("quality plan requires changed paths")
-    document_only = set(selected_paths).issubset(allowed)
+    # The Gitless producer can prove the immutable common bundle only. Build,
+    # hook, and AGENTS normalizations are accepted by bootstrap after their
+    # exact base-derived bytes are checked; arbitrary edits take the native gate.
+    document_only = _document_distribution_eligible(repository_root, selected_paths)
     spec = _adapter_spec(repository_root)
     if document_only:
         checks = ["document-governance-distribution"]
@@ -1514,6 +2141,23 @@ def distribution_quality_plan(
         requires_full = False
         reasons = ["SELECTED_DOCUMENT_DISTRIBUTION"]
         deferred = ["repository-runtime", "business-test"]
+    elif spec["kind"] == "marketing-legacy":
+        fast_paths = set(DISTRIBUTION_PATHS) | {
+            "AGENTS.md",
+            "scripts/build_check.sh",
+            "tests/test_marketing_retirement_guard.py",
+        }
+        if set(selected_paths).issubset(fast_paths):
+            checks = ["repository-fast"]
+            profile = "repository-fast"
+            risk, requires_full = "normal", False
+            reasons = ["SELECTED_REPOSITORY_FAST"]
+        else:
+            checks = ["repository-canonical"]
+            profile = "repository-canonical"
+            risk, requires_full = "high", True
+            reasons = ["SELECTED_REPOSITORY_CANONICAL"]
+        deferred = []
     elif spec["kind"] == "legacy":
         checks = ["repository-canonical"]
         profile = "repository-canonical"
@@ -1562,17 +2206,34 @@ def execute_distribution_quality_plan(repository_root: Path, plan_path: Path) ->
         raise ContractError("document-distribution is executed by the shell adapter")
     spec = _adapter_spec(repository_root)
     if plan["profile"] == "repository-canonical":
-        if spec["kind"] != "legacy" or plan["selected_checks"] != [
-            "repository-canonical"
-        ]:
+        if spec["kind"] not in {"legacy", "marketing-legacy"} or plan[
+            "selected_checks"
+        ] != ["repository-canonical"]:
             raise ContractError("repository canonical plan does not match its adapter")
         command = ["bash", "scripts/build_check.sh", *spec["invocation"]]
         completed = subprocess.run(command, cwd=repository_root, check=False)
         if completed.returncode:
             raise ContractError("repository canonical build check failed")
         return
+    if plan["profile"] == "repository-fast":
+        if (
+            spec["kind"] != "marketing-legacy"
+            or plan["selected_checks"] != ["repository-fast"]
+            or plan["requires_full"]
+        ):
+            raise ContractError("repository fast plan does not match its adapter")
+        completed = subprocess.run(
+            ["bash", "scripts/build_check.sh", "--fast"],
+            cwd=repository_root,
+            check=False,
+        )
+        if completed.returncode:
+            raise ContractError("repository fast build check failed")
+        return
     if plan["profile"] != "repository-native" or spec["kind"] == "legacy":
         raise ContractError("repository-native plan does not match its adapter")
+    if spec["kind"] == "frontend-root" and spec["plan_args"] == ["--root-quality-plan"]:
+        raise ContractError("Frontend stored plans execute in the native shell")
     if spec["kind"] == "frontend-root":
         selected = set(plan["selected_checks"])
         if (
@@ -1581,15 +2242,8 @@ def execute_distribution_quality_plan(repository_root: Path, plan_path: Path) ->
             or plan["requires_full"] != ("frontend-root-full" in selected)
         ):
             raise ContractError("repository-native frontend plan is invalid")
-    if spec["kind"] == "core-native" and "core-full-static" in plan["selected_checks"]:
-        completed = subprocess.run(
-            ["bash", "scripts/build_check.sh", "--full"],
-            cwd=repository_root,
-            check=False,
-        )
-        if completed.returncode:
-            raise ContractError("repository-native check failed: core-full-static")
-        return
+    if spec["kind"] == "core-native":
+        raise ContractError("Core stored plans execute in the native shell")
     for check_id in plan["selected_checks"]:
         if spec["kind"] == "selector-direct":
             command = [
@@ -1627,6 +2281,8 @@ def execute_distribution_quality_plan(repository_root: Path, plan_path: Path) ->
 def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -> None:
     if not plan_path.is_file() or plan_path.is_symlink():
         raise ContractError("quality plan is missing or is not a regular file")
+    if stat.S_IMODE(plan_path.stat().st_mode) != 0o600:
+        raise ContractError("quality plan mode must be 0600")
     try:
         actual = json.loads(plan_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
@@ -1673,10 +2329,7 @@ def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -
     for relative in dependencies:
         digest.update(relative.encode() + b"\0")
         digest.update((repository_root / relative).read_bytes())
-    document_only = set(actual["paths"]).issubset(
-        set(DISTRIBUTION_PATHS)
-        | {"AGENTS.md", "scripts/build_check.sh", DISTRIBUTION_HOOK_PATH}
-    )
+    document_only = _document_distribution_eligible(repository_root, actual["paths"])
     if (
         actual.get("producer_dependencies") != dependencies
         or actual.get("command_sha256")
@@ -1688,19 +2341,41 @@ def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -
         or (
             actual.get("profile") == "repository-canonical"
             and (
-                spec["kind"] != "legacy"
+                spec["kind"] not in {"legacy", "marketing-legacy"}
                 or actual.get("selected_checks") != ["repository-canonical"]
             )
         )
-        or (actual.get("profile") == "repository-native" and spec["kind"] == "legacy")
+        or (
+            actual.get("profile") == "repository-fast"
+            and (
+                spec["kind"] != "marketing-legacy"
+                or actual.get("selected_checks") != ["repository-fast"]
+                or actual.get("requires_full")
+            )
+        )
+        or (
+            actual.get("profile") == "repository-native"
+            and spec["kind"] in {"legacy", "marketing-legacy"}
+        )
         or actual.get("profile")
-        not in {"document-distribution", "repository-canonical", "repository-native"}
+        not in {
+            "document-distribution",
+            "repository-canonical",
+            "repository-fast",
+            "repository-native",
+        }
     ):
         raise ContractError("quality plan does not match the current repository input")
 
 
 def write_distribution_check_result(
-    repository_root: Path, plan_path: Path, result_path: Path, status: str
+    repository_root: Path,
+    plan_path: Path,
+    result_path: Path,
+    status: str,
+    *,
+    completed_checks: list[str] | None = None,
+    failed_check: str | None = None,
 ) -> None:
     """Write the existing v2 check-result family for one direct or staged run."""
     if status not in {"passed", "failed"}:
@@ -1722,14 +2397,30 @@ def write_distribution_check_result(
             .decode()
             .strip()
         )
+    completed = completed_checks or []
+    if (
+        len(completed) != len(set(completed))
+        or not set(completed).issubset(plan["selected_checks"])
+        or failed_check in completed
+        or (failed_check is not None and failed_check not in plan["selected_checks"])
+    ):
+        raise ContractError("quality result check status is invalid")
+    statuses = []
+    for name in plan["selected_checks"]:
+        check_status = status
+        if status == "failed" and completed_checks is not None:
+            check_status = (
+                "passed"
+                if name in completed
+                else "failed" if name == failed_check else "not_run"
+            )
+        statuses.append({"name": name, "status": check_status})
     result: dict[str, Any] = {
         "schema": "anshin.check-results.v2",
         "kind": "check-results",
         "revision": revision,
         "check_plan_sha256": plan["plan_sha256"],
-        "checks": [
-            {"name": name, "status": status} for name in plan["selected_checks"]
-        ],
+        "checks": statuses,
         "status": status,
         "identities": {
             "base_revision": base_revision,
@@ -2218,6 +2909,8 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repository-root", type=Path, required=True)
     parser.add_argument("--contract-metadata", type=Path)
+    parser.add_argument("--completed-check", action="append", default=[])
+    parser.add_argument("--failed-check")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--build-check-profile", action="store_true")
     mode.add_argument("--test-build-check-profile", action="store_true")
@@ -2279,6 +2972,13 @@ def main() -> int:
                     Path(args.write_build_check_result[0]),
                     Path(args.write_build_check_result[1]),
                     args.write_build_check_result[2],
+                    completed_checks=(
+                        args.completed_check
+                        if args.write_build_check_result[2] == "failed"
+                        and (args.completed_check or args.failed_check)
+                        else None
+                    ),
+                    failed_check=args.failed_check,
                 )
             else:
                 print(distribution_selection(repository_root))
