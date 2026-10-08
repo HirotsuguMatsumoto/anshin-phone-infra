@@ -627,8 +627,13 @@ def validate_ai_policy_contract(
             continue
         block = text.split(opening, 1)[1].split(closing, 1)[0]
         expected_hash = metadata.get("ai_policy_block_sha256")
-        if expected_hash is not None and hashlib.sha256(block.encode("utf-8")).hexdigest() != expected_hash:
-            errors.append(f"{relative}: AI policy differs from the common canonical distribution")
+        if (
+            expected_hash is not None
+            and hashlib.sha256(block.encode("utf-8")).hexdigest() != expected_hash
+        ):
+            errors.append(
+                f"{relative}: AI policy differs from the common canonical distribution"
+            )
         missing = [value for value in AI_POLICY_REQUIRED_TEXT if value not in block]
         if missing:
             errors.append(
@@ -1663,6 +1668,39 @@ def distribution_hook_adapter(base: bytes) -> bytes:
     return fixed.replace(anchor, anchor + DISTRIBUTION_HOOK_ADAPTER.encode(), 1)
 
 
+def common_policy_agents_update(
+    base: bytes, current: bytes, expected_hash: str
+) -> bool:
+    """Recognize only the centrally distributed block and known routing update."""
+    opening = f"<!-- {AI_POLICY_MARKER} -->".encode()
+    closing = f"<!-- /{AI_POLICY_MARKER} -->".encode()
+    if any(
+        value.count(opening) != 1 or value.count(closing) != 1
+        for value in (base, current)
+    ):
+        return False
+    before, rest = current.split(opening, 1)
+    block, after = rest.split(closing, 1)
+    if hashlib.sha256(block).hexdigest() != expected_hash:
+        return False
+    old_before, rest = base.split(opening, 1)
+    _, old_after = rest.split(closing, 1)
+    old_outside = (old_before + old_after).decode("utf-8")
+    new_outside = (before + after).decode("utf-8")
+    for old, new in (
+        (
+            "Production releaseの正本はcanonical doc_id `anshin.release.contract`及び対象repositoryのrunbookとする。本書へ運用本文を複製せず、`NOOP / CONTROL_PLANE_ONLY / DEPLOY / BLOCK`、fixed artifact、owner acceptance、rollback及び既存registered ownerを正本から適用する。",
+            "Production releaseはcanonical doc_id `anshin.release.contract`と共通AI規程を参照する。リポジトリ固有のrelease許可記録や追加停止条件を定義しない。実artifact、必要な業務検証とrollbackは既存ownerの手順に従う。",
+        ),
+        (
+            "repository固有規程が本書より強い場合はそちらを守る。矛盾する場合はcanonical policyを確認する。",
+            "repository固有規程で共通のリモートmain優先規則を変更したり、統合記録、deployment plan又はacceptance記録を追加停止条件にしてはならない。",
+        ),
+    ):
+        old_outside = old_outside.replace(old, new)
+    return old_outside == new_outside
+
+
 def distribution_paths_eligible(
     paths: set[str],
     *,
@@ -1672,12 +1710,23 @@ def distribution_paths_eligible(
     current_agents: bytes | None = None,
     base_hook: bytes | None = None,
     current_hook: bytes | None = None,
+    policy_agents: dict[str, tuple[bytes, bytes]] | None = None,
+    policy_hash: str = "",
 ) -> bool:
     if not paths.intersection(DISTRIBUTION_PATHS):
         return False
     if not paths.issubset(
         DISTRIBUTION_PATHS
         | {"scripts/build_check.sh", "AGENTS.md", DISTRIBUTION_HOOK_PATH}
+        | set(policy_agents or {})
+    ):
+        return False
+    common_update = bool(policy_agents) and bool(
+        re.fullmatch(r"[a-f0-9]{64}", policy_hash)
+    )
+    if policy_agents and not all(
+        common_policy_agents_update(old, new, policy_hash)
+        for old, new in policy_agents.values()
     ):
         return False
     migration = paths.intersection({"scripts/build_check.sh", "AGENTS.md"})
@@ -1691,12 +1740,14 @@ def distribution_paths_eligible(
                 return False
             if current_build != expected_build:
                 return False
-        elif (
-            current_build != base_build
-            or base_build.count(b"# anshin-document-distribution-profile:v1") != 1
+        elif current_build != base_build or (
+            not common_update
+            and base_build.count(b"# anshin-document-distribution-profile:v1") != 1
         ):
             return False
-        if current_agents != distribution_agents_adapter(base_agents):
+        if not common_update and current_agents != distribution_agents_adapter(
+            base_agents
+        ):
             return False
     elif "scripts/build_check.sh" in migration:
         return False
@@ -1758,6 +1809,28 @@ def distribution_selection(repository_root: Path) -> str:
         extra["base_hook"] = distribution_git(
             repository_root, "show", f"{base}:{DISTRIBUTION_HOOK_PATH}"
         )
+    agent_paths = {path for path in paths if Path(path).name == "AGENTS.md"}
+    if agent_paths:
+        try:
+            contract = json.loads(
+                (
+                    repository_root / "scripts/document_governance_contract.json"
+                ).read_text()
+            )
+            policy_hash = str(contract.get("ai_policy_block_sha256") or "")
+            if policy_hash:
+                policy_agents = {}
+                for path in agent_paths:
+                    current = repository_root / path
+                    if current.is_symlink() or not current.is_file():
+                        return f"repository-fast {base} {target} {head} -"
+                    policy_agents[path] = (
+                        distribution_git(repository_root, "show", f"{base}:{path}"),
+                        current.read_bytes(),
+                    )
+                extra.update(policy_hash=policy_hash, policy_agents=policy_agents)
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            return f"repository-fast {base} {target} {head} -"
     if not distribution_paths_eligible(paths, **extra):
         return f"repository-fast {base} {target} {head} -"
     # Fingerprinting an arbitrary index only proves it did not change, not that
@@ -2076,6 +2149,7 @@ def _document_distribution_eligible(repository_root: Path, paths: list[str]) -> 
         "scripts/build_check.sh",
         DISTRIBUTION_HOOK_PATH,
     }
+    allowed.update(path for path in paths if Path(path).name == "AGENTS.md")
     if not set(paths).issubset(allowed):
         return False
     try:
