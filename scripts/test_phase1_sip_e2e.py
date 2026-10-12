@@ -255,6 +255,7 @@ def run_isolated_e2e() -> int:
         env.update(
             {
                 "ANSHIN_PHONE_BACKEND_DIR": str(backend_root),
+                "ANSHIN_PHONE_TENANT_ID": "anshin-phase1",
                 "ANSHIN_PHONE_SECRET_DIR": secret_dir,
                 "CARRIER_AUTH_MODE": "ip",
                 "CARRIER_HOST": "mock-carrier",
@@ -275,6 +276,8 @@ def run_isolated_e2e() -> int:
         run(base + ["config", "--quiet"], env=env)
         failed = False
         try:
+            bootstrap_started = time.monotonic()
+            print("phase=compose-bootstrap state=started", flush=True)
             result = run(
                 base
                 + [
@@ -293,6 +296,7 @@ def run_isolated_e2e() -> int:
                 env=env,
             )
             print(result.stdout, end="")
+            print(f"phase=compose-bootstrap state=completed wall_seconds={time.monotonic() - bootstrap_started:.3f}", flush=True)
             wait_for_sbc(base, env)
             wait_for_asterisk(base, env)
             wait_for_backend(base, env)
@@ -503,8 +507,10 @@ def run_isolated_e2e() -> int:
             if fax_records[0]["storage_reference"] != "fax-spool://isolated-test.tif":
                 raise RuntimeError("FAX storage reference was not normalized")
             print("PASS: Asterisk FAX event -> durable spool -> Backend")
-        except Exception:
+        except Exception as exc:
             failed = True
+            if isinstance(exc, subprocess.CalledProcessError):
+                print(exc.stdout or "", end="", flush=True)
             logs = run(
                 base
                 + [
