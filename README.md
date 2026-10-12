@@ -109,4 +109,6 @@ RUN_PHASE1_SIP_E2E=1 ./scripts/verify_phase1.sh
 
 この検査は、文書用IPアドレス、架空DID及び一時的なテスト値だけを使用する。実電話番号、キャリア認証情報、`.env`又は外部secretは読み込まない。REGISTER認証と固定IP認証の両方でAsterisk設定が完全に生成されること、TEL/FAXが別経路になること、110・118・119、国際電話、0570及び0990がPhase 1では遮断されることを確認する。
 
+`python3 scripts/test_phase1_sip_e2e.py`を直接実行する場合も、既存のBackend resolverでrepository rootと必須sourceを確認し、解決した同じpathをComposeへ渡す。配置が不明又は曖昧な場合はruntime起動前に停止する。`--help`は説明だけを表示し、Dockerのlease取得・build・container起動を行わない。
+
 実番号試験は[Phase 1実番号接続手順](docs/runbooks/telephony-platform/phase1_real_number_runbook.md)に従います。キャリアのDID、SIP接続先、認証方式、接続元IP、コーデック、発信者番号通知、FAX方式が未確定の状態では、外線試験を完了扱いにしません。Phase 1のスマートフォンは、固定送信元IPを許可した試験用Wi-Fi又はWireGuard等のVPN経路から接続し、SIP/RTPを全世界へ無制限公開しません。

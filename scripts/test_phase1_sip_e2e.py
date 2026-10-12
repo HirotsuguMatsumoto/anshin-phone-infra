@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import argparse
 import fcntl
 import os
 from pathlib import Path
@@ -14,6 +15,8 @@ import time
 import uuid
 import json
 import stat
+
+from resolve_phone_backend import resolve_backend
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -233,6 +236,8 @@ def run_isolated_e2e() -> int:
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required")
 
+    backend_root = resolve_backend(ROOT, os.environ.get("ANSHIN_PHONE_BACKEND_DIR"))
+
     project = f"anshin-phone-sip-test-{uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="anshin-phone-test-secrets-") as secret_dir:
         secret_path = Path(secret_dir)
@@ -249,6 +254,7 @@ def run_isolated_e2e() -> int:
         env = os.environ.copy()
         env.update(
             {
+                "ANSHIN_PHONE_BACKEND_DIR": str(backend_root),
                 "ANSHIN_PHONE_SECRET_DIR": secret_dir,
                 "CARRIER_AUTH_MODE": "ip",
                 "CARRIER_HOST": "mock-carrier",
@@ -266,6 +272,7 @@ def run_isolated_e2e() -> int:
             }
         )
         base = compose_args(project)
+        run(base + ["config", "--quiet"], env=env)
         failed = False
         try:
             result = run(
@@ -538,7 +545,8 @@ def run_isolated_e2e() -> int:
     return 0
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argparse.ArgumentParser(description=__doc__).parse_args(argv)
     with docker_heavy_lease():
         return run_isolated_e2e()
 

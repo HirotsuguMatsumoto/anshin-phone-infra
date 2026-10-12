@@ -4,11 +4,43 @@
 import unittest
 from unittest import mock
 import subprocess
+from contextlib import redirect_stdout
+import io
+from pathlib import Path
 
 import test_phase1_sip_e2e
 
 
 class Phase1SipE2ECleanupTest(unittest.TestCase):
+    @mock.patch("test_phase1_sip_e2e.run_isolated_e2e")
+    @mock.patch("test_phase1_sip_e2e.docker_heavy_lease")
+    def test_help_does_not_acquire_resources_or_start_runtime(self, lease, e2e) -> None:
+        with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as result:
+            test_phase1_sip_e2e.main(["--help"])
+        self.assertEqual(result.exception.code, 0)
+        lease.assert_not_called()
+        e2e.assert_not_called()
+
+    @mock.patch("test_phase1_sip_e2e.resolve_backend")
+    @mock.patch("test_phase1_sip_e2e.run")
+    def test_invalid_backend_stops_before_compose_start(self, run, resolve_backend) -> None:
+        resolve_backend.side_effect = RuntimeError("backend source mismatch")
+        with self.assertRaisesRegex(RuntimeError, "backend source mismatch"):
+            test_phase1_sip_e2e.run_isolated_e2e()
+        run.assert_not_called()
+
+    @mock.patch("test_phase1_sip_e2e.resolve_backend")
+    @mock.patch("test_phase1_sip_e2e.run")
+    def test_resolved_backend_is_used_for_compose_preflight(self, run, resolve_backend) -> None:
+        backend = Path("/isolated/anshin-phone-backend")
+        resolve_backend.return_value = backend
+        run.side_effect = RuntimeError("preflight stop")
+        with redirect_stdout(io.StringIO()), self.assertRaisesRegex(RuntimeError, "preflight stop"):
+            test_phase1_sip_e2e.run_isolated_e2e()
+        command, = run.call_args_list[0].args
+        self.assertEqual(command[-2:], ["config", "--quiet"])
+        self.assertEqual(run.call_args_list[0].kwargs["env"]["ANSHIN_PHONE_BACKEND_DIR"], str(backend))
+
     def test_cleanup_removes_project_images_volumes_and_orphans(self) -> None:
         base = ["docker", "compose", "--project-name", "anshin-phone-sip-test-test"]
         self.assertEqual(
