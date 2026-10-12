@@ -249,7 +249,7 @@ def finish(process: subprocess.Popen[str], label: str) -> None:
         raise RuntimeError(f"{label} failed with exit {process.returncode}:\n{output}")
 
 
-def run_isolated_e2e(*, preflight_only: bool = False) -> int:
+def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None = None) -> int:
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required")
 
@@ -267,7 +267,9 @@ def run_isolated_e2e(*, preflight_only: bool = False) -> int:
         }.items():
             path = secret_path / name
             path.write_text(value, encoding="utf-8")
-            path.chmod(0o600)
+            # Compose bind-mounts retain the host mode. Only synthetic values
+            # live here; the enclosing TemporaryDirectory remains owner-only.
+            path.chmod(0o444)
 
         env = os.environ.copy()
         env.update(
@@ -299,6 +301,11 @@ def run_isolated_e2e(*, preflight_only: bool = False) -> int:
         try:
             bootstrap_started = time.monotonic()
             print("phase=compose-bootstrap state=started", flush=True)
+            if fixture_only == "database":
+                run(base + ["up", "--detach", "--build", "postgres", "backend-migrate"], env=env)
+                run(base + ["wait", "backend-migrate"], env=env)
+                print(f"phase=database-fixture state=completed wall_seconds={time.monotonic() - bootstrap_started:.3f} integration=not-run", flush=True)
+                return 0
             result = run(
                 base
                 + [
@@ -542,6 +549,8 @@ def run_isolated_e2e(*, preflight_only: bool = False) -> int:
                     "rtpengine",
                     "pbx-event-forwarder",
                     "backend",
+                    "backend-migrate",
+                    "postgres",
                 ],
                 env=env,
                 check=False,
@@ -574,12 +583,14 @@ def run_isolated_e2e(*, preflight_only: bool = False) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
+    modes.add_argument("--fixture", choices=("database",), help="diagnose the real database/migration phase without SIP runtime")
     args = parser.parse_args(argv)
     if args.preflight:
         return run_isolated_e2e(preflight_only=True)
     with docker_heavy_lease():
-        return run_isolated_e2e()
+        return run_isolated_e2e(fixture_only=args.fixture)
 
 
 if __name__ == "__main__":

@@ -115,4 +115,6 @@ RUN_PHASE1_SIP_E2E=1 ./scripts/verify_phase1.sh
 
 `python3 scripts/test_phase1_sip_e2e.py --preflight`は、同じfixture入力とComposeを使う安価な事前診断である。Backend配置、ネットワーク重複及びCompose設定だけを確認し、build・container起動・cleanupを行わない。品質検査又は実業務結合確認の合格として扱わない。
 
+migration起動の失敗は`python3 scripts/test_phase1_sip_e2e.py --fixture database`で切り分ける。同じCompose、PostgreSQL、Backend image、Alembic及び合成入力を使い、SIP runtimeを起動せず最後に案件のresourceだけをcleanupする。この結果は発着信の結合確認を代替しない。合成入力はowner-onlyの一時directory内に置き、bind mount後の非root consumerが読めるfile modeにする。本番secretの権限又は実体は変更しない。
+
 実番号試験は[Phase 1実番号接続手順](docs/runbooks/telephony-platform/phase1_real_number_runbook.md)に従います。キャリアのDID、SIP接続先、認証方式、接続元IP、コーデック、発信者番号通知、FAX方式が未確定の状態では、外線試験を完了扱いにしません。Phase 1のスマートフォンは、固定送信元IPを許可した試験用Wi-Fi又はWireGuard等のVPN経路から接続し、SIP/RTPを全世界へ無制限公開しません。
