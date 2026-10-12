@@ -41,9 +41,9 @@ sensitivity: internal
 
 - [Phone総合資料入口](https://github.com/HirotsuguMatsumoto/anshin-corporate-strategy/blob/main/documents/plans/anshin-phone/README.md): 事業・申請・MS-A2-2配置設計の履歴・技術・様式・受領原本の参照先。
 - [Backend README](https://github.com/HirotsuguMatsumoto/anshin-phone-backend/blob/main/README.md) / [Backend資料入口](https://github.com/HirotsuguMatsumoto/anshin-phone-backend/blob/main/documents/README.md): 管理API、DB、認証認可、監査及び保護FAX原本。
-- [管理画面README](https://github.com/HirotsuguMatsumoto/anshin-frontend-monorepo/blob/main/apps/anshin-phone/README.md) / [基礎管理画面の設計](https://github.com/HirotsuguMatsumoto/anshin-frontend-monorepo/blob/main/apps/anshin-phone/documents/plans/foundation-ui-plan.md): 画面、操作導線及び検証条件。
+- [管理画面README](https://github.com/HirotsuguMatsumoto/anshin-frontend-monorepo/blob/main/apps/anshin-phone/README.md) / [基礎管理画面の設計](https://github.com/HirotsuguMatsumoto/anshin-frontend-monorepo/blob/main/apps/anshin-phone/documents/plans/telephony-platform/foundation-ui-plan.md): 画面、操作導線及び検証条件。
 
-Backend・管理画面のリンクはrepository参照であり、既存resolverで正本未解決の資料を正本へ昇格させない。以前のMS-A2-2専用LXD VM設計と現在mainの別物理サーバ方針は、総合資料入口の「配置設計・mainとの差異」で照合する。文書・branchの存在を本番配置済みと扱わない。
+Backend三文書・管理画面二文書は既存resolverで一意に解決できる登録へ修正した。reference／derivedのauthorityは変更しない。2026-10-12のowner継続指示により予定配置をMS-A2-2内のPhone専用LXD VMへ同期し、Core/AuthのVM・DB・volume・credentialと分離する。本番未配備、旧branch全体の未統合、実機資源・配備経路の確認中を区別する。
 
 ## 現在の文書
 

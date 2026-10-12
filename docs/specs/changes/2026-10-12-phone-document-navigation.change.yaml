@@ -59,6 +59,9 @@ concurrency:
     anshin-phone-infra:README.md: a0961e483577c1c6bfb02bd7b1b8841f3a1bd427
     anshin-phone-infra:docs/README.md: e6151c33127add34bbbc0f5aa68b435a1fafc115
     anshin-phone-infra:docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml: null
+  integration_order:
+  - anshin-corporate-strategy
+  - anshin-phone-infra
 rollout:
   strategy: documents-only-main-integration
   steps:
@@ -66,10 +69,14 @@ rollout:
   - 対象READMEとリンクだけを同期してcommit
   - clean fixed SHAのdocuments-onlyと必要な独立reviewを実施
   - 最新origin/mainへのrebase後に同一bound inputを確認しguarded non-force pushでmainへ統合
+  triggers:
+  - Phone資料入口の整備依頼
 rollback:
   strategy: forward-document-correction
   steps:
   - 誤ったリンク・索引の該当箇所だけを訂正し既存本文と原本を保持
+  triggers:
+  - 参照先又は分類の誤り
 monitoring:
   owner: anshin-corporate-strategy
   signals:

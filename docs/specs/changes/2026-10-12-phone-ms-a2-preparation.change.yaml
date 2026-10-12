@@ -1,0 +1,128 @@
+acceptance_criteria:
+- Backend三文書とUI二文書を既存resolverから一意に参照できる
+- 旧UI記録と実装前snapshotを現行仕様又は未実装の現在状態へ読み替えない
+- 既存のhost observerはCore/Authの結果契約を保ちPhone準備のread/missing/driver failureを区別する
+- NVMe・CPU topology・Phone project/VMの読取は固定driverだけを使い生config・secret・外部資格を出力しない
+- focused checkと既存selectorのcanonical checkを同じsourceへ結び必要な独立reviewを行う
+approvals: []
+change_id: anshin.phone.ms-a2-preparation.infra.2026-10-12
+code_paths: &id001
+- anshin-phone-infra/docs/README.md
+- anshin-phone-infra/docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml
+- anshin-phone-infra/docs/specs/changes/2026-10-12-phone-ms-a2-preparation.change.yaml
+concurrency:
+  base_commits:
+    anshin: 43ce7df6cf75bdd124ba3a754574b96f2a6b2f11
+    anshin-corporate-strategy: 743e0e67738434137e05dff445267dd8de216fd8
+    anshin-frontend-monorepo: a6a0e5ab947ab012175c96244e71fd112efcb85d
+    anshin-phone-infra: c327fc27e606f4c8a86f8587d9ab2a205d0c2b5a
+  branches:
+    anshin: codex/phone-production-20261012
+    anshin-corporate-strategy: codex/phone-foundation-20261012
+    anshin-frontend-monorepo: codex/phone-foundation-20261012
+    anshin-phone-infra: codex/phone-foundation-20261012
+  integration_order:
+  - anshin-frontend-monorepo
+  - anshin
+  - anshin-corporate-strategy
+  - anshin-phone-infra
+  owned_paths: *id001
+  pre_edit_blob_ids:
+    anshin-corporate-strategy:documents/plans/anshin-phone/20261012-phone-document-navigation.change.yaml: 1472cc9ddce2996c7df17d632bcbbfbefc86e9ca
+    anshin-corporate-strategy:documents/plans/anshin-phone/README.md: 992a7476ec277d8399a909bcb355cff999152e00
+    anshin-corporate-strategy:documents/plans/anshin-phone/number-usage-plan.md: 2b414edd0fa894bf5742f5fd3a2224015261f4ec
+    anshin-corporate-strategy:documents/plans/anshin-phone/service-launch-plan.md: a932af446f3f56636d0cb7432e6a5e99c8a0fcba
+    anshin-corporate-strategy:documents/plans/file-security-gateway/service-business-plan.md: 7f67be1a25e3d832dd6220349f3f76d737afea42
+    anshin-corporate-strategy:documents/status/anshin-phone/telecommunications-business-notification.md: 6b258bd2c92a4e01057595212092af2bdfb18359
+    anshin-frontend-monorepo:apps/anshin-phone/documents/README.md: null
+    anshin-frontend-monorepo:apps/anshin-phone/documents/manifest.yaml: null
+    anshin-frontend-monorepo:apps/anshin-phone/documents/plans/README.md: c0bc70ef9d6da84903cdc84b2bbb716016a8b4a6
+    anshin-frontend-monorepo:apps/anshin-phone/documents/plans/foundation-ui-plan.md: 5156e6181290f88148f42699ab5fc43e27dcb846
+    anshin-frontend-monorepo:apps/anshin-phone/documents/plans/telephony-platform/foundation-ui-plan.md: null
+    anshin-frontend-monorepo:apps/anshin-phone/documents/references/anshin-phone/phase1-control-plane.md: null
+    anshin-frontend-monorepo:apps/anshin-phone/documents/specs/ui-equivalence-reviews/phase1-control-plane.md: 70cd9ed219662f187c334eeec22e9b717dfcbc1e
+    anshin-frontend-monorepo:scripts/document_governance_contract.json: 4b26745e826563d50117a3db8b40b0456d5f636c
+    anshin-phone-infra:docs/README.md: f5e9130fb9a3b735335fc33953fd2f1d037a676b
+    anshin-phone-infra:docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml: 1e0550e1d93088462f982b41b89a7369008eefdd
+    anshin-phone-infra:docs/specs/changes/2026-10-12-phone-ms-a2-preparation.change.yaml: null
+    anshin:documents/_governance/repository-registry.json: 36374d826fae2cf91115d2645d33d03e0b473159
+    anshin:documents/plans/system-architecture/platform-migration-roadmap.md: 9cf4110327dfc406fce1fd52708f37d0fcd19cd2
+    anshin:documents/plans/system-architecture/production-runtime-recovery-plan.md: 809e7912f719c052444ad30f572a975b0ee2fbc0
+    anshin:documents/references/system-architecture/anshin-all-repositories-physical-logical-architecture.drawio: 32b7097b2f3175f5a715f3446b187315253b3feb
+    anshin:documents/runbooks/system-architecture/ms-a2-server-access.md: 0f71e4abaa5ced28a4729f7d293e50a5572343bc
+    anshin:documents/specs/system-architecture/README.md: a8d185540ae622ef63e974cf38dd24427a00a55c
+    anshin:scripts/ms_a2_codex/host_recovery_observation.py: 3b1ccaaf742d9b81ce2a1fdb9ac4895dd27ab0b8
+    anshin:tests/test_document_governance.py: 52564c4e919c6d923d5cb85aef7c343841eee4d4
+    anshin:tests/test_env_sudo_bridge.py: 581f21944b9c33fee0f403366f82480f390e1279
+    anshin:tests/test_resolve_document_reference.py: 766ecadb70d2cd7891960a14d4d429751a55bbb3
+  strategy: isolated-worktree
+contract_paths:
+- anshin/documents/specs/changes/2026-10-12-phone-ms-a2-preparation-and-document-resolution.change.yaml
+- anshin-corporate-strategy/documents/plans/anshin-phone/20261012-phone-ms-a2-placement.change.yaml
+- anshin-phone-infra/docs/specs/changes/2026-10-12-phone-ms-a2-preparation.change.yaml
+generated_artifacts:
+- anshin-frontend-monorepo/scripts/document_governance_contract.json
+invariants:
+- instruction originが唯一のwriterとGit統合・完了判定を所有する
+- PhoneはMS-A2-2の専用LXD VM内へ予定配置しCore/AuthのVM・DB・volume・credentialを共用しない
+- 既存のinspect-core-host-recovery-v1でsecretを含まないPhone資源・配置の事実だけを読み新しいauthority・gate・gateway
+  account・鍵を追加しない
+- 既存Core/AuthのCPU・RAM・storage、VM状態、業務data及び配備先を変更しない
+- 未実測の旧resource候補を現値又は受入済み上限として扱わない
+- 文書rootを実際のrepository配置へ同期するがauthority又は製品実装状態を昇格させない
+- cloud resource・課金・実carrier・番号・顧客trafficを作成又は接続しない
+monitoring:
+  observation_period: 今回のPhone本番準備中
+  owner: anshin
+  signals:
+  - resolver unique result
+  - sourceと実機resource・Phone配置の差
+  - 未確認・未実施と準備結果の区別
+out_of_scope:
+- Core/Authのresource縮小・restart・Phone VM作成・production deploy
+- 新規cloud resource・秘密の外部登録・hardware購入・実回線・顧客開通
+- 助成対象四機能・新trust・署名・承認記録基盤・品質gate
+owner: anshin-phone-infra
+production_change: false
+repositories:
+- anshin
+- anshin-frontend-monorepo
+- anshin-corporate-strategy
+- anshin-phone-infra
+risk_level: high
+rollback:
+  steps:
+  - 追加した参照又はPhone読取部分だけを訂正し既存Core/Authの読取とruntimeを維持
+  strategy: forward-source-correction
+  triggers:
+  - resolver参照又は既存observerの契約不整合
+rollout:
+  steps:
+  - 最新mainをpull/rebaseし既存sourceと実機を読取確認
+  - 登録・配置文書・既存observerを同期
+  - 既存focused/canonicalと独立review後にguarded non-forceでmainへ統合
+  - 同じfixed-blob launcherから新sourceの既存read-only operationを実行し準備事実を記録
+  strategy: source-and-existing-read-only-preparation
+  triggers:
+  - Phone本番準備の継続指示
+schema_version: 1
+spec_ids:
+- anshin.infrastructure.system-architecture
+- anshin.infrastructure.platform-migration-roadmap
+- anshin.infrastructure.production-runtime-recovery
+- anshin.governance.privileged-operation-gateway
+- anshin.governance.document-management
+- anshin.corporate.anshin-phone.service-launch
+- anshin.corporate.anshin-phone.number-usage
+- anshin.corporate.anshin-phone.notification-status
+- anshin.corporate.file-security-gateway.service-business-plan
+status: review
+test_paths:
+- anshin/tests/test_env_sudo_bridge.py
+- anshin/tests/test_resolve_document_reference.py
+- anshin/tests/test_document_governance.py
+- anshin/scripts/build_check.sh
+- anshin-frontend-monorepo/scripts/build_check.sh
+- anshin-corporate-strategy/scripts/build_check.sh
+- anshin-phone-infra/scripts/build_check.sh
+title: Phone資料入口の配置・resolver状態と旧変更契約schemaを同期
