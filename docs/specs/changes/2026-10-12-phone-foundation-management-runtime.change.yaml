@@ -6,75 +6,227 @@ status: review
 risk_level: high
 production_change: false
 spec_ids:
-  - anshin.corporate.anshin-phone.foundation-development-instructions
-  - anshin.phone.backend.foundation-runtime-contract
-  - anshin.phone.fax-and-number-provisioning
-  - anshin.phone.smartphone-and-voice-validation
-repositories: [anshin-phone-backend, anshin-phone-infra, anshin-frontend-monorepo]
+- anshin.corporate.anshin-phone.foundation-development-instructions
+- anshin.phone.backend.foundation-runtime-contract
+- anshin.phone.fax-and-number-provisioning
+- anshin.phone.smartphone-and-voice-validation
+repositories:
+- anshin-phone-backend
+- anshin-phone-infra
+- anshin-frontend-monorepo
 code_paths:
-  - anshin-phone-backend/app/api/management_routes.py
-  - anshin-phone-backend/app/api/routes.py
-  - anshin-phone-backend/app/core/provisioning.py
-  - anshin-phone-backend/app/core/fax_storage.py
-  - anshin-phone-backend/app/models/telephony.py
-  - anshin-phone-infra/deploy/asterisk
-  - anshin-phone-infra/deploy/pbx-event-forwarder
-  - anshin-phone-infra/compose.phase1.yaml
-  - anshin-phone-infra/scripts/create_phase1_backup.sh
-  - anshin-frontend-monorepo/apps/anshin-phone/src
+- anshin-phone-backend/app/api/management_routes.py
+- anshin-phone-backend/app/api/routes.py
+- anshin-phone-backend/app/core/provisioning.py
+- anshin-phone-backend/app/core/fax_storage.py
+- anshin-phone-backend/app/models/telephony.py
+- anshin-phone-infra/deploy/asterisk
+- anshin-phone-infra/deploy/pbx-event-forwarder
+- anshin-phone-infra/compose.phase1.yaml
+- anshin-phone-infra/scripts/create_phase1_backup.sh
+- anshin-frontend-monorepo/apps/anshin-phone/src
 contract_paths:
-  - anshin-phone-backend/app/api/schemas.py
-  - anshin-phone-backend/migrations/versions/20261012_0002_endpoint_owner.py
-  - anshin-phone-infra/docs/specs/changes/2026-10-12-phone-foundation-management-runtime.change.yaml
+- anshin-phone-backend/app/api/schemas.py
+- anshin-phone-backend/migrations/versions/20261012_0002_endpoint_owner.py
+- anshin-phone-infra/docs/specs/changes/2026-10-12-phone-foundation-management-runtime.change.yaml
 generated_artifacts:
-  - anshin-frontend-monorepo/apps/anshin-phone/spec/openapi.json
-  - anshin-frontend-monorepo/apps/anshin-phone/src/api/generated.ts
+- anshin-frontend-monorepo/apps/anshin-phone/spec/openapi.json
+- anshin-frontend-monorepo/apps/anshin-phone/src/api/generated.ts
 test_paths:
-  - anshin-phone-backend/tests/test_management_api.py
-  - anshin-phone-backend/tests/test_phase1_api.py
-  - anshin-phone-infra/scripts/test_phase1_sip_e2e.py
-  - anshin-phone-infra/scripts/test_phase1_render_config.py
-  - anshin-phone-infra/scripts/test_pbx_event_pipeline.py
-  - anshin-frontend-monorepo/apps/anshin-phone/tests/e2e/management.spec.ts
+- anshin-phone-backend/tests/test_management_api.py
+- anshin-phone-backend/tests/test_phase1_api.py
+- anshin-phone-infra/scripts/test_phase1_sip_e2e.py
+- anshin-phone-infra/scripts/test_phase1_render_config.py
+- anshin-phone-infra/scripts/test_pbx_event_pipeline.py
+- anshin-frontend-monorepo/apps/anshin-phone/tests/e2e/management.spec.ts
 invariants:
-  - 同じinstruction originがwrite planeと完了判定を所有する
-  - 実番号・実carrier・本番を接続しない
-  - 同じtenantのactive endpointと有効割当だけで新規通話を許可する
-  - 端末資格は端末ごとに異なり卸トランク資格を配布しない
-  - 原本と宛先を保護し通常管理一覧へ参照又は平文を返さない
-  - 結果のownerをcalled channel一つにして二重完了で成功を失わない
-  - 最後のconsumer完了までproducer runtimeと原本を維持する
-  - 助成対象4機能及び独自trust・release gateを追加しない
+- 同じinstruction originがwrite planeと完了判定を所有する
+- 実番号・実carrier・本番を接続しない
+- 同じtenantのactive endpointと有効割当だけで新規通話を許可する
+- 端末資格は端末ごとに異なり卸トランク資格を配布しない
+- 原本と宛先を保護し通常管理一覧へ参照又は平文を返さない
+- 結果のownerをcalled channel一つにして二重完了で成功を失わない
+- 最後のconsumer完了までproducer runtimeと原本を維持する
+- 助成対象4機能及び独自trust・release gateを追加しない
+- 2026-10-12のschema補完は保存済み正式plan/resultのbase_revision・pathsとGit blobから行い再実装又は新しいruntime検証成功と扱わない
 acceptance_criteria:
-  - 番号・端末・割当・停止・解除・失効を実APIとPBXで確認する
-  - 実SIPとG.711 FAXを隔離fixtureで確認し最後のBackend/UI responseを確認する
-  - tenant・role・重複・再送・通信失敗・期限と再起動時の曖昧状態を区別する
-  - local DBへmigrationを適用し別DBと別原本directoryへ隔離復元する
-  - 合成音声・FAX・録音の重なりでlocal資源を観測する
-  - 同じfixed sourceで既存canonical checkと独立reviewを行う
+- 番号・端末・割当・停止・解除・失効を実APIとPBXで確認する
+- 実SIPとG.711 FAXを隔離fixtureで確認し最後のBackend/UI responseを確認する
+- tenant・role・重複・再送・通信失敗・期限と再起動時の曖昧状態を区別する
+- local DBへmigrationを適用し別DBと別原本directoryへ隔離復元する
+- 合成音声・FAX・録音の重なりでlocal資源を観測する
+- 同じfixed sourceで既存canonical checkと独立reviewを行う
 out_of_scope:
-  - production release、実回線、契約発注、Store公開
-  - 不在着信タスク、FAX担当業務状態、Core職員同期、連絡引継ぎ監査
-  - 実機・APNs・FCM資格を使用する外部試験
+- production release、実回線、契約発注、Store公開
+- 不在着信タスク、FAX担当業務状態、Core職員同期、連絡引継ぎ監査
+- 実機・APNs・FCM資格を使用する外部試験
 concurrency:
   strategy: isolated-worktree
   branches:
     anshin-phone-backend: codex/phone-foundation-20261012
     anshin-phone-infra: codex/phone-foundation-20261012
     anshin-frontend-monorepo: codex/phone-foundation-20261012
+  base_commits:
+    anshin-phone-backend: 7b21d96a3e5fa745f8b60c84393c8b7bdeb3bb8f
+    anshin-phone-infra: 828b7cf556675b706051c1ecd1da9bf0c819e365
+    anshin-frontend-monorepo: fe625e02049e34b3f1c6e5e495c38b7ffb932b5c
+  owned_paths:
+  - anshin-phone-backend/README.md
+  - anshin-phone-backend/app/api/dependencies.py
+  - anshin-phone-backend/app/api/management_routes.py
+  - anshin-phone-backend/app/api/routes.py
+  - anshin-phone-backend/app/api/schemas.py
+  - anshin-phone-backend/app/core/config.py
+  - anshin-phone-backend/app/core/fax_storage.py
+  - anshin-phone-backend/app/core/provisioning.py
+  - anshin-phone-backend/app/models/__init__.py
+  - anshin-phone-backend/app/models/telephony.py
+  - anshin-phone-backend/documents/specs/telephony-platform/README.md
+  - anshin-phone-backend/documents/specs/telephony-platform/foundation-runtime.md
+  - anshin-phone-backend/migrations/versions/20261012_0002_endpoint_owner.py
+  - anshin-phone-backend/pyproject.toml
+  - anshin-phone-backend/tests/conftest.py
+  - anshin-phone-backend/tests/test_management_api.py
+  - anshin-phone-backend/tests/test_phase1_api.py
+  - anshin-phone-infra/README.md
+  - anshin-phone-infra/compose.phase1.local.yaml
+  - anshin-phone-infra/compose.phase1.mock.yaml
+  - anshin-phone-infra/compose.phase1.yaml
+  - anshin-phone-infra/deploy/asterisk/Dockerfile
+  - anshin-phone-infra/deploy/asterisk/config/extensions.conf.template
+  - anshin-phone-infra/deploy/asterisk/scripts/entrypoint.sh
+  - anshin-phone-infra/deploy/asterisk/scripts/pbx_event_spool.py
+  - anshin-phone-infra/deploy/asterisk/scripts/pbx_fax_worker.py
+  - anshin-phone-infra/deploy/asterisk/scripts/pbx_management.py
+  - anshin-phone-infra/deploy/asterisk/scripts/render_config.py
+  - anshin-phone-infra/deploy/pbx-event-forwarder/forwarder.py
+  - anshin-phone-infra/docs/runbooks/telephony-platform/fax-and-number-provisioning.md
+  - anshin-phone-infra/docs/runbooks/telephony-platform/smartphone-and-voice-validation.md
+  - anshin-phone-infra/docs/specs/changes/2026-10-12-phone-foundation-management-runtime.change.yaml
+  - anshin-phone-infra/scripts/create_phase1_backup.sh
+  - anshin-phone-infra/scripts/test_pbx_event_pipeline.py
+  - anshin-phone-infra/scripts/test_phase1_render_config.py
+  - anshin-phone-infra/scripts/test_phase1_sip_e2e.py
+  - anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py
+  - anshin-phone-infra/scripts/verify_phase1.sh
+  - anshin-phone-infra/tests/mock-sip/Dockerfile
+  - anshin-phone-infra/tests/mock-sip/fax/extensions.conf
+  - anshin-phone-infra/tests/mock-sip/fax/generate_audio.py
+  - anshin-phone-infra/tests/mock-sip/fax/pjsip.conf
+  - anshin-phone-infra/tests/mock-sip/fax/start.sh
+  - anshin-phone-infra/tests/mock-sip/fax/synthetic-fax.ps
+  - anshin-phone-infra/tests/mock-sip/scenarios/carrier_inbound_denied.xml
+  - anshin-phone-infra/tests/mock-sip/scenarios/carrier_inbound_uac.xml
+  - anshin-phone-infra/tests/mock-sip/scenarios/carrier_outbound_uas.xml
+  - anshin-phone-infra/tests/mock-sip/scenarios/smartphone_inbound_uas.xml
+  - anshin-phone-infra/tests/mock-sip/scenarios/smartphone_outbound_uac.xml
+  - anshin-phone-infra/tests/mock-sip/scenarios/smartphone_register.xml
+  - anshin-phone-infra/tests/mock-sip/scenarios/smartphone_register_denied.xml
+  - anshin-frontend-monorepo/apps/anshin-phone/README.md
+  - anshin-frontend-monorepo/apps/anshin-phone/documents/plans/README.md
+  - anshin-frontend-monorepo/apps/anshin-phone/documents/plans/foundation-ui-plan.md
+  - anshin-frontend-monorepo/apps/anshin-phone/package.json
+  - anshin-frontend-monorepo/apps/anshin-phone/playwright.config.ts
+  - anshin-frontend-monorepo/apps/anshin-phone/spec/openapi.json
+  - anshin-frontend-monorepo/apps/anshin-phone/src/App.tsx
+  - anshin-frontend-monorepo/apps/anshin-phone/src/api/client.ts
+  - anshin-frontend-monorepo/apps/anshin-phone/src/api/generated.ts
+  - anshin-frontend-monorepo/apps/anshin-phone/src/api/types.ts
+  - anshin-frontend-monorepo/apps/anshin-phone/src/components/PhoneWorkspace.tsx
+  - anshin-frontend-monorepo/apps/anshin-phone/tests/e2e/management.spec.ts
+  - anshin-frontend-monorepo/apps/anshin-phone/vite.config.ts
+  - anshin-frontend-monorepo/pnpm-lock.yaml
+  pre_edit_blob_ids:
+    anshin-phone-backend:README.md: dd75c654aa3dbf0d491ef31ea8f5f511ac35230a
+    anshin-phone-backend:app/api/dependencies.py: ad23f86bb619fb2af8db265eb4587151b9531283
+    anshin-phone-backend:app/api/management_routes.py: f75afce99ce7c58c7300ea1bd8593439a6d6a471
+    anshin-phone-backend:app/api/routes.py: cba295c439e33372f829c98d29e0c5e65ec09ea7
+    anshin-phone-backend:app/api/schemas.py: f030d3077d9a171bf469169d7871c36f3a486cb0
+    anshin-phone-backend:app/core/config.py: b554184cf0d7d0b4bc1fb8af937f03156646860c
+    anshin-phone-backend:app/core/fax_storage.py: null
+    anshin-phone-backend:app/core/provisioning.py: null
+    anshin-phone-backend:app/models/__init__.py: 426503795dda439219eab0989c42df879567bed0
+    anshin-phone-backend:app/models/telephony.py: 4159919600f79c0de064a01baf83b0ba1c4ff5a6
+    anshin-phone-backend:documents/specs/telephony-platform/README.md: null
+    anshin-phone-backend:documents/specs/telephony-platform/foundation-runtime.md: null
+    anshin-phone-backend:migrations/versions/20261012_0002_endpoint_owner.py: null
+    anshin-phone-backend:pyproject.toml: df13ffc1483976aadbf06637637bbe82f16d907e
+    anshin-phone-backend:tests/conftest.py: 6eaaeae136638ec91a9d73980fdc67c1607849a0
+    anshin-phone-backend:tests/test_management_api.py: 15cee7d8690c6182a05bf0f2ba744863f4eb655b
+    anshin-phone-backend:tests/test_phase1_api.py: a09bd0628b3fddbd41443477a018f6812ab9a63c
+    anshin-phone-infra:README.md: 89d274076f99dee297cfcc3e7c4dd6d62ec80bc8
+    anshin-phone-infra:compose.phase1.local.yaml: null
+    anshin-phone-infra:compose.phase1.mock.yaml: 91cb2c140d6ed8da324c876264d173f9a8959c7e
+    anshin-phone-infra:compose.phase1.yaml: 0a133786b6d2b6e845b89aaf37aaff5afe4e5526
+    anshin-phone-infra:deploy/asterisk/Dockerfile: 8d7761f4fe7cafb10f542c712456c54a856ebd5b
+    anshin-phone-infra:deploy/asterisk/config/extensions.conf.template: dd47bf680bf47c06f6f9715e7b9b6c925d060a98
+    anshin-phone-infra:deploy/asterisk/scripts/entrypoint.sh: 9b42911eb45e24a03f21f2c8a1635a8326413c0e
+    anshin-phone-infra:deploy/asterisk/scripts/pbx_event_spool.py: 03b03abd78bf9a753636205824ec66fb81941ba7
+    anshin-phone-infra:deploy/asterisk/scripts/pbx_fax_worker.py: null
+    anshin-phone-infra:deploy/asterisk/scripts/pbx_management.py: null
+    anshin-phone-infra:deploy/asterisk/scripts/render_config.py: 74fed338ee1af2aad86d734b29880a62871934cb
+    anshin-phone-infra:deploy/pbx-event-forwarder/forwarder.py: 4960418c01f023569985260361012e7adbd64852
+    anshin-phone-infra:docs/runbooks/telephony-platform/fax-and-number-provisioning.md: 2cf3ad3d547e05dffd44ef16846bdc33ff7267cb
+    anshin-phone-infra:docs/runbooks/telephony-platform/smartphone-and-voice-validation.md: 1ddb98480caafc5e4e95d0adadd6a6629599ffd5
+    anshin-phone-infra:docs/specs/changes/2026-10-12-phone-foundation-management-runtime.change.yaml: null
+    anshin-phone-infra:scripts/create_phase1_backup.sh: 3d8634116528232d9b4381124d6103fdebf034c8
+    anshin-phone-infra:scripts/test_pbx_event_pipeline.py: dca61b292a3e1ceec35c2dd49b1ecaa1d591089d
+    anshin-phone-infra:scripts/test_phase1_render_config.py: c15b51b80e8bf849488198f8ce5d1afef8fb81d9
+    anshin-phone-infra:scripts/test_phase1_sip_e2e.py: 87cba36bcd548368c60d2e8889d5d794024d1ceb
+    anshin-phone-infra:scripts/test_phase1_sip_e2e_cleanup.py: 7c293af097d1795035850d44222d6e35200945b8
+    anshin-phone-infra:scripts/verify_phase1.sh: 416ac168fdbee9dd1ea1451be931aaa50aa6818b
+    anshin-phone-infra:tests/mock-sip/Dockerfile: 16f7d7f5f1a37c218307e747bf2a6cc6abcdf4c0
+    anshin-phone-infra:tests/mock-sip/fax/extensions.conf: null
+    anshin-phone-infra:tests/mock-sip/fax/generate_audio.py: null
+    anshin-phone-infra:tests/mock-sip/fax/pjsip.conf: null
+    anshin-phone-infra:tests/mock-sip/fax/start.sh: null
+    anshin-phone-infra:tests/mock-sip/fax/synthetic-fax.ps: null
+    anshin-phone-infra:tests/mock-sip/scenarios/carrier_inbound_denied.xml: null
+    anshin-phone-infra:tests/mock-sip/scenarios/carrier_inbound_uac.xml: 66c9bb352b9a9ae97dbd58fb806aee917e21bea3
+    anshin-phone-infra:tests/mock-sip/scenarios/carrier_outbound_uas.xml: 5f6cc18817eb877db2e771cfe02e06e738975101
+    anshin-phone-infra:tests/mock-sip/scenarios/smartphone_inbound_uas.xml: ec0d453d7198362fe9e653847763711a4429e120
+    anshin-phone-infra:tests/mock-sip/scenarios/smartphone_outbound_uac.xml: bee7e9bc07bd914bd48751d71a5b7010de148aca
+    anshin-phone-infra:tests/mock-sip/scenarios/smartphone_register.xml: 26302674b5bc3df1ae6a82275940af0dffc36c97
+    anshin-phone-infra:tests/mock-sip/scenarios/smartphone_register_denied.xml: null
+    anshin-frontend-monorepo:apps/anshin-phone/README.md: 826a6f04c75f96108e38191d8c97696997533dcd
+    anshin-frontend-monorepo:apps/anshin-phone/documents/plans/README.md: null
+    anshin-frontend-monorepo:apps/anshin-phone/documents/plans/foundation-ui-plan.md: null
+    anshin-frontend-monorepo:apps/anshin-phone/package.json: a9a263fe32b6d25d8ce1024d554aa4266de81608
+    anshin-frontend-monorepo:apps/anshin-phone/playwright.config.ts: null
+    anshin-frontend-monorepo:apps/anshin-phone/spec/openapi.json: 8482716faad423d0150b411b01f85378eb90c3a3
+    anshin-frontend-monorepo:apps/anshin-phone/src/App.tsx: 91598ee924d7b91d7f05f33bba5e1aaab5de9d7a
+    anshin-frontend-monorepo:apps/anshin-phone/src/api/client.ts: f48ba2f7de2dd95f6fd0e83def6ac0d24077e1d4
+    anshin-frontend-monorepo:apps/anshin-phone/src/api/generated.ts: b15e74bc528b56589c1f00003f49a68e0029c045
+    anshin-frontend-monorepo:apps/anshin-phone/src/api/types.ts: 885fe931eaabde2905c229b428a5ccbcb9f915df
+    anshin-frontend-monorepo:apps/anshin-phone/src/components/PhoneWorkspace.tsx: 3aa3b9043ea47dceabcdd7f789caac26a126debe
+    anshin-frontend-monorepo:apps/anshin-phone/tests/e2e/management.spec.ts: null
+    anshin-frontend-monorepo:apps/anshin-phone/vite.config.ts: fb9da5e3e9f1f7c2396f8a8fbc863ddfbf19d2ec
+    anshin-frontend-monorepo:pnpm-lock.yaml: e7c1430b7b50b9505e2cc90ed6fec8e282860946
+  integration_order:
+  - anshin-phone-backend
+  - anshin-phone-infra
+  - anshin-frontend-monorepo
 rollout:
   strategy: isolated-local-only
   steps:
-    - 既存focused checkと最小real fixtureで入力・失敗箇所を確認する
-    - 既存SIP/FAX suiteの最後へUI consumerを接続する
-    - fixed sourceでcanonicalと独立reviewを行い同じDocker実画面をownerへ提示する
+  - 既存focused checkと最小real fixtureで入力・失敗箇所を確認する
+  - 既存SIP/FAX suiteの最後へUI consumerを接続する
+  - fixed sourceでcanonicalと独立reviewを行い同じDocker実画面をownerへ提示する
+  triggers:
+  - Phone基礎部分の詳細実装指示
 rollback:
   strategy: owned-local-runtime-cleanup
   steps:
-    - 最後のconsumer終了後にtaskが所有するCompose projectだけを既存cleanup入口で削除する
-    - 共有main・既存差分・他案件のruntimeを変更しない
+  - 最後のconsumer終了後にtaskが所有するCompose projectだけを既存cleanup入口で削除する
+  - 共有main・既存差分・他案件のruntimeを変更しない
+  triggers:
+  - 隔離検証runtimeの終了又は対象変更の不具合
 monitoring:
   owner: anshin-phone-infra
-  signals: [PBX適用とheartbeat, FAX queueとattempt結果, event滞留とdead-letter, 実fixtureのwall timeとresource]
+  signals:
+  - PBX適用とheartbeat
+  - FAX queueとattempt結果
+  - event滞留とdead-letter
+  - 実fixtureのwall timeとresource
   observation_period: ローカル結合確認からowner最終確認まで
 approvals: []

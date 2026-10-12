@@ -10,6 +10,7 @@ code_paths: &id001
 - anshin-phone-infra/docs/README.md
 - anshin-phone-infra/docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml
 - anshin-phone-infra/docs/specs/changes/2026-10-12-phone-ms-a2-preparation.change.yaml
+- anshin-phone-infra/docs/specs/changes/2026-10-12-phone-foundation-management-runtime.change.yaml
 concurrency:
   base_commits:
     anshin: 43ce7df6cf75bdd124ba3a754574b96f2a6b2f11
@@ -55,6 +56,7 @@ concurrency:
     anshin:tests/test_document_governance.py: 52564c4e919c6d923d5cb85aef7c343841eee4d4
     anshin:tests/test_env_sudo_bridge.py: 581f21944b9c33fee0f403366f82480f390e1279
     anshin:tests/test_resolve_document_reference.py: 766ecadb70d2cd7891960a14d4d429751a55bbb3
+    anshin-phone-infra:docs/specs/changes/2026-10-12-phone-foundation-management-runtime.change.yaml: 3da380d3add8b6b68779768c00818163ad456064
   strategy: isolated-worktree
 contract_paths:
 - anshin/documents/specs/changes/2026-10-12-phone-ms-a2-preparation-and-document-resolution.change.yaml
