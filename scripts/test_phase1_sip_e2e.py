@@ -154,6 +154,18 @@ def ensure_cleanup_succeeded(cleanup: subprocess.CompletedProcess[str], residue:
         )
 
 
+def cleanup_owned_runtime(base: list[str], project: str, env: dict[str,str], failed: bool) -> None:
+    # A UI consumer is created with docker run, so Compose does not own it.
+    # Remove it before its network producers, including a failed restore phase.
+    run(["docker","rm","--force",project+"-management-ui"],env=env,check=False)
+    built_image_ids = project_image_ids(project,env)
+    cleanup = run(cleanup_args(base),env=env,check=False)
+    residue = cleanup_residue(base,project,env,built_image_ids)
+    if cleanup.returncode != 0 or residue or failed:
+        print(cleanup.stdout,end="")
+    ensure_cleanup_succeeded(cleanup,residue,failed)
+
+
 def wait_for_asterisk(base: list[str], env: dict[str, str]) -> None:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
@@ -360,7 +372,7 @@ def observe_concurrent_resources(base: list[str], env: dict[str,str], directory:
     print("phase=local-load state=observed calls=2 fax=1 recordings=2 scope=local-only",flush=True)
 
 
-def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_path: Path) -> None:
+def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_path: Path, *, with_load: bool = True) -> None:
     import base64
     print("phase=fax-integration state=started", flush=True)
     run(base + ["exec", "-T", "mock-carrier", "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=tiffg4", "-r204x196", "-sOutputFile=/tmp/mock-send.tif", "/mock-fax/synthetic-fax.ps"], env=env)
@@ -385,11 +397,13 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
             carrier_output.flush()
             print("\n".join(carrier_log.read_text().splitlines()[-20:]), flush=True)
             raise RuntimeError("phase=mock-fax-runtime state=timeout protocol=not-started")
-        load_smartphone = start_concurrent_voice(base,env)
+        if with_load:
+            load_smartphone = start_concurrent_voice(base,env)
         # Real SendFAX -> Kamailio/RTPengine -> real ReceiveFAX -> encrypted
         # backend original and history. The carrier is synthetic and isolated.
         run(base + ["exec", "-T", "mock-carrier", "asterisk", "-rx", "channel originate PJSIP/0300000002@carrier-sbc application SendFAX /tmp/mock-send.tif,F"], env=env)
-        observe_concurrent_resources(base,env,secret_path)
+        if with_load:
+            observe_concurrent_resources(base,env,secret_path)
         deadline = time.monotonic() + 90
         records = []
         while time.monotonic() < deadline:
@@ -401,10 +415,12 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
             carrier_output.flush()
             print("\n".join(carrier_log.read_text().splitlines()[-40:]), flush=True)
             raise RuntimeError("phase=fax-receive state=failed expected=successful-encrypted-original")
-        finish(load_smartphone,"concurrent synthetic voice")
+        if with_load:
+            finish(load_smartphone,"concurrent synthetic voice")
         load_smartphone = None
         recording_code = "import wave;from pathlib import Path;files=[Path('/var/spool/asterisk/fax/load-'+str(i)+'.wav') for i in range(2)];sizes=[p.stat().st_size for p in files];assert all(n>44 for n in sizes);[wave.open(str(p)).getnframes() for p in files];print('phase=local-recording state=completed bytes='+str(sum(sizes)));[p.unlink() for p in files]"
-        print(run(base + ["exec","-T","asterisk","python3","-c",recording_code],env=env).stdout,end="",flush=True)
+        if with_load:
+            print(run(base + ["exec","-T","asterisk","python3","-c",recording_code],env=env).stdout,end="",flush=True)
         print("PASS: actual G.711 FAX receive -> protected original -> backend history", flush=True)
         pdf_path = secret_path / "synthetic-fax.pdf"
         container = run(base + ["ps", "--quiet", "mock-carrier"], env=env).stdout.strip()
@@ -628,7 +644,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             print("PASS: backend active endpoint -> actual PBX configuration")
 
             if fixture_only == "fax":
-                run_fax_flow(base, env, fax_number, secret_path)
+                run_fax_flow(base, env, fax_number, secret_path,with_load=False)
                 return 0
 
             if fixture_only == "management":
@@ -684,6 +700,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     "-nostdin",
                     "-sf",
                     "/scenarios/smartphone_inbound_uas.xml",
+                    "-trace_msg", "-message_file", "/tmp/inbound-uas.log", "-recv_timeout", "10000",
                     "-i",
                     "10.254.250.30",
                     "-p",
@@ -825,6 +842,8 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             backend_request(base, env, "POST", "/api/v1/phone-number-assignments", {"tenant_id":"anshin-phase1", "phone_number_id":tel_number["id"], "sip_endpoint_id":endpoint["id"]})
 
 
+            if fixture_only == "voice":
+                return 0
             run_fax_flow(base, env, fax_number, secret_path)
             if env.get("PHONE_TEST_FRONTEND_DIR"):
                 run_backup_restore(base,env,secret_path)
@@ -870,16 +889,14 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 env=env,
                 check=False,
             )
-            print(registration_trace.stdout, end="")
+            # Bound protocol diagnostics: keep private response traces outside
+            # Git; report methods/status only, never authentication values.
+            trace = run(base + ["exec","-T","mock-smartphone","cat","/tmp/inbound-uas.log"],env=env,check=False).stdout
+            print("phase=voice-uas protocol=" + ",".join(re.findall(r"(?:SIP/2.0 [0-9]{3}|(?:INVITE|ACK|BYE) sip:)",trace)),flush=True)
             raise
         finally:
             if not retention["retain"]:
-                built_image_ids = project_image_ids(project, env)
-                cleanup = run(cleanup_args(base), env=env, check=False)
-                residue = cleanup_residue(base, project, env, built_image_ids)
-                if cleanup.returncode != 0 or residue or failed:
-                    print(cleanup.stdout, end="")
-                ensure_cleanup_succeeded(cleanup, residue, failed)
+                cleanup_owned_runtime(base,project,env,failed)
     return 0
 
 
@@ -887,7 +904,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
-    modes.add_argument("--fixture", choices=("database", "management", "fax"), help="diagnose the real database/migration phase without SIP runtime")
+    modes.add_argument("--fixture", choices=("database", "management", "voice", "fax"), help="diagnose the real database/migration phase without SIP runtime")
     args = parser.parse_args(argv)
     if args.preflight:
         return run_isolated_e2e(preflight_only=True)

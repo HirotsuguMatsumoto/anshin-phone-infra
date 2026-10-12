@@ -72,6 +72,19 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
         test_phase1_sip_e2e.ensure_mock_networks_available({})
 
 
+    @mock.patch("test_phase1_sip_e2e.cleanup_residue",return_value=[])
+    @mock.patch("test_phase1_sip_e2e.project_image_ids",return_value=[])
+    @mock.patch("test_phase1_sip_e2e.run")
+    def test_restore_failure_removes_retained_ui_before_compose_network(self, run, images, residue):
+        run.return_value = mock.Mock(returncode=0,stdout="")
+        project="anshin-phone-sip-test-owned"
+        base=["docker","compose","--project-name",project]
+        with redirect_stdout(io.StringIO()):
+            test_phase1_sip_e2e.cleanup_owned_runtime(base,project,{},True)
+        self.assertEqual(run.call_args_list[0].args[0],["docker","rm","--force",project+"-management-ui"])
+        self.assertEqual(run.call_args_list[1].args[0],base+["down","--rmi","local","--volumes","--remove-orphans"])
+        residue.assert_called_once_with(base,project,{},[])
+
     def test_cleanup_removes_project_images_volumes_and_orphans(self) -> None:
         base = ["docker", "compose", "--project-name", "anshin-phone-sip-test-test"]
         self.assertEqual(

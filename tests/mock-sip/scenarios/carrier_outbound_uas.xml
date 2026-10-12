@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="ISO-8859-1" ?>
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 <scenario name="Anshin Phone mock carrier receives outbound call">
-  <recv request="INVITE" crlf="true"/>
+  <recv request="INVITE" crlf="true" rrs="true"/>
   <send><![CDATA[
     SIP/2.0 100 Trying
     [last_Via:]
@@ -30,6 +30,7 @@
     [last_Call-ID:]
     [last_CSeq:]
     Contact: <sip:carrier@[local_ip]:[local_port];transport=UDP>
+    [last_Record-Route:]
     Content-Type: application/sdp
     Content-Length: [len]
 
