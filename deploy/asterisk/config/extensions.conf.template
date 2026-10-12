@@ -77,6 +77,7 @@ exten => s,1,Set(MASTER_CHANNEL(PHASE1_ANSWERED_AT)=${STRFTIME(${EPOCH},,%Y-%m-%
 
 [phase1-hangup]
 exten => s,1,NoOp(Phase1 call ended uniqueid=${UNIQUEID} disposition=${DIALSTATUS})
+ same => n,NoOp(phase=voice-media direction=${PHASE1_DIRECTION} rx=${CHANNEL(rtcp,rxcount,audio)} tx=${CHANNEL(rtcp,txcount,audio)})
  same => n,Set(PHASE1_DISPOSITION=${IF($["${DIALSTATUS}"=""]?UNKNOWN:${DIALSTATUS})})
  same => n,Set(PHASE1_ENDED_AT=${STRFTIME(${EPOCH},,%Y-%m-%dT%H:%M:%SZ)})
  same => n,AGI(pbx_event_spool.py,call,${TENANT_ID},${PHASE1_DID},${UNIQUEID},${PHASE1_DIRECTION},${PHASE1_REMOTE_MASKED},${PHASE1_DISPOSITION},${PHASE1_STARTED_AT},${IF($["${PHASE1_ANSWERED_AT}"=""]?-:${PHASE1_ANSWERED_AT})},${PHASE1_ENDED_AT})

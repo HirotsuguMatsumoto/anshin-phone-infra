@@ -16,6 +16,7 @@ import time
 import uuid
 import json
 import stat
+import re
 
 
 @contextmanager
@@ -324,6 +325,41 @@ def run_management_browser_flow(base: list[str], env: dict[str, str], secret_pat
             run(["docker", "rm", "--force", container], env=env, check=False)
 
 
+def start_concurrent_voice(base: list[str], env: dict[str,str]):
+    smartphone = exec_background(base,"mock-smartphone",["sipp","-nostdin","-sf","/scenarios/smartphone_inbound_uas.xml",
+        "-i","10.254.250.30","-p","5060","-m","2","-timeout","30s"],env)
+    time.sleep(0.5)
+    for _ in range(2):
+        run(base + ["exec","-T","mock-carrier","asterisk","-rx","channel originate PJSIP/0300000001@carrier-sbc extension s@synthetic-load"],env=env)
+    deadline = time.monotonic()+5
+    while time.monotonic()<deadline:
+        channels = run(base + ["exec","-T","asterisk","asterisk","-rx","core show channels concise"],env=env).stdout.splitlines()
+        channels = [line.split("!")[0] for line in channels if line.startswith("PJSIP/carrier-endpoint-")]
+        if len(channels)>=2:
+            break
+        time.sleep(0.2)
+    else:
+        smartphone.terminate()
+        smartphone.communicate(timeout=5)
+        raise RuntimeError("phase=local-load state=failed expected=two-live-calls")
+    for index,channel in enumerate(channels[:2]):
+        if not re.fullmatch(r"PJSIP/carrier-endpoint-[0-9a-f]+",channel):
+            raise RuntimeError("phase=local-load state=invalid-channel")
+        run(base + ["exec","-T","asterisk","asterisk","-rx",f"mixmonitor start {channel} /var/spool/asterisk/fax/load-{index}.wav"],env=env)
+    return smartphone
+
+
+def observe_concurrent_resources(base: list[str], env: dict[str,str], directory: Path):
+    identifiers = run(base + ["ps","--quiet"],env=env).stdout.split()
+    observed = run(["docker","stats","--no-stream","--format","{{json .}}",*identifiers],env=env).stdout
+    channels = run(base + ["exec","-T","asterisk","asterisk","-rx","core show channels count"],env=env).stdout
+    if not re.search(r"[5-9][0-9]* active channels",channels):
+        raise RuntimeError("phase=local-load state=failed expected=voice-and-fax-overlap")
+    (directory / "concurrent-resource-sample.json").write_text(json.dumps({"sample_kind":"local-two-calls-one-fax-two-recordings",
+        "measurement":"single-overlap-sample-not-production-capacity","containers":[json.loads(line) for line in observed.splitlines()],"channels":channels},indent=2))
+    print("phase=local-load state=observed calls=2 fax=1 recordings=2 scope=local-only",flush=True)
+
+
 def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_path: Path) -> None:
     import base64
     print("phase=fax-integration state=started", flush=True)
@@ -333,6 +369,7 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
     carrier_output = carrier_log.open("w")
     carrier = subprocess.Popen(base + ["exec", "-T", "mock-carrier", "sh", "/mock-fax/start.sh"], cwd=ROOT, env=env,
         text=True, stdout=carrier_output, stderr=subprocess.STDOUT)
+    load_smartphone = None
     try:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -348,9 +385,11 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
             carrier_output.flush()
             print("\n".join(carrier_log.read_text().splitlines()[-20:]), flush=True)
             raise RuntimeError("phase=mock-fax-runtime state=timeout protocol=not-started")
+        load_smartphone = start_concurrent_voice(base,env)
         # Real SendFAX -> Kamailio/RTPengine -> real ReceiveFAX -> encrypted
         # backend original and history. The carrier is synthetic and isolated.
         run(base + ["exec", "-T", "mock-carrier", "asterisk", "-rx", "channel originate PJSIP/0300000002@carrier-sbc application SendFAX /tmp/mock-send.tif,F"], env=env)
+        observe_concurrent_resources(base,env,secret_path)
         deadline = time.monotonic() + 90
         records = []
         while time.monotonic() < deadline:
@@ -362,6 +401,10 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
             carrier_output.flush()
             print("\n".join(carrier_log.read_text().splitlines()[-40:]), flush=True)
             raise RuntimeError("phase=fax-receive state=failed expected=successful-encrypted-original")
+        finish(load_smartphone,"concurrent synthetic voice")
+        load_smartphone = None
+        recording_code = "import wave;from pathlib import Path;files=[Path('/var/spool/asterisk/fax/load-'+str(i)+'.wav') for i in range(2)];sizes=[p.stat().st_size for p in files];assert all(n>44 for n in sizes);[wave.open(str(p)).getnframes() for p in files];print('phase=local-recording state=completed bytes='+str(sum(sizes)));[p.unlink() for p in files]"
+        print(run(base + ["exec","-T","asterisk","python3","-c",recording_code],env=env).stdout,end="",flush=True)
         print("PASS: actual G.711 FAX receive -> protected original -> backend history", flush=True)
         pdf_path = secret_path / "synthetic-fax.pdf"
         container = run(base + ["ps", "--quiet", "mock-carrier"], env=env).stdout.strip()
@@ -396,6 +439,9 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
             run_management_browser_flow(base, env, secret_path)
 
     finally:
+        if load_smartphone is not None and load_smartphone.poll() is None:
+            load_smartphone.terminate()
+            load_smartphone.communicate(timeout=5)
         if carrier.poll() is None:
             carrier.terminate()
         try:
@@ -404,6 +450,38 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
             carrier.kill()
             carrier.communicate(timeout=5)
         carrier_output.close()
+
+
+def run_backup_restore(base: list[str], env: dict[str,str], directory: Path) -> None:
+    print("phase=isolated-backup-restore state=started",flush=True)
+    project = base[base.index("--project-name") + 1]
+    compose_files = [base[i+1] for i,value in enumerate(base) if value == "--file"]
+    backup_env = dict(env, COMPOSE_PROJECT_NAME=project, COMPOSE_FILE=os.pathsep.join(compose_files))
+    run(base + ["pause","backend","asterisk","pbx-event-forwarder"],env=env)
+    try:
+        result = run(["sh",str(ROOT / "scripts/create_phase1_backup.sh"),"--execute",str(directory / "backup")],env=backup_env)
+        print(result.stdout,end="",flush=True)
+    finally:
+        run(base + ["unpause","backend","asterisk","pbx-event-forwarder"],env=env)
+    backup = next((directory / "backup").iterdir())
+    run(["shasum","-a","256","-c",str(backup / "SHA256SUMS")],env=env)
+    restore_db = "phone_restore_" + uuid.uuid4().hex[:12]
+    restore_root = "/var/lib/anshin-phone/fax/" + restore_db
+    # Restore into a new database and private storage subdirectory, never the
+    # producer database/volume paths used by the UI's final consumer.
+    run(base + ["exec","-T","postgres","createdb","-U","anshin_phone",restore_db],env=env)
+    try:
+        with (backup / "postgres.dump").open("rb") as source:
+            subprocess.run(base + ["exec","-T","postgres","pg_restore","--exit-on-error","--no-owner","-U","anshin_phone","-d",restore_db],cwd=ROOT,env=env,stdin=source,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
+        run(base + ["exec","-T","backend","mkdir","-m","700",restore_root],env=env)
+        with (backup / "fax-encrypted.tar").open("rb") as source:
+            subprocess.run(base + ["exec","-T","backend","tar","-xf","-","-C",restore_root],cwd=ROOT,env=env,stdin=source,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
+        code = "from sqlalchemy import select;from app.core.database import SessionLocal;from app.models.telephony import FaxDocument,FaxJob,CallRecord;from app.core.fax_storage import read,validate_document;db=SessionLocal();docs=list(db.scalars(select(FaxDocument)));assert len(docs)>=3;assert len(list(db.scalars(select(CallRecord))))>=2;assert len(list(db.scalars(select(FaxJob).where(FaxJob.status=='sent'))))>=2;[(validate_document(read(db,d.tenant_id,d.id)[1],d.content_type)) for d in docs];print('PASS: isolated restored database and AES-GCM originals through production reader')"
+        result = run(base + ["exec","-T","--env","ANSHIN_PHONE_DB_NAME="+restore_db,"--env","ANSHIN_PHONE_FAX_STORAGE_DIR="+restore_root,"backend","python","-c",code],env=env)
+        print(result.stdout,end="",flush=True)
+    finally:
+        run(base + ["exec","-T","postgres","dropdb","-U","anshin_phone",restore_db],env=env)
+        run(base + ["exec","-T","backend","rm","-rf",restore_root],env=env)
 
 
 def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None = None) -> int:
@@ -720,6 +798,11 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             if not all("*" in str(record["remote_number_masked"]) for record in call_records):
                 raise RuntimeError("unmasked call record reached the backend")
             print("PASS: Asterisk call events -> durable spool -> Backend")
+            observed = run(base + ["logs","--no-color","asterisk"],env=env).stdout
+            media = re.findall(r"phase=voice-media direction=(inbound|outbound) rx=([0-9]+) tx=([0-9]+)",observed)
+            if not all(any(d == direction and int(rx)>=20 and int(tx)>=20 for d,rx,tx in media) for direction in ("inbound","outbound")):
+                raise RuntimeError("phase=voice-media state=failed expected=bidirectional-PCMU-packets")
+            print("PASS: actual bidirectional synthetic PCMU media in inbound and outbound calls",flush=True)
             # Existing registered contacts must not bypass current assignment
             # or endpoint status. These are real SIP failures, not DB-only checks.
             backend_request(base, env, "DELETE", f"/api/v1/phone-number-assignments/{assignment['id']}?tenant_id=anshin-phase1")
@@ -743,6 +826,8 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
 
 
             run_fax_flow(base, env, fax_number, secret_path)
+            if env.get("PHONE_TEST_FRONTEND_DIR"):
+                run_backup_restore(base,env,secret_path)
             if env.get("PHONE_PREVIEW_DIR"):
                 (secret_path / "runtime.json").write_text(json.dumps({"project":project,"compose":base,
                     "backend_sha":run(["git","-C",str(backend_root),"rev-parse","HEAD"],env=env).stdout.strip(),

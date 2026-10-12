@@ -45,7 +45,7 @@ sensitivity: internal
 
 ## FAX
 
-送信APIはPDF本体・平文宛先番号をDBへ保存せず、保護ストレージ参照、保護された宛先参照、マスク済み表示値を受ける。同じidempotency keyは同じjobを返す。retryable failureは30秒から指数backoffし、最大5回で終端`failed`になる。permanent failureと`sent`は再実行しない。
+送信APIはPDF本体・平文宛先番号をDBへ保存せず、保護ストレージ参照、保護された宛先参照、マスク済み表示値を受ける。同じidempotency keyは同じjobを返す。retryable failureは30秒から指数backoffし、管理画面で受け付けたjobは既定最大3回（既存内部APIのlegacy jobは最大5回）で終端`failed`になる。permanent failureと`sent`は再実行しない。
 
 ローカル基礎経路は、管理画面のPDF受付、tenant AADを使用した暗号化原本と宛先、既存queue、GhostscriptによるTIFF変換及び実Asterisk SendFAX/ReceiveFAXへ接続する。10 MiB・20ページを上限とし、local fixtureの原本期限は24時間である。本番の保持期間をこの値で確定しない。保管用keyは外部secret fileで与え、backupと別に維持する。
 

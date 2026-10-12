@@ -19,7 +19,7 @@
     s=Anshin Phone mock carrier
     c=IN IP4 [local_ip]
     t=0 0
-    m=audio 6000 RTP/AVP 0
+    m=audio [media_port] RTP/AVP 0
     a=rtpmap:0 PCMU/8000
     a=sendrecv
   ]]></send>
@@ -38,7 +38,8 @@
     Max-Forwards: 70
     Content-Length: 0
   ]]></send>
-  <pause milliseconds="500"/>
+  <nop><action><exec rtp_stream="/mock-fax/synthetic-audio.ulaw,-1,0"/></action></nop>
+  <pause milliseconds="3000"/>
   <send retrans="500"><![CDATA[
     BYE [next_url] SIP/2.0
     Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]

@@ -20,6 +20,7 @@ code_paths:
   - anshin-phone-infra/deploy/asterisk
   - anshin-phone-infra/deploy/pbx-event-forwarder
   - anshin-phone-infra/compose.phase1.yaml
+  - anshin-phone-infra/scripts/create_phase1_backup.sh
   - anshin-frontend-monorepo/apps/anshin-phone/src
 contract_paths:
   - anshin-phone-backend/app/api/schemas.py
@@ -48,7 +49,8 @@ acceptance_criteria:
   - 番号・端末・割当・停止・解除・失効を実APIとPBXで確認する
   - 実SIPとG.711 FAXを隔離fixtureで確認し最後のBackend/UI responseを確認する
   - tenant・role・重複・再送・通信失敗・期限と再起動時の曖昧状態を区別する
-  - local DBへmigrationを適用する
+  - local DBへmigrationを適用し別DBと別原本directoryへ隔離復元する
+  - 合成音声・FAX・録音の重なりでlocal資源を観測する
   - 同じfixed sourceで既存canonical checkと独立reviewを行う
 out_of_scope:
   - production release、実回線、契約発注、Store公開

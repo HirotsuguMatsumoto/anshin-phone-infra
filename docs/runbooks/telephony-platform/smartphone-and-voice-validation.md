@@ -70,3 +70,31 @@ python3 scripts/evaluate_voice_quality.py /protected/path/measurement.json
 端末設定のownerはBackendのactive endpointである。実Asteriskは内部APIから同じtenantの設定を読み、端末ごとのpasswordを適用する。番号停止・割当解除は新規発着信のroute照会で拒否する。端末停止・失効は設定から当該endpointを除き、旧credentialでのREGISTERを拒否する。既に成立した通話の終了を待つ。
 
 設定bundleの`expires_at`及び`consume_once`は取込・削除のclient側運用条件であり、PBXが同じSIP passwordを15分後に自動失効させる証明ではない。実際のcredential lifetimeは端末停止・失効までである。Backend APIは卸トランク資格を返さず、operatorは自分がownerの端末設定だけを取得できる。
+
+## 無料Softphoneの採用比較と端末挙動
+
+2026-10-12の既存Android/iPhone資産はFlutterの職員・顧客アプリである。両方にAppAuth、secure storage、Firebase Messagingがあり、SIP SDKはまだ組み込まれていない。Phone専用の端末認証を既存のログインと分離せず、AAL2後の自分の端末設定APIを使用する。今回の隔離prototypeはその実Backend設定を実PBXとSIPpへ渡す。顧客端末へ卸資格を渡さない。
+
+| 選択肢 | Android / iPhone | 利用条件と継続費用 | 今回の扱い |
+| --- | --- | --- | --- |
+| PJSIP native SDKをFlutter platform channelから使用 | 両OSでnative SIP/mediaを扱う | GPL v2以降又は商用license。閉じた商用配布の条件を自動確定しない。native橋渡し・OS更新・着信統合の保守が必要 | protocolの互換確認を先行、SDK組込と購入は未実施 |
+| Linphone SDK | 両OS向けSDK、Push連携機能 | GPL v3又は商用license。配布条件、Pushサービス条件及び見積り確認が必要 | SDKとPush費用の採用比較候補 |
+| 既存Flutterの認証・設定画面を再利用 | 両OSの既存資産 | 認証・secure storageの既存保守を再利用。SIPとnative着信統合は別途必要 | 共通設定APIを実装済み |
+
+primary source: [PJSIP license](https://docs.pjsip.org/en/2.17/overview/license_pjsip.html)、[Linphone FAQ](https://www.linphone.org/en/faq/)、[Linphone SDK](https://wiki.linphone.org/xwiki/wiki/public/view/Lib/)、[Push integration](https://wiki.linphone.org/xwiki/wiki/public/view/Lib/Features/Push%20notifications/)。アプリ無料配布はSDK license、APNs/FCM運用、OS追従、障害対応及び通信原価がゼロという意味ではない。商用見積り・人員工数を未取得のため金額を捏造しない。
+
+バックグラウンド・スリープ・OS終了時はPush受信からnative着信画面へ接続し、SIPの常時foreground動作だけで合格扱いにしない。iPhoneは[PushKit / CallKit](https://developer.apple.com/documentation/pushkit/responding-to-voip-notifications-from-pushkit)、Androidは[Core-Telecom](https://developer.android.com/develop/connectivity/telecom/voip-app/telecom)の要件へ接続する。通知権限拒否は設定画面で可視化し、着信保証を表示しない。回線切替は古いtransport/contactを閉じ再REGISTERし、通話中の切替失敗を履歴の切断と区別する。Push重複とSIP再送は同じcall IDへ束ね、応答は一つのsessionだけが取得し、他端末へ終了を伝える。これは設計であり、実機の動作証明ではない。
+
+紛失時は管理者が端末を失効し、新しい端末IDと資格を発行する。交換時に旧端末の資格を移植しない。一時停止は再開可能、失効は復元不可とする。通信障害時は通話中・新規登録不可・着信未確認を区別し、既存の代替連絡手段と問い合わせ窓口を案内する。無料端末の対応OS、商用SDKの採用、Push運用とサポート体制は実機qualification後に確定する。
+
+今回の自動入口は既存`test_phase1_sip_e2e.py`である。設定取得・REGISTER・発着信・合成PCMUの双方向packet・停止後の旧REGISTER拒否を実runtimeで確認する。packetの成功を人の聴感、30分MOS、Wi-Fi/モバイル切替、OS終了、Push・重複応答の実機成功へ読み替えない。
+
+## 復旧とローカル資源観測
+
+既存`create_phase1_backup.sh`は同じCompose inputsと独立backend rootを読み、DB dumpと暗号化FAX原本をGit外の0700/0600領域へ保存する。keyはbackupへ含めない。snapshot前に今回所有のproducerをpauseし、完了後にunpauseする。live業務の別writerがある環境では整合したsnapshotとして扱わない。
+
+既存SIP/FAX fixtureの最後に、別DBと別原本directoryへ復元し、actual production readerで同じtenantの原本を復号・検査する。検査後に復元用DBとdirectoryだけを削除する。これは隔離localのlogical restoreであり、host障害・外部backup保管先の復旧証明ではない。切戻しは同じsource、schema、key、原本の組を戻す。新schemaのtenant間で同じPBX IDを使った後に旧global unique indexへdowngradeすると競合するため、旧versionへの無条件downgradeを許可しない。
+
+同じfixtureで2通話、1FAX、2合成通話のMixMonitor録音を同時に実行し、DockerのCPU/memory、active channel数、録音byte数を一つのoverlap sampleとして保存する。録音は今回の合成通信だけで、原本確認後に削除する。負荷限界、長時間性能、障害時容量、production capacity又は顧客録音保管機能の合格値へ読み替えない。新しいsuite又はmonitoring frameworkを追加しない。
+
+`PHONE_PREVIEW_DIR`を明示した成功runは同じproducerとUIをownerの最後のbrowser consumerまで保持する。source SHA、Compose argv及び所有projectを外部runtime metadataへ記録する。既存directoryへの上書き、失敗runの保持、foreign projectのcleanupを許可しない。確認後は記録された同じCompose inputsから所有projectとmanagement UIだけを削除する。

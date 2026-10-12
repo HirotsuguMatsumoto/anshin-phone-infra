@@ -22,12 +22,22 @@ timestamp=$(date -u +%Y%m%dT%H%M%SZ)
 target="$output_dir/$timestamp"
 mkdir "$target"
 
-docker compose -f "$repo_dir/compose.phase1.yaml" ps --format json > "$target/compose-ps.json"
-docker compose -f "$repo_dir/compose.phase1.yaml" images --format json > "$target/compose-images.json"
-docker compose -f "$repo_dir/compose.phase1.yaml" exec -T postgres \
+: "${COMPOSE_FILE:=$repo_dir/compose.phase1.yaml}"
+export COMPOSE_FILE
+backend_root=$(python3 "$repo_dir/scripts/resolve_phone_backend.py" --infra-root "$repo_dir" ${ANSHIN_PHONE_BACKEND_DIR:+--override "$ANSHIN_PHONE_BACKEND_DIR"})
+
+docker compose ps --format json > "$target/compose-ps.json"
+docker compose images --format json > "$target/compose-images.json"
+docker compose exec -T postgres \
   pg_dump --format=custom --no-owner --username=anshin_phone anshin_phone > "$target/postgres.dump"
+# Callers quiesce their owned producers before this snapshot. The key is
+# deliberately excluded: only already encrypted originals enter the backup.
+backend_container=$(docker compose ps --quiet backend)
+backend_image=$(docker inspect --format '{{.Config.Image}}' "$backend_container")
+docker run --rm --network none --volumes-from "$backend_container:ro" \
+  --entrypoint tar "$backend_image" -cf - -C /var/lib/anshin-phone/fax . > "$target/fax-encrypted.tar"
 git -C "$repo_dir" rev-parse HEAD > "$target/infra-head.txt"
-git -C "$repo_dir/anshin-phone-backend" rev-parse HEAD > "$target/backend-head.txt"
+git -C "$backend_root" rev-parse HEAD > "$target/backend-head.txt"
 shasum -a 256 "$target"/* > "$target/SHA256SUMS"
 chmod -R go-rwx "$target"
 echo "Phase 1 backup created: $target"

@@ -6,4 +6,5 @@ RUN apt-get update \
 
 COPY scenarios /scenarios
 COPY fax /mock-fax
+RUN python3 /mock-fax/generate_audio.py
 ENTRYPOINT []
