@@ -5,19 +5,36 @@ services:
   rtpengine:
     ports: !reset []
     environment:
-      PUBLIC_RTP_IP: 172.31.250.50
+      PUBLIC_RTP_IP: 10.254.250.50
+      RTPENGINE_EXTERNAL_IP: 10.254.250.50
+      RTPENGINE_INTERNAL_IP: 10.254.251.50
+    networks:
+      sip-edge:
+        ipv4_address: 10.254.250.50
+      pbx-internal:
+        ipv4_address: 10.254.251.50
 
   kamailio:
     ports: !reset []
     environment:
-      SBC_ADVERTISED_IP: 172.31.250.40
-      CARRIER_SOURCE_CIDRS: 172.31.250.10/32
-      SMARTPHONE_SOURCE_CIDRS: 172.31.250.30/32
+      SBC_ADVERTISED_IP: 10.254.250.40
+      SBC_EDGE_IP: 10.254.250.40
+      SBC_INTERNAL_IP: 10.254.251.40
+      ASTERISK_SOURCE_CIDRS: 10.254.251.20/32
+      CARRIER_SOURCE_CIDRS: 10.254.250.10/32
+      SMARTPHONE_SOURCE_CIDRS: 10.254.250.30/32
+    networks:
+      sip-edge:
+        ipv4_address: 10.254.250.40
+      pbx-internal:
+        ipv4_address: 10.254.251.40
 
   asterisk:
+    environment:
+      CARRIER_SOURCE_CIDRS: 10.254.251.40/32
     networks:
       pbx-internal:
-        ipv4_address: 172.31.251.20
+        ipv4_address: 10.254.251.20
 
   mock-carrier:
     build:
@@ -25,7 +42,7 @@ services:
     command: ["tail", "-f", "/dev/null"]
     networks:
       sip-edge:
-        ipv4_address: 172.31.250.10
+        ipv4_address: 10.254.250.10
 
   mock-smartphone:
     build:
@@ -33,4 +50,15 @@ services:
     command: ["tail", "-f", "/dev/null"]
     networks:
       sip-edge:
-        ipv4_address: 172.31.250.30
+        ipv4_address: 10.254.250.30
+
+networks:
+  sip-edge:
+    internal: true
+    ipam:
+      config: !override
+        - subnet: 10.254.250.0/24
+  pbx-internal:
+    ipam:
+      config: !override
+        - subnet: 10.254.251.0/24

@@ -111,4 +111,8 @@ RUN_PHASE1_SIP_E2E=1 ./scripts/verify_phase1.sh
 
 `python3 scripts/test_phase1_sip_e2e.py`を直接実行する場合も、既存のBackend resolverでrepository rootと必須sourceを確認し、解決した同じpathをComposeへ渡す。配置が不明又は曖昧な場合はruntime起動前に停止する。`--help`は説明だけを表示し、Dockerのlease取得・build・container起動を行わない。
 
+模擬fixtureのSIP側とPBX内部側は、外部通信不可の`10.254.250.0/24`と`10.254.251.0/24`を使う。既存Docker networkとの重複はbuild前に検出し、既存networkの削除や別runtimeへの代替を行わず停止する。通常のPhase 1構成のアドレス・公開方針は変更しない。
+
+`python3 scripts/test_phase1_sip_e2e.py --preflight`は、同じfixture入力とComposeを使う安価な事前診断である。Backend配置、ネットワーク重複及びCompose設定だけを確認し、build・container起動・cleanupを行わない。品質検査又は実業務結合確認の合格として扱わない。
+
 実番号試験は[Phase 1実番号接続手順](docs/runbooks/telephony-platform/phase1_real_number_runbook.md)に従います。キャリアのDID、SIP接続先、認証方式、接続元IP、コーデック、発信者番号通知、FAX方式が未確定の状態では、外線試験を完了扱いにしません。Phase 1のスマートフォンは、固定送信元IPを許可した試験用Wi-Fi又はWireGuard等のVPN経路から接続し、SIP/RTPを全世界へ無制限公開しません。

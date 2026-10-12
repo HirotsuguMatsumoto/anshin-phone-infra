@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import argparse
+import ipaddress
 import fcntl
 import os
 from pathlib import Path
@@ -21,6 +22,7 @@ from resolve_phone_backend import resolve_backend
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCKER_HEAVY_LOCK_PATH = Path("/tmp/anshin-local-docker-heavy.lock")
+MOCK_SUBNETS = ("10.254.250.0/24", "10.254.251.0/24")
 
 
 @contextmanager
@@ -66,6 +68,21 @@ def compose_args(project: str) -> list[str]:
         "--file",
         str(ROOT / "compose.phase1.mock.yaml"),
     ]
+
+
+def ensure_mock_networks_available(env: dict[str, str]) -> None:
+    identifiers = run(["docker", "network", "ls", "--quiet"], env=env).stdout.split()
+    if not identifiers:
+        return
+    existing = json.loads(run(["docker", "network", "inspect", *identifiers], env=env).stdout)
+    wanted = [ipaddress.ip_network(subnet) for subnet in MOCK_SUBNETS]
+    for network in existing:
+        for entry in network.get("IPAM", {}).get("Config") or []:
+            if not entry.get("Subnet"):
+                continue
+            actual = ipaddress.ip_network(entry["Subnet"])
+            if any(actual.version == subnet.version and actual.overlaps(subnet) for subnet in wanted):
+                raise RuntimeError("process-start=0: isolated SIP fixture subnet overlaps an existing Docker network")
 
 
 def cleanup_args(base: list[str]) -> list[str]:
@@ -194,7 +211,7 @@ def wait_for_smartphone_contact(base: list[str], env: dict[str, str]) -> None:
             env=env,
             check=False,
         )
-        if "2001/sip:2001@172.31.250.30:5060" in result.stdout:
+        if "2001/sip:2001@10.254.250.30:5060" in result.stdout:
             return
         time.sleep(1)
     endpoints = run(
@@ -232,11 +249,12 @@ def finish(process: subprocess.Popen[str], label: str) -> None:
         raise RuntimeError(f"{label} failed with exit {process.returncode}:\n{output}")
 
 
-def run_isolated_e2e() -> int:
+def run_isolated_e2e(*, preflight_only: bool = False) -> int:
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required")
 
     backend_root = resolve_backend(ROOT, os.environ.get("ANSHIN_PHONE_BACKEND_DIR"))
+    ensure_mock_networks_available(os.environ.copy())
 
     project = f"anshin-phone-sip-test-{uuid.uuid4().hex[:8]}"
     with tempfile.TemporaryDirectory(prefix="anshin-phone-test-secrets-") as secret_dir:
@@ -261,11 +279,11 @@ def run_isolated_e2e() -> int:
                 "CARRIER_HOST": "mock-carrier",
                 "CARRIER_PORT": "5060",
                 "CARRIER_QUALIFY_FREQUENCY": "0",
-                "CARRIER_SOURCE_CIDRS": "172.31.250.10/32",
+                "CARRIER_SOURCE_CIDRS": "10.254.250.10/32",
                 "CARRIER_SIP_USERNAME": "mock-carrier",
-                "PUBLIC_SIP_IP": "172.31.250.40",
-                "PUBLIC_RTP_IP": "172.31.250.50",
-                "SMARTPHONE_SOURCE_CIDRS": "172.31.250.30/32",
+                "PUBLIC_SIP_IP": "10.254.250.40",
+                "PUBLIC_RTP_IP": "10.254.250.50",
+                "SMARTPHONE_SOURCE_CIDRS": "10.254.250.30/32",
                 "TEL_DID": "0300000001",
                 "FAX_DID": "0300000002",
                 "SMARTPHONE_EXTENSION": "2001",
@@ -274,6 +292,9 @@ def run_isolated_e2e() -> int:
         )
         base = compose_args(project)
         run(base + ["config", "--quiet"], env=env)
+        if preflight_only:
+            print("phase=diagnostic-preflight state=ready process-start=0 quality=not-run", flush=True)
+            return 0
         failed = False
         try:
             bootstrap_started = time.monotonic()
@@ -338,11 +359,11 @@ def run_isolated_e2e() -> int:
                     "mock-smartphone",
                     "sipp",
                     "-nostdin",
-                    "172.31.250.40:5060",
+                    "10.254.250.40:5060",
                     "-sf",
                     "/scenarios/smartphone_register.xml",
                     "-i",
-                    "172.31.250.30",
+                    "10.254.250.30",
                     "-p",
                     "5060",
                     "-m",
@@ -367,7 +388,7 @@ def run_isolated_e2e() -> int:
                     "-sf",
                     "/scenarios/smartphone_inbound_uas.xml",
                     "-i",
-                    "172.31.250.30",
+                    "10.254.250.30",
                     "-p",
                     "5060",
                     "-m",
@@ -386,11 +407,11 @@ def run_isolated_e2e() -> int:
                     "mock-carrier",
                     "sipp",
                     "-nostdin",
-                    "172.31.250.40:5060",
+                    "10.254.250.40:5060",
                     "-sf",
                     "/scenarios/carrier_inbound_uac.xml",
                     "-i",
-                    "172.31.250.10",
+                    "10.254.250.10",
                     "-p",
                     "5060",
                     "-m",
@@ -418,7 +439,7 @@ def run_isolated_e2e() -> int:
                 base + ["exec", "-T", "mock-carrier", "cat", "/tmp/inbound-messages.log"],
                 env=env,
             ).stdout
-            if "c=IN IP4 172.31.250.50" not in inbound_trace:
+            if "c=IN IP4 10.254.250.50" not in inbound_trace:
                 raise RuntimeError("RTPengine did not rewrite inbound response SDP to its edge address")
             print("PASS: mock carrier -> Kamailio/RTPengine -> Asterisk -> smartphone")
 
@@ -431,7 +452,7 @@ def run_isolated_e2e() -> int:
                     "-sf",
                     "/scenarios/carrier_outbound_uas.xml",
                     "-i",
-                    "172.31.250.10",
+                    "10.254.250.10",
                     "-p",
                     "5060",
                     "-m",
@@ -448,11 +469,11 @@ def run_isolated_e2e() -> int:
                 [
                     "sipp",
                     "-nostdin",
-                    "172.31.250.40:5060",
+                    "10.254.250.40:5060",
                     "-sf",
                     "/scenarios/smartphone_outbound_uac.xml",
                     "-i",
-                    "172.31.250.30",
+                    "10.254.250.30",
                     "-p",
                     "5060",
                     "-m",
@@ -471,7 +492,7 @@ def run_isolated_e2e() -> int:
                 base + ["exec", "-T", "mock-smartphone", "cat", "/tmp/outbound-messages.log"],
                 env=env,
             ).stdout
-            if "c=IN IP4 172.31.250.50" not in outbound_trace:
+            if "c=IN IP4 10.254.250.50" not in outbound_trace:
                 raise RuntimeError("RTPengine did not rewrite outbound response SDP to its edge address")
             print("PASS: smartphone -> Kamailio/RTPengine -> Asterisk -> mock carrier")
 
@@ -552,7 +573,11 @@ def run_isolated_e2e() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    argparse.ArgumentParser(description=__doc__).parse_args(argv)
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
+    args = parser.parse_args(argv)
+    if args.preflight:
+        return run_isolated_e2e(preflight_only=True)
     with docker_heavy_lease():
         return run_isolated_e2e()
 

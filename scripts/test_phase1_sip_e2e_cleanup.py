@@ -12,6 +12,17 @@ import test_phase1_sip_e2e
 
 
 class Phase1SipE2ECleanupTest(unittest.TestCase):
+    @mock.patch("test_phase1_sip_e2e.run")
+    @mock.patch("test_phase1_sip_e2e.ensure_mock_networks_available")
+    @mock.patch("test_phase1_sip_e2e.resolve_backend")
+    def test_preflight_never_builds_starts_or_cleans_runtime(self, resolve_backend, networks, run) -> None:
+        resolve_backend.return_value = Path("/isolated/anshin-phone-backend")
+        run.return_value = mock.Mock(stdout="", returncode=0)
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(test_phase1_sip_e2e.run_isolated_e2e(preflight_only=True), 0)
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][-2:], ["config", "--quiet"])
+
     @mock.patch("test_phase1_sip_e2e.run_isolated_e2e")
     @mock.patch("test_phase1_sip_e2e.docker_heavy_lease")
     def test_help_does_not_acquire_resources_or_start_runtime(self, lease, e2e) -> None:
@@ -29,9 +40,10 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
             test_phase1_sip_e2e.run_isolated_e2e()
         run.assert_not_called()
 
+    @mock.patch("test_phase1_sip_e2e.ensure_mock_networks_available")
     @mock.patch("test_phase1_sip_e2e.resolve_backend")
     @mock.patch("test_phase1_sip_e2e.run")
-    def test_resolved_backend_is_used_for_compose_preflight(self, run, resolve_backend) -> None:
+    def test_resolved_backend_is_used_for_compose_preflight(self, run, resolve_backend, networks) -> None:
         backend = Path("/isolated/anshin-phone-backend")
         resolve_backend.return_value = backend
         run.side_effect = RuntimeError("preflight stop")
@@ -40,6 +52,25 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
         command, = run.call_args_list[0].args
         self.assertEqual(command[-2:], ["config", "--quiet"])
         self.assertEqual(run.call_args_list[0].kwargs["env"]["ANSHIN_PHONE_BACKEND_DIR"], str(backend))
+
+    @mock.patch("test_phase1_sip_e2e.run")
+    def test_subnet_collision_is_rejected_before_build(self, run) -> None:
+        run.side_effect = [
+            mock.Mock(stdout="network-id\n"),
+            mock.Mock(stdout='[{"IPAM":{"Config":[{"Subnet":"10.254.0.0/16"}]}}]'),
+        ]
+        with self.assertRaisesRegex(RuntimeError, "process-start=0"):
+            test_phase1_sip_e2e.ensure_mock_networks_available({})
+        self.assertEqual(run.call_count, 2)
+
+    @mock.patch("test_phase1_sip_e2e.run")
+    def test_nonoverlapping_and_ipv6_networks_are_accepted(self, run) -> None:
+        run.side_effect = [
+            mock.Mock(stdout="network-id\n"),
+            mock.Mock(stdout='[{"IPAM":{"Config":[{"Subnet":"172.31.0.0/16"},{"Subnet":"fd00::/64"}]}}]'),
+        ]
+        test_phase1_sip_e2e.ensure_mock_networks_available({})
+
 
     def test_cleanup_removes_project_images_volumes_and_orphans(self) -> None:
         base = ["docker", "compose", "--project-name", "anshin-phone-sip-test-test"]
