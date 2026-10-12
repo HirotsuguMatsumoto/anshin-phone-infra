@@ -372,7 +372,7 @@ def observe_concurrent_resources(base: list[str], env: dict[str,str], directory:
     print("phase=local-load state=observed calls=2 fax=1 recordings=2 scope=local-only",flush=True)
 
 
-def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_path: Path, *, with_load: bool = True) -> None:
+def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_path: Path, *, with_load: bool = True) -> int | None:
     import base64
     print("phase=fax-integration state=started", flush=True)
     run(base + ["exec", "-T", "mock-carrier", "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=tiffg4", "-r204x196", "-sOutputFile=/tmp/mock-send.tif", "/mock-fax/synthetic-fax.ps"], env=env)
@@ -382,6 +382,7 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
     carrier = subprocess.Popen(base + ["exec", "-T", "mock-carrier", "sh", "/mock-fax/start.sh"], cwd=ROOT, env=env,
         text=True, stdout=carrier_output, stderr=subprocess.STDOUT)
     load_smartphone = None
+    completed = False
     try:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -453,18 +454,21 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
         print("PASS: queued PDF -> actual SendFAX -> mock carrier ReceiveFAX -> completion/history", flush=True)
         if env.get("PHONE_TEST_FRONTEND_DIR"):
             run_management_browser_flow(base, env, secret_path)
+        completed = True
+        return carrier.pid if env.get("PHONE_PREVIEW_DIR") else None
 
     finally:
         if load_smartphone is not None and load_smartphone.poll() is None:
             load_smartphone.terminate()
             load_smartphone.communicate(timeout=5)
-        if carrier.poll() is None:
-            carrier.terminate()
-        try:
-            carrier.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            carrier.kill()
-            carrier.communicate(timeout=5)
+        if not (completed and env.get("PHONE_PREVIEW_DIR")):
+            if carrier.poll() is None:
+                carrier.terminate()
+            try:
+                carrier.communicate(timeout=5)
+            except subprocess.TimeoutExpired:
+                carrier.kill()
+                carrier.communicate(timeout=5)
         carrier_output.close()
 
 
@@ -504,6 +508,8 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required")
 
+    if os.environ.get("PHONE_PREVIEW_DIR") and (not os.environ.get("PHONE_TEST_FRONTEND_DIR") or fixture_only is not None):
+        raise RuntimeError("process-start=0: owner preview requires the complete UI consumer path")
     backend_root = resolve_backend(ROOT, os.environ.get("ANSHIN_PHONE_BACKEND_DIR"))
     ensure_mock_networks_available(os.environ.copy())
     if os.environ.get("PHONE_TEST_FRONTEND_DIR"):
@@ -842,9 +848,21 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             backend_request(base, env, "POST", "/api/v1/phone-number-assignments", {"tenant_id":"anshin-phase1", "phone_number_id":tel_number["id"], "sip_endpoint_id":endpoint["id"]})
 
 
+            deadline = time.monotonic()+15
+            while time.monotonic()<deadline:
+                if "2001" in run(base+["exec","-T","asterisk","asterisk","-rx","pjsip show endpoints"],env=env).stdout:
+                    break
+                time.sleep(0.2)
+            else:
+                raise RuntimeError("phase=endpoint-reconnect state=configuration-timeout")
+            run(base+["exec","-T","mock-smartphone","sipp","-nostdin","10.254.250.40:5060","-sf","/scenarios/smartphone_register.xml",
+                "-inf","/tmp/device.csv","-i","10.254.250.30","-p","5060","-m","1","-timeout","15s"],env=env)
+            wait_for_smartphone_contact(base,env)
+            print("PASS: restored endpoint reconnects through actual REGISTER",flush=True)
+
             if fixture_only == "voice":
                 return 0
-            run_fax_flow(base, env, fax_number, secret_path)
+            carrier_exec_pid = run_fax_flow(base, env, fax_number, secret_path)
             if env.get("PHONE_TEST_FRONTEND_DIR"):
                 run_backup_restore(base,env,secret_path)
             if env.get("PHONE_PREVIEW_DIR"):
@@ -852,7 +870,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     "backend_sha":run(["git","-C",str(backend_root),"rev-parse","HEAD"],env=env).stdout.strip(),
                     "infra_sha":run(["git","rev-parse","HEAD"],env=env).stdout.strip(),
                     "url":"http://localhost:3015/dashboard","quality":"business-flow-passed",
-                    "cleanup_after":"owner-final-browser-consumer"},ensure_ascii=False,indent=2))
+                    "cleanup_after":"owner-final-browser-consumer","carrier_exec_pid":carrier_exec_pid},ensure_ascii=False,indent=2))
                 retention["retain"] = True
                 print("phase=owner-preview state=retained cleanup=after-final-consumer",flush=True)
         except Exception as exc:
