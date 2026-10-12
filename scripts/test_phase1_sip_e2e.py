@@ -17,6 +17,25 @@ import uuid
 import json
 import stat
 
+
+@contextmanager
+def fixture_directory():
+    preview = os.environ.get("PHONE_PREVIEW_DIR")
+    state = {"retain": False}
+    if not preview:
+        with tempfile.TemporaryDirectory(prefix="anshin-phone-test-secrets-") as path:
+            yield Path(path), state
+        return
+    path = Path(preview)
+    if not path.is_absolute() or path.resolve().is_relative_to(ROOT):
+        raise RuntimeError("process-start=0: preview path must be absolute and outside source")
+    path.mkdir(mode=0o700, parents=False, exist_ok=False)
+    try:
+        yield path, state
+    finally:
+        if not state["retain"]:
+            shutil.rmtree(path)
+
 from resolve_phone_backend import resolve_backend
 
 
@@ -45,13 +64,14 @@ def docker_heavy_lease():
         yield
 
 
-def run(command: list[str], *, env: dict[str, str], check: bool = True) -> subprocess.CompletedProcess[str]:
+def run(command: list[str], *, env: dict[str, str], check: bool = True, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         command,
         cwd=ROOT,
         env=env,
         check=check,
         text=True,
+        input=input_text,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
     )
@@ -67,7 +87,7 @@ def compose_args(project: str) -> list[str]:
         str(ROOT / "compose.phase1.yaml"),
         "--file",
         str(ROOT / "compose.phase1.mock.yaml"),
-    ]
+    ] + (["--file", str(ROOT / "compose.phase1.local.yaml")] if os.environ.get("PHONE_LOCAL_OIDC_ISSUER") else [])
 
 
 def ensure_mock_networks_available(env: dict[str, str]) -> None:
@@ -176,7 +196,7 @@ def backend_request(
         base + ["exec", "-T", "backend", "python", "-c", code, method, path, serialized],
         env=env,
     )
-    return json.loads(result.stdout.strip().splitlines()[-1])
+    return json.loads(result.stdout.strip().splitlines()[-1]) if result.stdout.strip() else None
 
 
 def wait_for_backend(base: list[str], env: dict[str, str]) -> None:
@@ -249,21 +269,170 @@ def finish(process: subprocess.Popen[str], label: str) -> None:
         raise RuntimeError(f"{label} failed with exit {process.returncode}:\n{output}")
 
 
+def validate_browser_inputs(env: dict[str,str]) -> tuple[Path,dict]:
+    frontend = Path(env["PHONE_TEST_FRONTEND_DIR"]).resolve(strict=True)
+    actual = subprocess.check_output(["git", "-C", str(frontend), "rev-parse", "--show-toplevel"], text=True).strip()
+    if Path(actual).resolve() != frontend or not (frontend / "apps/anshin-phone/tests/e2e/management.spec.ts").is_file():
+        raise RuntimeError("process-start=0: Phone frontend identity/entry mismatch")
+    account_path = Path(env["PHONE_TEST_ACCOUNT_FILE"]).resolve(strict=True)
+    if stat.S_IMODE(account_path.stat().st_mode) != 0o600 or account_path.stat().st_uid != os.getuid():
+        raise RuntimeError("process-start=0: Phone account fixture is not owner-only")
+    account = json.loads(account_path.read_text())
+    if not str(account["username"]).endswith("@example.invalid"):
+        raise RuntimeError("process-start=0: only a synthetic Phone account is permitted")
+    return frontend, account
+
+
+def run_management_browser_flow(base: list[str], env: dict[str, str], secret_path: Path) -> None:
+    frontend, account = validate_browser_inputs(env)
+    for tenant, role, label in (("anshin-phase1", "phone-owner", "基礎開発・隔離事業所"), ("phone-role-check", "phone-auditor", "権限確認・隔離事業所")):
+        backend_request(base, env, "POST", "/api/v1/tenant-memberships", {"tenant_id": tenant,
+            "subject": account["subject"], "role": role, "display_name": label})
+    project = base[base.index("--project-name") + 1]
+    container = project + "-management-ui"
+    print("phase=management-browser state=started", flush=True)
+    succeeded = False
+    try:
+        run(["docker", "run", "--detach", "--name", container, "--label", "anshin.task=phone-foundation-20261012",
+            "--user", f"{os.getuid()}:{os.getgid()}", "--network", project + "_phone-data",
+            "--publish", "127.0.0.1:3015:3015", "--volume", str(frontend) + ":/workspace",
+            "--workdir", "/workspace/apps/anshin-phone", "--env", "PHONE_API_PROXY_TARGET=http://backend:8000",
+            "--env", "VITE_OIDC_ISSUER=" + env["PHONE_LOCAL_OIDC_ISSUER"], "node:24-bookworm-slim",
+            "node", "node_modules/vite/bin/vite.js", "--host", "0.0.0.0", "--port", "3015", "--strictPort"], env=env)
+        run(["docker", "network", "connect", env["PHONE_LOCAL_AUTH_NETWORK"], container], env=env)
+        import urllib.request
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            try:
+                urllib.request.urlopen("http://localhost:3015/dashboard", timeout=2).close()
+                break
+            except OSError:
+                time.sleep(0.2)
+        else:
+            raise RuntimeError("phase=management-browser state=startup-timeout")
+        browser_env = dict(env, PHONE_TEST_BASE_URL="http://localhost:3015", PHONE_TEST_PDF_FILE=str(secret_path / "synthetic-fax.pdf"),
+            PHONE_TEST_OUTPUT_DIR=str(secret_path / "playwright-output"))
+        completed = subprocess.run(["pnpm", "--dir", "apps/anshin-phone", "run", "test:e2e"], cwd=frontend,
+            env=browser_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=240)
+        print(completed.stdout, end="", flush=True)
+        if completed.returncode:
+            raise RuntimeError("phase=management-browser state=assertion-failed")
+        print("PASS: actual PKCE/AAL2 -> management actions -> PBX/FAX/call/audit UI", flush=True)
+        succeeded = True
+    finally:
+        if not (succeeded and env.get("PHONE_PREVIEW_DIR")):
+            run(["docker", "rm", "--force", container], env=env, check=False)
+
+
+def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_path: Path) -> None:
+    import base64
+    print("phase=fax-integration state=started", flush=True)
+    run(base + ["exec", "-T", "mock-carrier", "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=tiffg4", "-r204x196", "-sOutputFile=/tmp/mock-send.tif", "/mock-fax/synthetic-fax.ps"], env=env)
+    run(base + ["exec", "-T", "mock-carrier", "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pdfwrite", "-sOutputFile=/tmp/mock-send.pdf", "/mock-fax/synthetic-fax.ps"], env=env)
+    carrier_log = secret_path / "mock-fax-runtime.log"
+    carrier_output = carrier_log.open("w")
+    carrier = subprocess.Popen(base + ["exec", "-T", "mock-carrier", "sh", "/mock-fax/start.sh"], cwd=ROOT, env=env,
+        text=True, stdout=carrier_output, stderr=subprocess.STDOUT)
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            if carrier.poll() is not None:
+                carrier_output.flush()
+                print("\n".join(carrier_log.read_text().splitlines()[-20:]), flush=True)
+                raise RuntimeError("phase=mock-fax-runtime state=exited protocol=not-started")
+            ready = run(base + ["exec", "-T", "mock-carrier", "asterisk", "-rx", "core show uptime"], env=env, check=False)
+            if "System uptime" in ready.stdout:
+                break
+            time.sleep(0.5)
+        else:
+            carrier_output.flush()
+            print("\n".join(carrier_log.read_text().splitlines()[-20:]), flush=True)
+            raise RuntimeError("phase=mock-fax-runtime state=timeout protocol=not-started")
+        # Real SendFAX -> Kamailio/RTPengine -> real ReceiveFAX -> encrypted
+        # backend original and history. The carrier is synthetic and isolated.
+        run(base + ["exec", "-T", "mock-carrier", "asterisk", "-rx", "channel originate PJSIP/0300000002@carrier-sbc application SendFAX /tmp/mock-send.tif,F"], env=env)
+        deadline = time.monotonic() + 90
+        records = []
+        while time.monotonic() < deadline:
+            records = backend_request(base, env, "GET", "/api/v1/fax-records?tenant_id=anshin-phase1")
+            if records:
+                break
+            time.sleep(1)
+        if not records or records[0]["status"] != "SUCCESS" or not str(records[0]["storage_reference"]).startswith("fax-document:"):
+            carrier_output.flush()
+            print("\n".join(carrier_log.read_text().splitlines()[-40:]), flush=True)
+            raise RuntimeError("phase=fax-receive state=failed expected=successful-encrypted-original")
+        print("PASS: actual G.711 FAX receive -> protected original -> backend history", flush=True)
+        pdf_path = secret_path / "synthetic-fax.pdf"
+        container = run(base + ["ps", "--quiet", "mock-carrier"], env=env).stdout.strip()
+        run(["docker", "cp", container + ":/tmp/mock-send.pdf", str(pdf_path)], env=env)
+        code = "import base64,json,sys,urllib.request;body=base64.b64decode(sys.stdin.read());req=urllib.request.Request('http://127.0.0.1:8000/api/v1/fax-documents?tenant_id=anshin-phase1&pbx_unique_id=isolated-send-document',data=body,headers={'Content-Type':'application/pdf','X-Anshin-Internal-Token':'test-internal-token'});print(urllib.request.urlopen(req,timeout=10).read().decode())"
+        document = json.loads(run(base + ["exec", "-T", "backend", "python", "-c", code], env=env, input_text=base64.b64encode(pdf_path.read_bytes()).decode()).stdout)
+        # Use the exact production encryption function with the actual runtime
+        # key; no manually reconstructed protected reference or driver.
+        code = "import base64;from app.core.fax_storage import encrypt;print('encrypted:'+base64.b64encode(encrypt(b'0300000000','anshin-phase1')).decode())"
+        protected_destination = run(base + ["exec", "-T", "backend", "python", "-c", code], env=env).stdout.strip()
+        job = backend_request(base, env, "POST", "/api/v1/fax-jobs", {
+            "tenant_id": "anshin-phase1", "phone_number_id": fax_number["id"],
+            "idempotency_key": "isolated-real-fax-send", "destination_masked": "030****0000",
+            "destination_reference": protected_destination, "pdf_storage_reference": "fax-document:" + document["id"] + ".pdf"})
+        deadline = time.monotonic() + 90
+        completed = None
+        while time.monotonic() < deadline:
+            jobs = backend_request(base, env, "GET", "/api/v1/fax-jobs?tenant_id=anshin-phase1")
+            completed = next(j for j in jobs if j["id"] == job["id"])
+            if completed["status"] in {"sent", "failed"}:
+                break
+            time.sleep(1)
+        if completed["status"] != "sent":
+            carrier_output.flush()
+            print("\n".join(carrier_log.read_text().splitlines()[-40:]), flush=True)
+            raise RuntimeError(f"phase=fax-send state=failed result={completed['status']} code={completed['failure_code']}")
+        observed = run(base + ["exec", "-T", "mock-carrier", "cat", "/tmp/mock-fax-status"], env=env).stdout.strip()
+        if observed != "SUCCESS":
+            raise RuntimeError("phase=fax-send state=failed consumer=mock-carrier")
+        print("PASS: queued PDF -> actual SendFAX -> mock carrier ReceiveFAX -> completion/history", flush=True)
+        if env.get("PHONE_TEST_FRONTEND_DIR"):
+            run_management_browser_flow(base, env, secret_path)
+
+    finally:
+        if carrier.poll() is None:
+            carrier.terminate()
+        try:
+            carrier.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            carrier.kill()
+            carrier.communicate(timeout=5)
+        carrier_output.close()
+
+
 def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None = None) -> int:
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required")
 
     backend_root = resolve_backend(ROOT, os.environ.get("ANSHIN_PHONE_BACKEND_DIR"))
     ensure_mock_networks_available(os.environ.copy())
+    if os.environ.get("PHONE_TEST_FRONTEND_DIR"):
+        validate_browser_inputs(os.environ.copy())
+        if shutil.which("pnpm") is None:
+            raise RuntimeError("process-start=0: pnpm is unavailable for the UI consumer")
+        if os.environ.get("PHONE_LOCAL_OIDC_ISSUER") != "http://localhost:18115/realms/phone-foundation-local":
+            raise RuntimeError("process-start=0: owned local authentication origin mismatch")
+        import urllib.request
+        with urllib.request.urlopen(os.environ["PHONE_LOCAL_OIDC_ISSUER"] + "/.well-known/openid-configuration",timeout=5) as response:
+            discovery = json.load(response)
+        if discovery["issuer"] != os.environ["PHONE_LOCAL_OIDC_ISSUER"]:
+            raise RuntimeError("process-start=0: authentication issuer input was not accepted")
 
     project = f"anshin-phone-sip-test-{uuid.uuid4().hex[:8]}"
-    with tempfile.TemporaryDirectory(prefix="anshin-phone-test-secrets-") as secret_dir:
-        secret_path = Path(secret_dir)
+    with fixture_directory() as (secret_path, retention):
+        secret_dir = str(secret_path)
         for name, value in {
             "postgres_password": "test-postgres-password",
             "carrier_sip_password": "test-carrier-password",
             "smartphone_sip_password": "test-smartphone-password",
             "internal_api_token": "test-internal-token",
+            "fax_storage_key": "6" * 64,
         }.items():
             path = secret_path / name
             path.write_text(value, encoding="utf-8")
@@ -328,7 +497,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             wait_for_sbc(base, env)
             wait_for_asterisk(base, env)
             wait_for_backend(base, env)
-            backend_request(
+            tel_number = backend_request(
                 base,
                 env,
                 "POST",
@@ -343,7 +512,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     "route_target": "2001",
                 },
             )
-            backend_request(
+            fax_number = backend_request(
                 base,
                 env,
                 "POST",
@@ -358,6 +527,48 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 },
             )
 
+            for national_number in ("0300000001", "0300000002"):
+                records = backend_request(base, env, "GET", "/api/v1/phone-numbers?tenant_id=anshin-phase1")
+                number = next(n for n in records if n["national_number"] == national_number)
+                backend_request(base, env, "PATCH", f"/api/v1/phone-numbers/{number['id']}", {"status": "testing"})
+            endpoint = backend_request(base, env, "POST", "/api/v1/sip-endpoints", {
+                "tenant_id": "anshin-phase1", "extension": "2001", "display_name": "Isolated smartphone"})
+            backend_request(base, env, "PATCH", f"/api/v1/sip-endpoints/{endpoint['id']}", {"status": "active"})
+            assignment = backend_request(base, env, "POST", "/api/v1/phone-number-assignments", {
+                "tenant_id": "anshin-phase1", "phone_number_id": tel_number["id"], "sip_endpoint_id": endpoint["id"]})
+            configuration = backend_request(base, env, "GET", "/api/v1/pbx-configuration?tenant_id=anshin-phase1")
+            credentials = "SEQUENTIAL\n2001;[authentication username=2001 password=" + configuration["endpoints"][0]["password"] + "]\n"
+            run(base + ["exec", "-T", "mock-smartphone", "sh", "-c", "umask 077; cat > /tmp/device.csv"], env=env, input_text=credentials)
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                output = run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "pjsip show endpoints"], env=env).stdout
+                if "2001" in output:
+                    break
+                time.sleep(0.5)
+            else:
+                raise RuntimeError("phase=endpoint-provisioning state=timeout")
+            print("PASS: backend active endpoint -> actual PBX configuration")
+
+            if fixture_only == "fax":
+                run_fax_flow(base, env, fax_number, secret_path)
+                return 0
+
+            if fixture_only == "management":
+                print(f"phase=management-fixture state=ready project={project} source={backend_root}", flush=True)
+                # The UI is the last consumer. Keep producer resources and
+                # their original secret mounts alive until the owning session
+                # terminates this fixture; cleanup then follows the same path.
+                import signal
+                stopped = False
+                def stop(*_):
+                    nonlocal stopped
+                    stopped = True
+                signal.signal(signal.SIGTERM, stop)
+                signal.signal(signal.SIGINT, stop)
+                while not stopped:
+                    time.sleep(1)
+                return 0
+
             registration = run(
                 base
                 + [
@@ -369,6 +580,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     "10.254.250.40:5060",
                     "-sf",
                     "/scenarios/smartphone_register.xml",
+                    "-inf", "/tmp/device.csv",
                     "-i",
                     "10.254.250.30",
                     "-p",
@@ -479,6 +691,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     "10.254.250.40:5060",
                     "-sf",
                     "/scenarios/smartphone_outbound_uac.xml",
+                    "-inf", "/tmp/device.csv",
                     "-i",
                     "10.254.250.30",
                     "-p",
@@ -503,38 +716,41 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 raise RuntimeError("RTPengine did not rewrite outbound response SDP to its edge address")
             print("PASS: smartphone -> Kamailio/RTPengine -> Asterisk -> mock carrier")
 
-            call_records = wait_for_event_count(base, env, "call-records", 1)
+            call_records = wait_for_event_count(base, env, "call-records", 2)
             if not all("*" in str(record["remote_number_masked"]) for record in call_records):
                 raise RuntimeError("unmasked call record reached the backend")
             print("PASS: Asterisk call events -> durable spool -> Backend")
+            # Existing registered contacts must not bypass current assignment
+            # or endpoint status. These are real SIP failures, not DB-only checks.
+            backend_request(base, env, "DELETE", f"/api/v1/phone-number-assignments/{assignment['id']}?tenant_id=anshin-phase1")
+            denied = run(base + ["exec", "-T", "mock-carrier", "sipp", "-nostdin", "10.254.250.40:5060",
+                "-sf", "/scenarios/carrier_inbound_denied.xml", "-i", "10.254.250.10", "-p", "5060", "-m", "1", "-timeout", "15s"], env=env)
+            print("PASS: unassigned number denies actual inbound SIP", flush=True)
+            backend_request(base, env, "PATCH", f"/api/v1/sip-endpoints/{endpoint['id']}", {"status":"suspended"})
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                output = run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "pjsip show endpoints"], env=env).stdout
+                if "Endpoint:  2001" not in output:
+                    break
+                time.sleep(0.5)
+            else:
+                raise RuntimeError("phase=endpoint-stop state=timeout")
+            run(base + ["exec", "-T", "mock-smartphone", "sipp", "-nostdin", "10.254.250.40:5060",
+                "-sf", "/scenarios/smartphone_register_denied.xml", "-inf", "/tmp/device.csv", "-i", "10.254.250.30", "-p", "5060", "-m", "1", "-timeout", "15s"], env=env)
+            print("PASS: stopped endpoint rejects old REGISTER credentials", flush=True)
+            backend_request(base, env, "PATCH", f"/api/v1/sip-endpoints/{endpoint['id']}", {"status":"active"})
+            backend_request(base, env, "POST", "/api/v1/phone-number-assignments", {"tenant_id":"anshin-phase1", "phone_number_id":tel_number["id"], "sip_endpoint_id":endpoint["id"]})
 
-            fax_event = run(
-                base
-                + [
-                    "exec",
-                    "-T",
-                    "--user",
-                    "10001:10001",
-                    "asterisk",
-                    "python3",
-                    "/var/lib/asterisk/agi-bin/pbx_event_spool.py",
-                    "fax",
-                    "anshin-phase1",
-                    "0300000002",
-                    "isolated-fax-event-001",
-                    "inbound",
-                    "090****0000",
-                    "SUCCESS",
-                    "2026-08-21T00:00:00Z",
-                    "/var/spool/asterisk/fax/isolated-test.tif",
-                ],
-                env=env,
-            )
-            print(fax_event.stdout, end="")
-            fax_records = wait_for_event_count(base, env, "fax-records", 1)
-            if fax_records[0]["storage_reference"] != "fax-spool://isolated-test.tif":
-                raise RuntimeError("FAX storage reference was not normalized")
-            print("PASS: Asterisk FAX event -> durable spool -> Backend")
+
+            run_fax_flow(base, env, fax_number, secret_path)
+            if env.get("PHONE_PREVIEW_DIR"):
+                (secret_path / "runtime.json").write_text(json.dumps({"project":project,"compose":base,
+                    "backend_sha":run(["git","-C",str(backend_root),"rev-parse","HEAD"],env=env).stdout.strip(),
+                    "infra_sha":run(["git","rev-parse","HEAD"],env=env).stdout.strip(),
+                    "url":"http://localhost:3015/dashboard","quality":"business-flow-passed",
+                    "cleanup_after":"owner-final-browser-consumer"},ensure_ascii=False,indent=2))
+                retention["retain"] = True
+                print("phase=owner-preview state=retained cleanup=after-final-consumer",flush=True)
         except Exception as exc:
             failed = True
             if isinstance(exc, subprocess.CalledProcessError):
@@ -572,12 +788,13 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             print(registration_trace.stdout, end="")
             raise
         finally:
-            built_image_ids = project_image_ids(project, env)
-            cleanup = run(cleanup_args(base), env=env, check=False)
-            residue = cleanup_residue(base, project, env, built_image_ids)
-            if cleanup.returncode != 0 or residue or failed:
-                print(cleanup.stdout, end="")
-            ensure_cleanup_succeeded(cleanup, residue, failed)
+            if not retention["retain"]:
+                built_image_ids = project_image_ids(project, env)
+                cleanup = run(cleanup_args(base), env=env, check=False)
+                residue = cleanup_residue(base, project, env, built_image_ids)
+                if cleanup.returncode != 0 or residue or failed:
+                    print(cleanup.stdout, end="")
+                ensure_cleanup_succeeded(cleanup, residue, failed)
     return 0
 
 
@@ -585,7 +802,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
-    modes.add_argument("--fixture", choices=("database",), help="diagnose the real database/migration phase without SIP runtime")
+    modes.add_argument("--fixture", choices=("database", "management", "fax"), help="diagnose the real database/migration phase without SIP runtime")
     args = parser.parse_args(argv)
     if args.preflight:
         return run_isolated_e2e(preflight_only=True)

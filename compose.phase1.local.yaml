@@ -1,0 +1,14 @@
+# Local management fixture only; real carriers and published SIP are excluded.
+services:
+  backend:
+    ports: !override
+      - "127.0.0.1:8010:8000"
+    environment:
+      ANSHIN_PHONE_OIDC_ISSUER: ${PHONE_LOCAL_OIDC_ISSUER:?local fixture issuer is required}
+      ANSHIN_PHONE_OIDC_JWKS_URL: http://keycloak:8080/realms/phone-foundation-local/protocol/openid-connect/certs
+    networks:
+      phone-auth:
+networks:
+  phone-auth:
+    external: true
+    name: ${PHONE_LOCAL_AUTH_NETWORK:?owned local auth network is required}

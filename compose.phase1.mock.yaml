@@ -39,6 +39,8 @@ services:
   mock-carrier:
     build:
       context: ./tests/mock-sip
+      additional_contexts:
+        asterisk_runtime: service:asterisk
     command: ["tail", "-f", "/dev/null"]
     networks:
       sip-edge:
@@ -47,6 +49,8 @@ services:
   mock-smartphone:
     build:
       context: ./tests/mock-sip
+      additional_contexts:
+        asterisk_runtime: service:asterisk
     command: ["tail", "-f", "/dev/null"]
     networks:
       sip-edge:

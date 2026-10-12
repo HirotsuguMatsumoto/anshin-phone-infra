@@ -62,7 +62,7 @@ def build_event(arguments: list[str]) -> dict[str, object]:
     if kind == "fax" and len(arguments) == 9:
         _, tenant_id, national_number, unique_id, direction, remote, status, occurred, file_path = arguments
         reference = None
-        if file_path != "-":
+        if file_path != "-" and status == "SUCCESS":
             reference = f"fax-spool://{Path(file_path).name}"
         return {
             "kind": "faxes",

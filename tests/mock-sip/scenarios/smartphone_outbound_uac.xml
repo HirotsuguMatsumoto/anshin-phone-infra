@@ -42,7 +42,7 @@
     Call-ID: [call_id]
     CSeq: 2 INVITE
     Contact: <sip:2001@[local_ip]:[local_port];transport=UDP>
-    [authentication username=2001 password=test-smartphone-password]
+    [field1]
     Max-Forwards: 70
     Content-Type: application/sdp
     Content-Length: [len]

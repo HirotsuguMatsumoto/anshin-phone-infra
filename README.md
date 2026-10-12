@@ -118,3 +118,6 @@ RUN_PHASE1_SIP_E2E=1 ./scripts/verify_phase1.sh
 migration起動の失敗は`python3 scripts/test_phase1_sip_e2e.py --fixture database`で切り分ける。同じCompose、PostgreSQL、Backend image、Alembic及び合成入力を使い、SIP runtimeを起動せず最後に案件のresourceだけをcleanupする。この結果は発着信の結合確認を代替しない。合成入力はowner-onlyの一時directory内に置き、bind mount後の非root consumerが読めるfile modeにする。本番secretの権限又は実体は変更しない。
 
 実番号試験は[Phase 1実番号接続手順](docs/runbooks/telephony-platform/phase1_real_number_runbook.md)に従います。キャリアのDID、SIP接続先、認証方式、接続元IP、コーデック、発信者番号通知、FAX方式が未確定の状態では、外線試験を完了扱いにしません。Phase 1のスマートフォンは、固定送信元IPを許可した試験用Wi-Fi又はWireGuard等のVPN経路から接続し、SIP/RTPを全世界へ無制限公開しません。
+
+
+管理APIの割当・端末状態は実PBXへ接続する。端末設定の適用確認とheartbeat、通話の都度のroute照会、PDF受付・保護原本・実FAX workerは既存経路を使う。実G.711 FAX fixtureはSendFAX/ReceiveFAXと最後のBackend consumerまで確認する。商用回線・T.38・native Pushの資格として扱わない。

@@ -87,6 +87,28 @@ class Phase1RenderConfigTest(unittest.TestCase):
         self.assertEqual(pjsip_mode, 0o600)
         self.assertEqual(extensions_mode, 0o600)
 
+    def test_managed_runtime_starts_without_static_device_credentials(self) -> None:
+        pjsip, _, _, _ = self.render("ip", {"PBX_EVENT_BACKEND_URL": "http://backend:8000"})
+        self.assertIn("#include managed-endpoints.conf", pjsip)
+        self.assertNotIn("[2001-auth]", pjsip)
+        self.assertNotIn("smartphone-test-only", pjsip)
+
+    def test_backend_endpoint_contract_is_validated_before_config_write(self) -> None:
+        import hashlib
+        import json
+        spec = importlib.util.spec_from_file_location("pbx_management", REPOSITORY_DIR / "deploy/asterisk/scripts/pbx_management.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        content = {"tenant_id": "isolated", "endpoints": [{"id": "isolated-endpoint", "extension": "2001", "password": "1" * 64}]}
+        value = {**content, "revision": hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":")).encode()).hexdigest()}
+        self.assertEqual(module.validate_configuration(value, "isolated"), value)
+        with self.assertRaisesRegex(ValueError, "tenant/schema"):
+            module.validate_configuration(value, "foreign")
+        with self.assertRaisesRegex(ValueError, "revision mismatch"):
+            module.validate_configuration({**value, "revision": "0" * 64}, "isolated")
+        with self.assertRaisesRegex(ValueError, "values are invalid"):
+            module.validate_configuration({**value, "endpoints": [{"id": "isolated-endpoint", "extension": "2001\n[carrier]", "password": "1" * 64}]}, "isolated")
+
     def test_ip_mode_omits_registration_and_keeps_source_identification(self) -> None:
         pjsip, _, _, _ = self.render("ip")
 
@@ -114,6 +136,16 @@ class Phase1RenderConfigTest(unittest.TestCase):
         self.assertNotIn("NoOp(Reject unassigned inbound DID ${EXTEN})", extensions)
         self.assertNotIn("NoOp(Reject unsupported outbound destination ${EXTEN})", extensions)
         self.assertNotIn("NoOp(Anshin Phone outbound TEL ${ARG1})", extensions)
+
+    def test_fax_mode_uses_supported_application_options(self) -> None:
+        _, audio, _, _ = self.render("ip", {"FAX_MEDIA_MODE": "audio"})
+        _, t38, _, _ = self.render("ip", {"FAX_MEDIA_MODE": "t38"})
+        self.assertIn("ReceiveFAX(${FAX_FILE},F)", audio)
+        self.assertIn("SendFAX(${FAX_SEND_FILE},F)", audio)
+        self.assertNotIn("FAXOPT(force_audio)", audio)
+        self.assertIn("ReceiveFAX(${FAX_FILE},f)", t38)
+        with self.assertRaisesRegex(RuntimeError, "FAX_MEDIA_MODE"):
+            self.render("ip", {"FAX_MEDIA_MODE": "invalid"})
 
     def test_invalid_carrier_source_network_is_rejected(self) -> None:
         with self.assertRaises(ValueError):

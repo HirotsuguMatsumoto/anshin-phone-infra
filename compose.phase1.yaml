@@ -41,9 +41,16 @@ services:
       ANSHIN_PHONE_INTERNAL_TOKEN_FILE: /run/secrets/internal_api_token
       ANSHIN_PHONE_OIDC_ISSUER: https://auth.anshin.care/realms/anshin
       ANSHIN_PHONE_OIDC_AUDIENCE: anshin-phone
+      ANSHIN_PHONE_FAX_STORAGE_KEY_FILE: /run/secrets/fax_storage_key
+      ANSHIN_PHONE_SIP_MASTER_SECRET_FILE: /run/secrets/smartphone_sip_password
+      ANSHIN_PHONE_SIP_SERVER: ${PUBLIC_SIP_IP}:5060
     secrets:
       - postgres_password
       - internal_api_token
+      - smartphone_sip_password
+      - fax_storage_key
+    volumes:
+      - fax-protected-storage:/var/lib/anshin-phone/fax
     depends_on:
       postgres:
         condition: service_healthy
@@ -60,6 +67,7 @@ services:
     tmpfs:
       - /tmp:mode=1777
     cap_drop: [ALL]
+    cap_add: [CHOWN]
     security_opt: [no-new-privileges:true]
     logging: *default-logging
     networks: [phone-data]
@@ -68,7 +76,10 @@ services:
     build:
       context: ${ANSHIN_PHONE_BACKEND_DIR:-./anshin-phone-backend}
     restart: "no"
-    command: ["alembic", "upgrade", "head"]
+    user: "0:0"
+    command: ["sh", "-c", "mkdir -p /var/lib/anshin-phone/fax && chown 10001:10001 /var/lib/anshin-phone/fax && exec alembic upgrade head"]
+    volumes:
+      - fax-protected-storage:/var/lib/anshin-phone/fax
     environment:
       ANSHIN_PHONE_ENVIRONMENT: phase1
       ANSHIN_PHONE_DB_HOST: postgres
@@ -87,6 +98,7 @@ services:
     tmpfs:
       - /tmp:mode=1777
     cap_drop: [ALL]
+    cap_add: [CHOWN]
     security_opt: [no-new-privileges:true]
     logging: *default-logging
     networks: [phone-data]
@@ -109,6 +121,7 @@ services:
         condition: service_healthy
     volumes:
       - pbx-event-spool:/var/spool/anshin-phone/events
+      - fax-spool:/var/spool/anshin-phone/fax
     healthcheck:
       test: ["CMD", "python", "/app/healthcheck.py"]
       interval: 10s
@@ -209,17 +222,23 @@ services:
       SBC_HOST: kamailio
       SBC_PORT: "5060"
       TEL_DID: ${TEL_DID:?set carrier-issued TEL DID in digits}
+      FAX_MEDIA_MODE: ${FAX_MEDIA_MODE:-audio}
       FAX_DID: ${FAX_DID:?set carrier-issued FAX DID in digits}
       SMARTPHONE_EXTENSION: ${SMARTPHONE_EXTENSION:-2001}
       SMARTPHONE_QUALIFY_FREQUENCY: ${SMARTPHONE_QUALIFY_FREQUENCY:-30}
       ANSHIN_PHONE_TENANT_ID: ${ANSHIN_PHONE_TENANT_ID:-anshin-phase1}
       PBX_EVENT_SPOOL_DIR: /var/spool/asterisk/anshin-events
+      PBX_EVENT_BACKEND_URL: http://backend:8000
+      PBX_EVENT_TOKEN_FILE: /run/secrets/internal_api_token
       CARRIER_SIP_PASSWORD_FILE: /run/secrets/carrier_sip_password
       SMARTPHONE_SIP_PASSWORD_FILE: /run/secrets/smartphone_sip_password
     secrets:
       - carrier_sip_password
       - smartphone_sip_password
+      - internal_api_token
     depends_on:
+      backend:
+        condition: service_healthy
       kamailio:
         condition: service_healthy
     volumes:
@@ -237,6 +256,7 @@ services:
     security_opt: [no-new-privileges:true]
     logging: *default-logging
     networks:
+      phone-data:
       pbx-internal:
         ipv4_address: 172.31.251.20
 
@@ -247,6 +267,8 @@ secrets:
     file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/carrier_sip_password
   smartphone_sip_password:
     file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/smartphone_sip_password
+  fax_storage_key:
+    file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/fax_storage_key
   internal_api_token:
     file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/internal_api_token
 
@@ -254,6 +276,7 @@ volumes:
   postgres-data:
   asterisk-state:
   asterisk-logs:
+  fax-protected-storage:
   fax-spool:
   pbx-event-spool:
 

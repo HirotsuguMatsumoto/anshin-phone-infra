@@ -29,6 +29,10 @@ RUN apt-get update \
       libuuid1 libxml2 \
     && rm -rf /var/lib/apt/lists/* /tmp/asterisk.tar.gz /usr/src/asterisk
 
+RUN apt-get update \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ghostscript \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY config/asterisk.conf /etc/asterisk/asterisk.conf
 COPY config/modules.conf /etc/asterisk/modules.conf
 COPY config/rtp.conf /etc/asterisk/rtp.conf
@@ -36,11 +40,18 @@ COPY config/logger.conf /etc/asterisk/logger.conf
 COPY config/pjsip.conf.template /opt/anshin-phone/templates/pjsip.conf.template
 COPY config/extensions.conf.template /opt/anshin-phone/templates/extensions.conf.template
 COPY scripts/render_config.py /opt/anshin-phone/render_config.py
+COPY scripts/pbx_fax_worker.py /var/lib/asterisk/agi-bin/pbx_fax_worker.py
+COPY scripts/pbx_management.py /var/lib/asterisk/agi-bin/pbx_management.py
 COPY scripts/pbx_event_spool.py /var/lib/asterisk/agi-bin/pbx_event_spool.py
 COPY scripts/entrypoint.sh /usr/local/bin/anshin-phone-asterisk-entrypoint
 
-RUN chmod 0755 /usr/local/bin/anshin-phone-asterisk-entrypoint \
+RUN python3 -m py_compile /var/lib/asterisk/agi-bin/pbx_management.py \
+      /var/lib/asterisk/agi-bin/pbx_fax_worker.py \
+      /var/lib/asterisk/agi-bin/pbx_event_spool.py /opt/anshin-phone/render_config.py \
+    && chmod 0755 /usr/local/bin/anshin-phone-asterisk-entrypoint \
       /var/lib/asterisk/agi-bin/pbx_event_spool.py \
+      /var/lib/asterisk/agi-bin/pbx_management.py \
+      /var/lib/asterisk/agi-bin/pbx_fax_worker.py \
     && mkdir -p /var/spool/asterisk/fax /var/spool/asterisk/anshin-events \
       /var/log/asterisk /var/lib/asterisk \
     && groupadd --gid 10001 asterisk \

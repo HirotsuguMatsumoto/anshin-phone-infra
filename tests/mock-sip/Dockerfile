@@ -1,7 +1,9 @@
-FROM debian:12-slim
+FROM asterisk_runtime
 
 RUN apt-get update \
     && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sip-tester \
     && rm -rf /var/lib/apt/lists/*
 
 COPY scenarios /scenarios
+COPY fax /mock-fax
+ENTRYPOINT []

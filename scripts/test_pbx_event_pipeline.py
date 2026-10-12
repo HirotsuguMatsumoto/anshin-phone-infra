@@ -4,6 +4,8 @@ from __future__ import annotations
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
+import os
+from unittest.mock import patch
 from pathlib import Path
 import tempfile
 import threading
@@ -31,7 +33,8 @@ class EventHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         length = int(self.headers.get("Content-Length", "0"))
-        body = json.loads(self.rfile.read(length))
+        raw = self.rfile.read(length)
+        body = raw if self.headers.get("Content-Type") == "image/tiff" else json.loads(raw)
         self.__class__.received.append(
             {
                 "path": self.path,
@@ -42,7 +45,7 @@ class EventHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(b"{}")
+        self.wfile.write(b'{"id":"00000000-0000-0000-0000-000000000001"}' if self.path.startswith("/api/v1/fax-documents?") else b"{}")
 
     def log_message(self, format: str, *args: object) -> None:
         return
@@ -111,6 +114,32 @@ class PbxEventPipelineTest(unittest.TestCase):
         payload = event["payload"]
         self.assertIsInstance(payload, dict)
         self.assertEqual(payload["storage_reference"], "fax-spool://test-fax.tif")
+
+    def test_original_upload_precedes_history_and_cleanup_waits_for_consumer(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="anshin-phone-event-test-") as temp_dir:
+            root = Path(temp_dir)
+            originals = root / "originals"
+            originals.mkdir()
+            original = originals / "synthetic.tif"
+            original.write_bytes(b"synthetic-unit-pipeline-input")
+            event = spool.build_event(["fax", "anshin-phase1", "0300000002", "pbx-fax-upload-001", "inbound", "090****0000", "SUCCESS", "2026-08-21T00:00:00Z", str(original)])
+            path = spool.write_event(event, root)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), EventHandler)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                with patch.dict(os.environ, {"PBX_FAX_SPOOL_DIR": str(originals)}):
+                    result = forwarder.process_once(root, "test-internal-token", f"http://127.0.0.1:{server.server_address[1]}")
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join(timeout=3)
+            self.assertEqual(result, (1, 0, 0))
+            self.assertTrue(EventHandler.received[0]["path"].startswith("/api/v1/fax-documents?"))
+            self.assertEqual(EventHandler.received[1]["path"], "/api/v1/pbx-events/faxes")
+            self.assertEqual(EventHandler.received[1]["body"]["storage_reference"], "fax-document:00000000-0000-0000-0000-000000000001")
+            self.assertFalse(original.exists())
+            self.assertTrue((root / "sent" / path.name).exists())
 
     def test_malformed_event_is_moved_to_dead_letter(self) -> None:
         with tempfile.TemporaryDirectory(prefix="anshin-phone-event-test-") as temp_dir:

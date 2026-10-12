@@ -112,7 +112,11 @@ def main() -> None:
             ]
         )
 
+    fax_media_mode = os.getenv("FAX_MEDIA_MODE", "audio")
+    if fax_media_mode not in {"audio", "t38"}:
+        raise RuntimeError("FAX_MEDIA_MODE must be audio or t38")
     common = {
+        "FAX_OPTIONS": "F" if fax_media_mode == "audio" else "f",
         "CARRIER_HOST": carrier_host,
         "CARRIER_PORT": carrier_port,
         "CARRIER_QUALIFY_FREQUENCY": carrier_qualify_frequency,
@@ -131,6 +135,15 @@ def main() -> None:
     }
     render("pjsip.conf.template", "pjsip.conf", common)
     render("extensions.conf.template", "extensions.conf", common)
+    if os.getenv("PBX_EVENT_BACKEND_URL"):
+        # Managed runtime starts without any endpoint credentials. Only the
+        # actual backend configuration may enable an endpoint.
+        pjsip = CONFIG_DIR / "pjsip.conf"
+        content = pjsip.read_text().split("[" + smartphone_extension + "-auth]", 1)[0]
+        pjsip.write_text(content + "#include managed-endpoints.conf\n")
+        managed = CONFIG_DIR / "managed-endpoints.conf"
+        managed.write_text("")
+        managed.chmod(0o600)
 
 
 if __name__ == "__main__":

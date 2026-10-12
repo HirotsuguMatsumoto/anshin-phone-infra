@@ -47,4 +47,14 @@ sensitivity: internal
 
 送信APIはPDF本体・平文宛先番号をDBへ保存せず、保護ストレージ参照、保護された宛先参照、マスク済み表示値を受ける。同じidempotency keyは同じjobを返す。retryable failureは30秒から指数backoffし、最大5回で終端`failed`になる。permanent failureと`sent`は再実行しない。
 
-Phase 1のAPIはqueue状態機械までを対象とする。実際のT.38/G.711送信worker、PDFからTIFFへの変換、malware scan、ページ上限、暗号化原本保管、期限削除、受信通知はClocoのFAX方式確定後に接続する。モック成功を実FAX成功の証跡にしない。
+ローカル基礎経路は、管理画面のPDF受付、tenant AADを使用した暗号化原本と宛先、既存queue、GhostscriptによるTIFF変換及び実Asterisk SendFAX/ReceiveFAXへ接続する。10 MiB・20ページを上限とし、local fixtureの原本期限は24時間である。本番の保持期間をこの値で確定しない。保管用keyは外部secret fileで与え、backupと別に維持する。
+
+workerはPostgreSQLのrow lockとskip-lockedでjobを取得し、同じsending jobを取得しない。called channelが送信結果を一度だけ報告し、既存event spoolが再送する。受信の一時TIFFはBackendの保管及び履歴確定後だけ削除する。期限切れsendingはDELIVERY_UNCONFIRMEDを表示し、自動再送しない。後から届いた同じattemptの確定成功はsentへ整合させる。旧opaque storage referenceに対応する実adapterがなければINPUT_UNAVAILABLEとして停止し、送れる状態と表現しない。
+
+`FAX_MEDIA_MODE=audio`は実G.711、`t38`はT.38交渉とaudio fallbackを選ぶ。実Cloco・T.38の適合、malware scanの商用連携及び本番提供は未確認である。今回の隔離模擬キャリアによる実FAX通信を実回線成功へ読み替えない。
+
+## 再実行入口と追加boundary
+
+既存`test_phase1_sip_e2e.py`のSIP suiteへ実FAXを追加し、新frameworkを増やさない。SIPpだけではFAX modemの成功・原本保管を確認できないため、同じproduction Asterisk imageから模擬キャリアのFAX endpointを作る。これはcarrier側fixtureだけで、target側は実production route・driver・DB・secret mount・storage関数を保持する。ownerはPhone infra/backend、riskはhigh、scopeは実FAXから最終Backend/UIまで。dependencyは同じAsterisk build、Ghostscript及びBackend PDF/TIFF parser。costはfixture logのwall time・resource計測を正本とし、未計測の上限を推測しない。
+
+failure-local入口は`python3 scripts/test_phase1_sip_e2e.py --fixture fax`。一度成功後の最終経路は既存canonical processでSIP/FAX/UIを一回実行し、同じheavy testを先行・最終で重ねない。`--preflight`は非品質検査、`--fixture database`は実migration診断であり、SIP/FAX/UIの成功を代替しない。

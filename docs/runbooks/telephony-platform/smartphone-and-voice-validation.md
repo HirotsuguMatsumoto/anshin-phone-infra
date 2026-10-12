@@ -63,3 +63,10 @@ python3 scripts/evaluate_voice_quality.py /protected/path/measurement.json
 ```
 
 通話録音、実番号、SIP credential、相手先番号はリポジトリへ保存しない。
+
+
+## 基礎管理との連動
+
+端末設定のownerはBackendのactive endpointである。実Asteriskは内部APIから同じtenantの設定を読み、端末ごとのpasswordを適用する。番号停止・割当解除は新規発着信のroute照会で拒否する。端末停止・失効は設定から当該endpointを除き、旧credentialでのREGISTERを拒否する。既に成立した通話の終了を待つ。
+
+設定bundleの`expires_at`及び`consume_once`は取込・削除のclient側運用条件であり、PBXが同じSIP passwordを15分後に自動失効させる証明ではない。実際のcredential lifetimeは端末停止・失効までである。Backend APIは卸トランク資格を返さず、operatorは自分がownerの端末設定だけを取得できる。

@@ -41,6 +41,8 @@ printf '%s\n' "$required_files" | while IFS= read -r item; do
   }
 done
 
+python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/pbx_management.py"
+python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/pbx_fax_worker.py"
 python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/render_config.py"
 python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/pbx_event_spool.py"
 python3 -m py_compile "$repo_dir/deploy/pbx-event-forwarder/forwarder.py"

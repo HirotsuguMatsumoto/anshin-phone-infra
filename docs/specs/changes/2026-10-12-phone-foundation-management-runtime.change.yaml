@@ -1,0 +1,78 @@
+schema_version: 1
+change_id: anshin.phone.foundation-management-runtime.2026-10-12
+title: ローカルPhone管理と実PBX・FAX経路の接続
+owner: anshin-phone-infra
+status: review
+risk_level: high
+production_change: false
+spec_ids:
+  - anshin.corporate.anshin-phone.foundation-development-instructions
+  - anshin.phone.backend.foundation-runtime-contract
+  - anshin.phone.fax-and-number-provisioning
+  - anshin.phone.smartphone-and-voice-validation
+repositories: [anshin-phone-backend, anshin-phone-infra, anshin-frontend-monorepo]
+code_paths:
+  - anshin-phone-backend/app/api/management_routes.py
+  - anshin-phone-backend/app/api/routes.py
+  - anshin-phone-backend/app/core/provisioning.py
+  - anshin-phone-backend/app/core/fax_storage.py
+  - anshin-phone-backend/app/models/telephony.py
+  - anshin-phone-infra/deploy/asterisk
+  - anshin-phone-infra/deploy/pbx-event-forwarder
+  - anshin-phone-infra/compose.phase1.yaml
+  - anshin-frontend-monorepo/apps/anshin-phone/src
+contract_paths:
+  - anshin-phone-backend/app/api/schemas.py
+  - anshin-phone-backend/migrations/versions/20261012_0002_endpoint_owner.py
+  - anshin-phone-infra/docs/specs/changes/2026-10-12-phone-foundation-management-runtime.change.yaml
+generated_artifacts:
+  - anshin-frontend-monorepo/apps/anshin-phone/spec/openapi.json
+  - anshin-frontend-monorepo/apps/anshin-phone/src/api/generated.ts
+test_paths:
+  - anshin-phone-backend/tests/test_management_api.py
+  - anshin-phone-backend/tests/test_phase1_api.py
+  - anshin-phone-infra/scripts/test_phase1_sip_e2e.py
+  - anshin-phone-infra/scripts/test_phase1_render_config.py
+  - anshin-phone-infra/scripts/test_pbx_event_pipeline.py
+  - anshin-frontend-monorepo/apps/anshin-phone/tests/e2e/management.spec.ts
+invariants:
+  - 同じinstruction originがwrite planeと完了判定を所有する
+  - 実番号・実carrier・本番を接続しない
+  - 同じtenantのactive endpointと有効割当だけで新規通話を許可する
+  - 端末資格は端末ごとに異なり卸トランク資格を配布しない
+  - 原本と宛先を保護し通常管理一覧へ参照又は平文を返さない
+  - 結果のownerをcalled channel一つにして二重完了で成功を失わない
+  - 最後のconsumer完了までproducer runtimeと原本を維持する
+  - 助成対象4機能及び独自trust・release gateを追加しない
+acceptance_criteria:
+  - 番号・端末・割当・停止・解除・失効を実APIとPBXで確認する
+  - 実SIPとG.711 FAXを隔離fixtureで確認し最後のBackend/UI responseを確認する
+  - tenant・role・重複・再送・通信失敗・期限と再起動時の曖昧状態を区別する
+  - local DBへmigrationを適用する
+  - 同じfixed sourceで既存canonical checkと独立reviewを行う
+out_of_scope:
+  - production release、実回線、契約発注、Store公開
+  - 不在着信タスク、FAX担当業務状態、Core職員同期、連絡引継ぎ監査
+  - 実機・APNs・FCM資格を使用する外部試験
+concurrency:
+  strategy: isolated-worktree
+  branches:
+    anshin-phone-backend: codex/phone-foundation-20261012
+    anshin-phone-infra: codex/phone-foundation-20261012
+    anshin-frontend-monorepo: codex/phone-foundation-20261012
+rollout:
+  strategy: isolated-local-only
+  steps:
+    - 既存focused checkと最小real fixtureで入力・失敗箇所を確認する
+    - 既存SIP/FAX suiteの最後へUI consumerを接続する
+    - fixed sourceでcanonicalと独立reviewを行い同じDocker実画面をownerへ提示する
+rollback:
+  strategy: owned-local-runtime-cleanup
+  steps:
+    - 最後のconsumer終了後にtaskが所有するCompose projectだけを既存cleanup入口で削除する
+    - 共有main・既存差分・他案件のruntimeを変更しない
+monitoring:
+  owner: anshin-phone-infra
+  signals: [PBX適用とheartbeat, FAX queueとattempt結果, event滞留とdead-letter, 実fixtureのwall timeとresource]
+  observation_period: ローカル結合確認からowner最終確認まで
+approvals: []
