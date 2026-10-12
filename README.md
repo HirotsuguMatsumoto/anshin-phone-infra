@@ -32,6 +32,8 @@
 
 アンシンフォンのSIP/PBX基盤です。
 
+資料を探すときは、[Phone総合資料入口](https://github.com/HirotsuguMatsumoto/anshin-corporate-strategy/blob/main/documents/plans/anshin-phone/README.md)又は[通信基盤の資料一覧](docs/README.md)を開いてください。配置設計、事業・申請、Backend、管理画面及び過去の資料へ進めます。
+
 Phase 1の最初の合格点は、上位キャリアから払い出された実番号をこの基盤へ収容し、スマートフォンのSIPクライアントで外線の着信・通話・発信ができることです。FAX番号は同じ番号台帳へ収容し、専用DIDをFAX受信経路へ振り分けます。
 
 ## Phase 1の通信経路

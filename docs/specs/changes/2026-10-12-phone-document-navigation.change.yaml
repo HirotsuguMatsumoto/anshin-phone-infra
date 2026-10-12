@@ -1,0 +1,78 @@
+schema_version: 1
+change_id: anshin.phone.document-navigation.infra.2026-10-12
+title: Phone全資料の総合READMEと技術資料入口を同期
+owner: anshin-phone-infra
+status: review
+risk_level: high
+production_change: false
+spec_ids:
+- anshin.governance.document-management
+- anshin.corporate.anshin-phone.index
+- anshin.phone.documents-index
+repositories:
+- anshin-corporate-strategy
+- anshin-phone-infra
+code_paths: &id001
+- anshin-corporate-strategy/README.md
+- anshin-corporate-strategy/documents/plans/anshin-phone/README.md
+- anshin-corporate-strategy/documents/plans/anshin-phone/20261012-phone-document-navigation.change.yaml
+- anshin-phone-infra/README.md
+- anshin-phone-infra/docs/README.md
+- anshin-phone-infra/docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml
+contract_paths:
+- anshin-corporate-strategy/documents/plans/anshin-phone/20261012-phone-document-navigation.change.yaml
+- anshin-phone-infra/docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml
+generated_artifacts: []
+test_paths:
+- anshin-corporate-strategy/scripts/build_check.sh
+- anshin-phone-infra/scripts/build_check.sh
+invariants:
+- 既存本文・様式・原本を移動又は複製せず担当repositoryへリンクする
+- 総合READMEはreferenceの索引であり事業・法令・配置・認証・release方針のauthorityを新設しない
+- MS-A2-2の旧専用VM設計と現在mainの不一致、旧branch未統合及び実稼働未確認を区別する
+- resolver未解決のBackend・UI資料はGit管理中の参照として所在だけを示し正本へ昇格させない
+- private原本・credential・実番号・通話又はFAX実データを追加しない
+- 生成indexは手編集せずdocs-onlyの既存入口を一回だけ使う
+acceptance_criteria:
+- Phone事業・申請・運用・開発・様式・構成図・配置履歴を総合入口から直接参照できる
+- 各repositoryのREADMEから既存の総合入口又は技術入口へ進める
+- 対象Markdown・Word・PDF・構成図の既存Git pathと固定SHA履歴リンクが一致する
+- high変更のfixed SHAを同じinstruction originのread-only独立reviewで確認する
+- canonical hook不在の二repositoryで最終commit後cleanなfixed SHAのdocuments-onlyを一回ずつ実施する
+out_of_scope:
+- 既存文書のauthority変更・行政状態・契約状態・実装完了状態の新認定
+- runtime・API・DB・UI・release adapter・品質selectorの変更
+- production接続・VM構築・Core/Auth再配置・cloud課金・提出又は外部送信
+concurrency:
+  strategy: isolated-worktree
+  branches:
+    anshin-corporate-strategy: codex/phone-foundation-20261012
+    anshin-phone-infra: codex/phone-foundation-20261012
+  base_commits:
+    anshin-corporate-strategy: 1727586931af8ef6ebef676a0ebb30588045d128
+    anshin-phone-infra: 8968c411fbecfa5aaf4caacda246aa37fdeb1c6f
+  owned_paths: *id001
+  pre_edit_blob_ids:
+    anshin-corporate-strategy:README.md: a1ee81964379d80e339cf4423a41b9bee4c49c1c
+    anshin-corporate-strategy:documents/plans/anshin-phone/README.md: c8c9e601e8aa23c5c74bf5fe013797a487f0e51b
+    anshin-corporate-strategy:documents/plans/anshin-phone/20261012-phone-document-navigation.change.yaml: null
+    anshin-phone-infra:README.md: a0961e483577c1c6bfb02bd7b1b8841f3a1bd427
+    anshin-phone-infra:docs/README.md: e6151c33127add34bbbc0f5aa68b435a1fafc115
+    anshin-phone-infra:docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml: null
+rollout:
+  strategy: documents-only-main-integration
+  steps:
+  - 最新mainをpull --ff-onlyで取得しworktreeをrebaseして既存差分とsourceを確認
+  - 対象READMEとリンクだけを同期してcommit
+  - clean fixed SHAのdocuments-onlyと必要な独立reviewを実施
+  - 最新origin/mainへのrebase後に同一bound inputを確認しguarded non-force pushでmainへ統合
+rollback:
+  strategy: forward-document-correction
+  steps:
+  - 誤ったリンク・索引の該当箇所だけを訂正し既存本文と原本を保持
+monitoring:
+  owner: anshin-corporate-strategy
+  signals:
+  - Phone資料の追加・移動・版変更時にリンク先と位置付けを同期
+  observation_period: 次のPhone資料更新時
+approvals: []

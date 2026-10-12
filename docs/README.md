@@ -10,14 +10,14 @@ owner: anshin-phone-infra
 authority: reference
 status: inventory
 risk_level: high
-source_doc_ids: []
+source_doc_ids: [anshin.phone.cloco-sip-trunk-interface]
 consumers:
   - anshin-phone-infra
   - anshin-phone-backend
 code_paths: []
-contract_paths: []
-test_paths: []
-last_reviewed: "2026-09-30"
+contract_paths: [docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml]
+test_paths: [scripts/build_check.sh]
+last_reviewed: "2026-10-12"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -37,6 +37,14 @@ sensitivity: internal
 
 このルートは、Anshin Phone の通信・infra運用文書を管理する。登録時点では正本を宣言せず、実装、契約、法令・キャリア条件との照合が完了した文書だけを別途canonical候補として審査する。
 
+## 資料を探す入口
+
+- [Phone総合資料入口](https://github.com/HirotsuguMatsumoto/anshin-corporate-strategy/blob/main/documents/plans/anshin-phone/README.md): 事業・申請・MS-A2-2配置設計の履歴・技術・様式・受領原本の参照先。
+- [Backend README](https://github.com/HirotsuguMatsumoto/anshin-phone-backend/blob/main/README.md) / [Backend資料入口](https://github.com/HirotsuguMatsumoto/anshin-phone-backend/blob/main/documents/README.md): 管理API、DB、認証認可、監査及び保護FAX原本。
+- [管理画面README](https://github.com/HirotsuguMatsumoto/anshin-frontend-monorepo/blob/main/apps/anshin-phone/README.md) / [基礎管理画面の設計](https://github.com/HirotsuguMatsumoto/anshin-frontend-monorepo/blob/main/apps/anshin-phone/documents/plans/foundation-ui-plan.md): 画面、操作導線及び検証条件。
+
+Backend・管理画面のリンクはrepository参照であり、既存resolverで正本未解決の資料を正本へ昇格させない。以前のMS-A2-2専用LXD VM設計と現在mainの別物理サーバ方針は、総合資料入口の「配置設計・mainとの差異」で照合する。文書・branchの存在を本番配置済みと扱わない。
+
 ## 現在の文書
 
 - [Cloco SIPトランク接続・責任分界の確認仕様](specs/telephony-platform/cloco-sip-trunk-interface.md): 2026年9月30日に確認したCloco返信・添付図の確定範囲、当社予定構成への対応及び未受領の詳細仕様。
@@ -48,3 +56,8 @@ sensitivity: internal
 - [VPS配備・キャリア接続情報受領手順](runbooks/telephony-platform/vps-deployment-and-carrier-intake.md): 配備gate、firewall、backup/rollback、Cloco等の接続情報検証。
 - [VPS Phase 1配置前監査 2026-08-21](evidence/telephony-platform/vps_phase1_readiness_2026-08-21.md): 初回の読み取り専用監査結果。
 - [VPS Phase 1配置前監査 2026-08-22](evidence/telephony-platform/vps_phase1_readiness_2026-08-22.md): 再監査結果と現在の配置停止条件。
+
+## 受領構成図・変更履歴
+
+- [受領したSIPトランク設備構成図](references/telephony-platform/SIPトランク設備構成図.pdf): 受領PDF。物理配置先・契約許諾・本番稼働の承認書とは分ける。
+- [通信基盤の変更契約一覧](https://github.com/HirotsuguMatsumoto/anshin-phone-infra/tree/main/docs/specs/changes): 日付付き変更契約は履歴参照。現行Markdownの代替正本にしない。
