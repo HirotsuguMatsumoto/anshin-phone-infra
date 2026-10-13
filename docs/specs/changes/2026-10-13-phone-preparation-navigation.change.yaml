@@ -1,0 +1,81 @@
+schema_version: 1
+change_id: anshin.phone.preparation-navigation.anshin-phone-infra.2026-10-13
+title: Phone本番準備・SDK検証残件への資料参照を整備
+owner: anshin-phone-infra
+status: draft
+risk_level: high
+production_change: false
+spec_ids:
+- anshin.corporate.anshin-phone.foundation-development-instructions
+- anshin.governance.document-management
+- anshin.infrastructure.system-architecture
+- anshin.release.contract
+- anshin.release.impact-gate
+repositories:
+- anshin-phone-infra
+- anshin-corporate-strategy
+code_paths: &id001
+- anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md
+- anshin-phone-infra/docs/README.md
+- anshin-phone-infra/docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml
+- anshin-corporate-strategy/documents/plans/anshin-phone/README.md
+- anshin-corporate-strategy/documents/plans/anshin-phone/20261013-phone-preparation-navigation.change.yaml
+contract_paths:
+- anshin-phone-infra/docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml
+- anshin-corporate-strategy/documents/plans/anshin-phone/20261013-phone-preparation-navigation.change.yaml
+test_paths:
+- anshin-phone-infra/scripts/build_check.sh
+- anshin-corporate-strategy/scripts/build_check.sh
+generated_artifacts: []
+invariants:
+- source統合・模擬通信・実機観測・容量受入・本番配備・本人UI確認を区別する
+- planはreference/draftとしcanonical・費用・SDK・UI/UX・商用承認へ昇格しない
+- 秘密・原本・raw私有証跡・一時pathをGitへコピーしない
+- 既存release/gateway/backup ownerとselectorを参照し新gate・authority・receiptを追加しない
+- Core/Auth変更・VM作成・新費用・実回線・助成対象四機能を実施しない
+acceptance_criteria:
+- 総合入口とInfra資料入口から実機観測の限界・本番準備・SDK未検証を参照できる
+- SDK公式sourceと未決定のversion/license/費用を区別する
+- 文書だけのcanonical検査を最終clean commit後に一回行い高risk独立reviewを行う
+out_of_scope:
+- runtimeコード変更・配備・route変更・VM作成・資源縮小
+- 契約・購入・新resource・store公開・実回線・顧客通信・助成四機能
+concurrency:
+  strategy: isolated-worktree
+  branches:
+    anshin-phone-infra: codex/phone-foundation-20261012
+    anshin-corporate-strategy: codex/phone-foundation-20261012
+  base_commits:
+    anshin-phone-infra: b95cbab4881f8851e5fbf61c4d1580a38dea459b
+    anshin-corporate-strategy: 227efc4afeb39b9f5fa8e629217dad0c96dfa30e
+  owned_paths: *id001
+  pre_edit_blob_ids:
+    anshin-phone-infra:docs/plans/telephony-platform/production-and-softphone-preparation.md: null
+    anshin-phone-infra:docs/README.md: 140b4942961e2ea5f19b6e5321ba260e3b9669a8
+    anshin-phone-infra:docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml: null
+    anshin-corporate-strategy:documents/plans/anshin-phone/README.md: ebfb0e8504ee3279c905bbba81e303961a0144d9
+    anshin-corporate-strategy:documents/plans/anshin-phone/20261013-phone-preparation-navigation.change.yaml: null
+  integration_order:
+  - anshin-phone-infra
+  - anshin-corporate-strategy
+rollout:
+  strategy: documents-only-reference
+  steps:
+  - 最新mainへrebaseして確認済み範囲と残件を資料化
+  - 既存文書検査・独立review後に依存順でmainへ統合
+  triggers:
+  - Phone本番準備と全資料整理の継続指示
+rollback:
+  strategy: forward-source-correction
+  steps:
+  - 誤った事実又は参照だけを訂正する
+  triggers:
+  - sourceとの不整合又は未確認の承認/配備への読み替え
+monitoring:
+  owner: anshin-phone-infra
+  observation_period: 今回の資料整備
+  signals:
+  - unique document resolution
+  - 資料入口linkと実sourceの一致
+  - 確認済みと未確認の区別
+approvals: []

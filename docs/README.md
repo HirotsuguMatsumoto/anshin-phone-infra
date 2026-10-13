@@ -15,7 +15,7 @@ consumers:
   - anshin-phone-infra
   - anshin-phone-backend
 code_paths: []
-contract_paths: [docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-12-phone-document-navigation.change.yaml, docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml]
 test_paths: [scripts/build_check.sh]
 last_reviewed: "2026-10-12"
 review_interval_days: 30
@@ -46,6 +46,8 @@ sensitivity: internal
 Backend三文書・管理画面二文書は既存resolverで一意に解決できる登録へ修正した。reference／derivedのauthorityは変更しない。2026-10-12のowner継続指示により予定配置をMS-A2-2内のPhone専用LXD VMへ同期し、Core/AuthのVM・DB・volume・credentialと分離する。本番未配備、旧branch全体の未統合、実機資源・配備経路の確認中を区別する。
 
 ## 現在の文書
+
+- [Phone 本番準備・ソフトフォン技術検証計画](plans/telephony-platform/production-and-softphone-preparation.md): 実機観測の限界、本番adapter・保存/復旧・公開経路の残件、SDK候補と未検証範囲。reference / draftであり、費用・UI/UX・商用提供の承認又は追加release gateではない。
 
 - [Cloco SIPトランク接続・責任分界の確認仕様](specs/telephony-platform/cloco-sip-trunk-interface.md): 2026年9月30日に確認したCloco返信・添付図の確定範囲、当社予定構成への対応及び未受領の詳細仕様。
 
