@@ -12,6 +12,11 @@
 | YAML | YAML Ain't Markup Language | indentとkey-valueで構造化データを表すテキスト形式 |
 | Git | Git | ファイルの変更履歴とブランチを管理する分散型バージョン管理システム |
 
+## 実装規程を最初に読む
+
+- 正本: [アンシン AI駆動開発規程](../anshin/documents/specs/ai-agent-policy/ai_driven_development_policy.md)（`anshin.governance.ai-driven-development`）。`build_check.sh`は常に最適化・重複禁止・絶対的にシンプル・無駄なガード禁止（同正本§3.0.3）。UIのAI検証・本人最終確認は§3.4.1、検査選択は`anshin.governance.path-aware-local-quality-gate`。
+- 相対linkは通常workspace配置を基準とする。隔離worktreeではGit common directoryが属するprimary cloneと既存workspace resolverからAnshin正本checkoutを特定し、Anshin正本checkoutを実行directoryとして`python3 scripts/resolve_document_reference.py --require-unique <doc_id>`で解決する。共通規程を本書へ複製・上書きしない。
+
 <!-- anshin-ai-driven-development-policy:v1 -->
 
 1. AI駆動開発はcanonical doc_id `anshin.governance.ai-driven-development`に従う。現行revisionは`AI-DD-20260920.1`である。
@@ -37,7 +42,7 @@
 
 <!-- /anshin-ai-driven-development-policy:v1 -->
 
-このrepositoryは、Anshin PhoneのSIP / PBX / Phase 1通信基盤を管理する。上位の`${WORKSPACE_ROOT}/AGENTS.md`と、このファイルを併用する。 `WORKSPACE_ROOT`は各repositoryの親directoryを指し、この上位fileとrepository内の`AGENTS.md`を区別する。
+このrepositoryは、Anshin PhoneのSIP / PBX / Phase 1通信基盤を管理する。上位の`${WORKSPACE_ROOT}/AGENTS.md`と、このファイルを併用する。 `WORKSPACE_ROOT`は既存workspace resolverとGit common directoryが属するprimary cloneから解決する共通repository配置rootであり、nested repo又は隔離worktreeの親directoryから推測しない。
 
 - `.env*`、secret、実電話番号、SIP credential、通話・FAX原本を読み書き・追跡しない。
 - キャリア契約、番号利用、緊急通報、電気通信事業、第三者提供の可否を実装だけから確定しない。
@@ -47,10 +52,6 @@
 - commit、push、本番接続、実番号試験はユーザーの明示指示なしに行わない。
 
 <!-- anshin-document-governance:v2 -->
-
-## Checker配布の限定検査
-
-文書checkerの配布と定型adapterだけの変更は、`anshin.governance.document-management`の10.2に従い、`bash scripts/build_check.sh --document-distribution`をcanonical検査とする。それ以外の変更では本書の通常fast/full条件を維持する。専用profileが不適格を返した場合は検査を省略せず、通常の変更範囲検査へ戻す。
 
 ## Checker配布の限定検査
 
