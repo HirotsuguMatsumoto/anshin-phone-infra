@@ -1696,6 +1696,26 @@ def common_policy_agents_update(
             "repository固有規程が本書より強い場合はそちらを守る。矛盾する場合はcanonical policyを確認する。",
             "repository固有規程で共通のリモートmain優先規則を変更したり、統合記録、deployment plan又はacceptance記録を追加停止条件にしてはならない。",
         ),
+        (
+            'owner承認を求めるのはUI/UX詳細設計だけとする。',
+            '新規案件の本人開始確認は共通正本§3.1に従い、確認済みscopeのUI/UX詳細設計以外へ追加承認を要求しない。',
+        ),
+        (
+            '明示依頼scope内で判断できる通常実装を追加承認待ちにせず、',
+            '共通正本§3.1で開始確認済みのscope内で判断できる通常実装へ追加承認を要求せず、',
+        ),
+        (
+            '追加費用のない非UI/UX実装に独自の事前承認を加えず、',
+            '共通正本§3.1の本人開始確認後は、追加費用のない非UI/UX実装に独自の追加承認を加えず、',
+        ),
+        (
+            'UI/UX詳細設計以外で実装承認を求めてはいけない。',
+            '共通正本§3.1の本人開始確認後は、UI/UX詳細設計以外で追加の実装承認を求めてはいけない。',
+        ),
+        (
+            '追加費用のない通常実装は依頼scope内で正本・change contract・必要なreviewとtestに従って進める。',
+            '共通正本§3.1の本人開始確認後、追加費用のない通常実装は確認済みscope内で正本・change contract・必要なreviewとtestに従って進める。',
+        ),
     ):
         old_outside = old_outside.replace(old, new)
     return old_outside == new_outside
