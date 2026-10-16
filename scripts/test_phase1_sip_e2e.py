@@ -927,6 +927,7 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
     import secrets
     import socket
     import base64
+    from datetime import datetime, timedelta, timezone
     from production_runtime import Runtime, RuntimeFailure, run_owned_process
 
     if not image or not backend_sha:
@@ -995,6 +996,10 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
                 '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--user', '0:0',
                 '--label', 'com.docker.compose.project=' + project,
                 '--label', 'com.docker.compose.service=volume-inspection',
+                '--label', 'care.anshin.local.ephemeral=true',
+                '--label', 'care.anshin.local.expires_at=' + (datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),
+                '--label', 'care.anshin.local.owner=MAC',
+                '--label', 'care.anshin.local.task_id=phone-production-20261016',
                 '--mount', 'type=bind,src=' + mountpoint + ',dst=/inspect,readonly',
                 '--entrypoint', 'python', image, '-c',
                 "import os,json; s=os.lstat('/inspect'); print(json.dumps({'mode':s.st_mode,'device':s.st_dev,'inode':s.st_ino}))"], timeout=30)
