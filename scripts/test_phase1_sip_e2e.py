@@ -937,12 +937,41 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
         transport['DOCKER_HOST'] = run(['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], env=env).stdout.strip()
     with tempfile.TemporaryDirectory(prefix='phone-production-fixture-') as directory:
         temporary = Path(directory)
+        # Reuse the owner-issued publisher credential without touching the
+        # user's Docker config or Keychain. Values remain in stdin/memory and
+        # the private temporary credential file until the last consumer exits.
+        registry = temporary / 'docker'
+        registry.mkdir(mode=0o700)
+        publisher = subprocess.run(['gh', 'api', 'user', '--jq', '.login'], env=env,
+                                   capture_output=True, text=True)
+        credential = subprocess.run(['gh', 'auth', 'token'], env=env, capture_output=True, text=True)
+        if publisher.returncode or credential.returncode or not credential.stdout.strip():
+            raise RuntimeError('process-start=0: existing GitHub publisher credential unavailable')
+        login = subprocess.run(['docker', '--config', str(registry), 'login', 'ghcr.io',
+                                '--username', publisher.stdout.strip(), '--password-stdin'],
+                               env=env, input=credential.stdout.strip(), capture_output=True, text=True)
+        del credential
+        if login.returncode:
+            raise RuntimeError('process-start=0: private fixture registry authentication failed')
+        plugin = run(['docker', 'info', '--format',
+            '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}'], env=env).stdout.strip()
+        if plugin:
+            config_path = registry / 'config.json'
+            config = json.loads(config_path.read_text())
+            config['cliPluginsExtraDirs'] = [str(Path(plugin).parent)]
+            config_path.write_text(json.dumps(config))
+        for path in registry.iterdir():
+            if path.is_file():
+                path.chmod(0o600)
+        transport['DOCKER_CONFIG'] = str(registry)
         secret_root = temporary / 'secrets'
         secret_root.mkdir(mode=0o700)
         for name in ('postgres_password', 'internal_api_token', 'smartphone_sip_password', 'fax_storage_key'):
             path = secret_root / name
             path.write_text(secrets.token_hex(32))
-            path.chmod(0o600)
+            # Match the existing fixture: only synthetic values, within its
+            # owner-only directory, readable by the image's nonroot UID.
+            path.chmod(0o444)
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]

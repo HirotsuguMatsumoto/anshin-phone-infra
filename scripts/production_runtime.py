@@ -72,7 +72,19 @@ class Runtime:
         except subprocess.TimeoutExpired:
             raise RuntimeFailure('phone_command_timeout') from None
         if result.returncode and not allow_failure:
-            raise RuntimeFailure('phone_command_failed')
+            diagnostic = 'consumer_failure'
+            lower = result.stderr.lower()
+            for kind, patterns in (
+                ('access_denied', ('unauthorized', 'authentication required', 'permission denied', 'denied:')),
+                ('capacity', ('no space left', 'out of memory')),
+                ('platform', ('no matching manifest', 'exec format error')),
+                ('missing_resource', ('not found', 'no such file')),
+                ('daemon_unavailable', ('cannot connect to the docker daemon',)),
+            ):
+                if any(pattern in lower for pattern in patterns):
+                    diagnostic = kind
+                    break
+            raise RuntimeFailure(f'phone_command_failed_{diagnostic}_exit_{result.returncode}')
         return result
 
     def environment(self, profile=None):
