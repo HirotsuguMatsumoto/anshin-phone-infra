@@ -926,7 +926,8 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
     """
     import secrets
     import socket
-    from production_runtime import Runtime
+    import base64
+    from production_runtime import Runtime, run_owned_process
 
     if not image or not backend_sha:
         raise RuntimeError('process-start=0: production image and source SHA are required')
@@ -942,27 +943,31 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
         # the private temporary credential file until the last consumer exits.
         registry = temporary / 'docker'
         registry.mkdir(mode=0o700)
-        publisher = subprocess.run(['gh', 'api', 'user', '--jq', '.login'], env=env,
-                                   capture_output=True, text=True)
-        credential = subprocess.run(['gh', 'auth', 'token'], env=env, capture_output=True, text=True)
+        publisher = run_owned_process(['gh', 'api', 'user', '--jq', '.login'], env=env,
+                                      stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+        credential = run_owned_process(['gh', 'auth', 'token'], env=env,
+                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=15)
         if publisher.returncode or credential.returncode or not credential.stdout.strip():
             raise RuntimeError('process-start=0: existing GitHub publisher credential unavailable')
-        login = subprocess.run(['docker', '--config', str(registry), 'login', 'ghcr.io',
-                                '--username', publisher.stdout.strip(), '--password-stdin'],
-                               env=env, input=credential.stdout.strip(), capture_output=True, text=True)
+        auth = base64.b64encode((publisher.stdout.strip() + ':' + credential.stdout.strip()).encode()).decode()
         del credential
-        if login.returncode:
-            raise RuntimeError('process-start=0: private fixture registry authentication failed')
-        plugin = run(['docker', 'info', '--format',
-            '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}'], env=env).stdout.strip()
+        # Do not call docker login: native helper auto-discovery can write to
+        # Keychain even when --config points to an otherwise empty directory.
+        config = {'auths': {'ghcr.io': {'auth': auth}}}
+        del auth
+        plugin_result = run_owned_process(['docker', 'info', '--format',
+            '{{range .ClientInfo.Plugins}}{{if eq .Name "compose"}}{{.Path}}{{end}}{{end}}'], env=env,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=30)
+        if plugin_result.returncode:
+            raise RuntimeError('process-start=0: existing Docker plugin unavailable')
+        plugin = plugin_result.stdout.strip()
         if plugin:
-            config_path = registry / 'config.json'
-            config = json.loads(config_path.read_text())
             config['cliPluginsExtraDirs'] = [str(Path(plugin).parent)]
-            config_path.write_text(json.dumps(config))
-        for path in registry.iterdir():
-            if path.is_file():
-                path.chmod(0o600)
+        config_path = registry / 'config.json'
+        descriptor = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, 'w') as output:
+            json.dump(config, output)
+        del config
         transport['DOCKER_CONFIG'] = str(registry)
         secret_root = temporary / 'secrets'
         secret_root.mkdir(mode=0o700)

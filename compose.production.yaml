@@ -13,6 +13,7 @@ services:
       service: backend
     build: !reset null
     image: ${ANSHIN_PHONE_BACKEND_IMAGE:?set the fixed digest-pinned backend image}
+    platform: linux/amd64
     environment:
       ANSHIN_PHONE_ENVIRONMENT: production
       ANSHIN_PHONE_TELEPHONY_ENABLED: "false"
@@ -25,6 +26,7 @@ services:
       service: backend-migrate
     build: !reset null
     image: ${ANSHIN_PHONE_BACKEND_IMAGE:?set the fixed digest-pinned backend image}
+    platform: linux/amd64
     environment:
       ANSHIN_PHONE_ENVIRONMENT: production
       ANSHIN_PHONE_TELEPHONY_ENABLED: "false"

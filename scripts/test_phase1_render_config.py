@@ -48,6 +48,7 @@ class ManagementComposeTest(unittest.TestCase):
         for name in ("backend", "backend-migrate"):
             service = model["services"][name]
             self.assertNotIn("build", service)
+            self.assertEqual(service['platform'], 'linux/amd64')
             self.assertIn("@sha256:", service["image"])
             self.assertEqual(service["environment"]["ANSHIN_PHONE_TELEPHONY_ENABLED"], "false")
             self.assertEqual(service["environment"]["ANSHIN_PHONE_FAX_RETENTION_POLICY"], "cloco_previous_month")
