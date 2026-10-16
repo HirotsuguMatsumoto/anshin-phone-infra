@@ -116,6 +116,13 @@ MS-A2-1の初回読取は開発VMのDocker subnetと社内LANの重なりによ�
 
 Macのcurrent integrated sourceの既存host observerからCore/Worker両hostを読取できた。今回のMac接続にGUI VMのWorker経路修復は不要であり実行していない。Phone project/VMはmissingで、Core/Authの設定18/7 GiBを変更していない。物理memory約29.08 GiB、Core側MemAvailable約5.32 GiB、Worker側約11.42 GiBは今回の瞬間観測であり、Phone容量受入ではない。旧5 GiB候補を適用しない。
 
-Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所有し、既存Phase 1と`compose.production.yaml`がextendsする。production管理定義は実carrier入力・SIP/RTP公開・source buildを含まず、Backend/migrationの同じfixed digest image、明示した本番FAX保持秒数及び既存secret-file入力を要求する。BackendだけにAuth/JWKS取得用egressを接続し、DBはinternalのまま維持する。
+Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所有し、既存Phase 1と`compose.production.yaml`がextendsする。production管理定義は実carrier入力・SIP/RTP公開・source buildを含まず、Backend/migrationの同じfixed digest image、owner指定の本番FAX月単位policy及び既存secret-file入力を要求する。BackendだけにAuth/JWKS取得用egressを接続し、DBはinternalのまま維持する。
 
-管理定義は`ANSHIN_PHONE_TELEPHONY_ENABLED=false`であり、既存Backendの管理・履歴は使えるが、端末資格・PBX・FAX送信/dispatchは503となる。既存のqueued/sending行を変更しない。FAX原本保持の承認値をbackup標準31日から推測せず、実機資源、API ingress、Phone hosting binding、独立key復旧・定期backup/隔離restoreが未受入のままadapterをsupportedへ変更しない。この定義のrender成功又はsource統合を本番反映・本番Auth・実回線の成功と扱わない。
+管理定義は`ANSHIN_PHONE_TELEPHONY_ENABLED=false`であり、既存Backendの管理・履歴は使えるが、端末資格・PBX・FAX送信/dispatchは503となる。既存のqueued/sending行を変更しない。実機資源、API ingress、Phone hosting binding、独立key復旧・定期backup/隔離restoreが未受入のままadapterをsupportedへ変更しない。この定義のrender成功又はsource統合を本番反映・本番Auth・実回線の成功と扱わない。
+
+
+## FAX保護原本の月単位保持（2026-10-16 owner回答）
+
+ownerは「Clocoと同じ月単位（毎月5日に前月分を削除）」を指定した。production ComposeはBackendとmigrationへ`ANSHIN_PHONE_FAX_RETENTION_POLICY=cloco_previous_month`を渡し、Backendに継承されたlocalの秒数defaultを空へ上書きする。保存受付月の翌月5日00:00 JSTを期限とし、原本だけを対象とする。既存S3標準31日・通信履歴・監査の保持は変更しない。境界、replay、catch-up、削除範囲のsourceとconsumer契約は`anshin.phone.backend.foundation-runtime-contract`を正本とする。
+
+既存production cron ownerから同じfixed imageのBackend内`python -m app.core.fax_retention`を呼ぶ。VM・adapter・schedulerは未配備であり、sourceやCompose検証を実発火成功と扱わない。PBX一時TIFFとdead-letterのcleanupはtelephony有効化前の別受入事項として残す。

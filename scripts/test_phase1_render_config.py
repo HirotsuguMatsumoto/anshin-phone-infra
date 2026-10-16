@@ -33,7 +33,6 @@ class ManagementComposeTest(unittest.TestCase):
             env.update({
                 "ANSHIN_PHONE_SECRET_DIR": directory,
                 "ANSHIN_PHONE_BACKEND_IMAGE": "ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:" + "a" * 64,
-                "ANSHIN_PHONE_FAX_RETENTION_SECONDS": "604800",
             })
             if omit:
                 env.pop(omit)
@@ -50,7 +49,8 @@ class ManagementComposeTest(unittest.TestCase):
             self.assertNotIn("build", service)
             self.assertIn("@sha256:", service["image"])
             self.assertEqual(service["environment"]["ANSHIN_PHONE_TELEPHONY_ENABLED"], "false")
-            self.assertEqual(service["environment"]["ANSHIN_PHONE_FAX_RETENTION_SECONDS"], "604800")
+            self.assertEqual(service["environment"]["ANSHIN_PHONE_FAX_RETENTION_POLICY"], "cloco_previous_month")
+            self.assertFalse(service["environment"].get("ANSHIN_PHONE_FAX_RETENTION_SECONDS"))
         self.assertEqual(model["services"]["backend"]["image"], model["services"]["backend-migrate"]["image"])
         self.assertIn("phone-auth-egress", model["services"]["backend"]["networks"])
         self.assertEqual(set(model["services"]["postgres"]["networks"]), {"phone-data"})
@@ -60,11 +60,33 @@ class ManagementComposeTest(unittest.TestCase):
         self.assertTrue(all(port["host_ip"] == "127.0.0.1" for port in ports))
 
     def test_production_never_falls_back_to_local_retention_or_source_build(self):
-        for required in ("ANSHIN_PHONE_FAX_RETENTION_SECONDS", "ANSHIN_PHONE_BACKEND_IMAGE"):
+        for required in ("ANSHIN_PHONE_BACKEND_IMAGE",):
             with self.subTest(required=required):
                 result, model = self.render_production(omit=required)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIsNone(model)
+
+    def test_production_retention_input_is_accepted_by_backend_settings(self):
+        import json
+        import subprocess
+        import sys
+        from resolve_phone_backend import resolve_backend
+
+        result, model = self.render_production()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        backend = resolve_backend(REPOSITORY_DIR, os.getenv("ANSHIN_PHONE_BACKEND_DIR"))
+        for name in ("backend", "backend-migrate"):
+            with self.subTest(service=name):
+                env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+                env.update(model["services"][name]["environment"])
+                # Only credentials are synthetic; all policy/mode inputs come from Compose.
+                env.update({"ANSHIN_PHONE_DB_PASSWORD": "compose-test-only", "ANSHIN_PHONE_INTERNAL_TOKEN": "compose-test-only"})
+                result = subprocess.run([sys.executable, "-c",
+                    "import json,runpy,sys; s=runpy.run_path(sys.argv[1])['get_settings'](); "
+                    "print(json.dumps([s.environment,s.fax_retention_policy,s.fax_retention_seconds,s.telephony_enabled]))",
+                    str(backend / "app/core/config.py")], env=env, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), ["production", "cloco_previous_month", None, False])
 
 
 class Phase1RenderConfigTest(unittest.TestCase):

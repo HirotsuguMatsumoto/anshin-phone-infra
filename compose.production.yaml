@@ -16,7 +16,8 @@ services:
       ANSHIN_PHONE_ENVIRONMENT: production
       ANSHIN_PHONE_TELEPHONY_ENABLED: "false"
       ANSHIN_PHONE_SIP_SERVER: ""
-      ANSHIN_PHONE_FAX_RETENTION_SECONDS: ${ANSHIN_PHONE_FAX_RETENTION_SECONDS:?set the approved production FAX retention in seconds}
+      ANSHIN_PHONE_FAX_RETENTION_POLICY: cloco_previous_month
+      ANSHIN_PHONE_FAX_RETENTION_SECONDS: ""
   backend-migrate:
     extends:
       file: compose.management.yaml
@@ -26,7 +27,7 @@ services:
     environment:
       ANSHIN_PHONE_ENVIRONMENT: production
       ANSHIN_PHONE_TELEPHONY_ENABLED: "false"
-      ANSHIN_PHONE_FAX_RETENTION_SECONDS: ${ANSHIN_PHONE_FAX_RETENTION_SECONDS:?set the approved production FAX retention in seconds}
+      ANSHIN_PHONE_FAX_RETENTION_POLICY: cloco_previous_month
 
 secrets:
   postgres_password:

@@ -1,0 +1,64 @@
+schema_version: 1
+change_id: anshin-phone-infra.fax-calendar-retention.2026-10-16
+title: FAX保護原本を日本時間の翌月5日に期限切れとする
+owner: anshin-phone-infra
+status: review
+risk_level: high
+production_change: false
+spec_ids:
+  - anshin.governance.ai-driven-development
+  - anshin.phone.backend.foundation-runtime-contract
+  - anshin.phone.production-and-softphone-preparation
+repositories: [anshin-phone-backend, anshin-phone-infra]
+code_paths:
+  - anshin-phone-backend/app/core/config.py
+  - anshin-phone-backend/app/core/fax_storage.py
+  - anshin-phone-backend/app/core/fax_retention.py
+  - anshin-phone-infra/compose.production.yaml
+contract_paths:
+  - anshin-phone-infra/docs/specs/changes/2026-10-16-fax-calendar-retention.change.yaml
+generated_artifacts: []
+test_paths:
+  - anshin-phone-backend/tests/test_management_api.py
+  - anshin-phone-backend/tests/test_phase1_api.py
+  - anshin-phone-infra/scripts/test_phase1_render_config.py
+invariants:
+  - owner指定のCloco同様の毎月5日前月分削除をBackend保護原本だけへ適用する
+  - JST保存受付月から固定したexpires_atを再送・設定変更で延長しない
+  - FAX履歴・監査・job行と既存S3標準31日を変更しない
+  - local fixtureの秒数設定は本番へ流用しない
+  - 通信停止中も期限切れ原本の削除は実行できる
+acceptance_criteria:
+  - 同じ生成時刻から翌月5日00時JSTをUTC保存する
+  - 年越し・閏年・JST月境界・期限直前直後を既存suiteで確認する
+  - 実暗号化原本の削除・410応答・履歴保持・tenant境界・複数batchのcatch-upを確認する
+  - production Composeの実入力をBackend Settingsで受理する
+  - 既存workerとtrusted local maintenance commandが同じ削除関数を使う
+out_of_scope:
+  - PBX一時TIFFとdead-letterの本番保持受入・実通信有効化
+  - 既存expires_atの一括再計算と自動復元
+  - S3 lifecycleとbackup保持の変更
+  - 未作成VMへの配備と未存在schedulerの稼働成功判定
+rollout:
+  strategy: existing-production-owner
+  steps:
+    - 別sessionの設計・脅威review後にBackendとComposeを同期する
+    - canonical checkとfixed SHA独立review後にmainへ統合する
+    - production adapterの既存cron ownerへ接続し実発火を別途確認する
+  triggers:
+    - ownerによるClocoと同じ月単位の保持指定
+rollback:
+  strategy: scoped-revert
+  steps:
+    - sourceとconsumerを同時に戻す
+    - 削除済み原本はcode rollbackで戻らずbackupと独立keyによる隔離restoreを要する
+    - restore時も元の期限を維持し期限後の原本閲覧を再開しない
+  triggers:
+    - 期限計算又はtenant境界に回帰がある
+monitoring:
+  owner: anshin-phone-backend
+  signals:
+    - 既存check結果
+    - maintenanceの成功状態と削除件数のみ。原本・資格を出力しない
+  observation_period: 本番定期実行と復旧確認まで
+approvals: []
