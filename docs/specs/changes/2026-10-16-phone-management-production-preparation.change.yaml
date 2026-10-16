@@ -13,6 +13,7 @@ repositories:
   - anshin-phone-infra
   - anshin-phone-backend
 code_paths:
+  - anshin-phone-infra/README.md
   - anshin-phone-infra/compose.management.yaml
   - anshin-phone-infra/compose.production.yaml
   - anshin-phone-infra/compose.phase1.yaml
@@ -25,6 +26,8 @@ test_paths:
   - anshin-phone-infra/scripts/test_phase1_render_config.py
   - anshin-phone-infra/scripts/build_check.sh
 invariants:
+  - 管理Composeの既定build contextは中央release matrixと同じstandalone並列配置とし明示overrideを維持する
+  - 旧nested sourceをproduction releaseに使用せず固定digest imageのbuild継承禁止を維持する
   - Core/Authの資源・runtime・credentialを変更しない
   - 既存Phase 1の通話・FAX経路とAPI schemaを維持する
   - production管理構成はcarrier資格・番号・SIP/RTP公開に依存しない
@@ -32,6 +35,7 @@ invariants:
   - 通信停止中は既存FAX jobを保持し新規送信とdispatchを拒否する
   - production adapterのblockedを維持し未実施を成功扱いしない
 acceptance_criteria:
+  - 既存render suiteで並列build contextと明示override及びproduction build不在を確認できる
   - 既存suiteでcarrier入力なしのproduction Composeをrenderできる
   - Backendとmigrationが同じimmutable imageを使いbuildを継承しない
   - BackendのAuth用egressとDBのinternal networkを分離する

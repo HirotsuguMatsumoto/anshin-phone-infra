@@ -25,6 +25,28 @@ def load_render_config():
 
 
 class ManagementComposeTest(unittest.TestCase):
+    def test_management_build_context_uses_sibling_or_explicit_backend(self):
+        import json
+        import subprocess
+
+        with tempfile.TemporaryDirectory(prefix="phone-compose-layout-") as directory:
+            for override in (None, str(Path(directory) / "explicit-backend")):
+                with self.subTest(override=override):
+                    env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
+                    env["ANSHIN_PHONE_SECRET_DIR"] = directory
+                    if override:
+                        env["ANSHIN_PHONE_BACKEND_DIR"] = override
+                    result = subprocess.run(
+                        ["docker", "compose", "--file", str(REPOSITORY_DIR / "compose.management.yaml"),
+                         "config", "--format", "json"],
+                        cwd=directory, env=env, capture_output=True, text=True,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    services = json.loads(result.stdout)["services"]
+                    expected = override or str(REPOSITORY_DIR.parent / "anshin-phone-backend")
+                    for name in ("backend", "backend-migrate"):
+                        self.assertEqual(services[name]["build"]["context"], expected)
+
     def render_production(self, *, omit: str | None = None):
         import json
         import subprocess

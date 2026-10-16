@@ -72,15 +72,16 @@ Phase 1の各serviceには、CPU、memory及びprocess数の上限を設定す�
 
 顧客通信を有効化する前に、[Phase 1実番号接続手順](docs/runbooks/telephony-platform/phase1_real_number_runbook.md)のresource計測を対象環境で行う。計測結果に基づくservice別予算、Compose上限、監視閾値及び切戻しは、別の実装changeで固定して検証する。この方針を理由にCore又はAuthのCPU、memory、storage若しくは配置を変更しない。
 
-Backendは別リポジトリです。VPSでは次の入れ子配置を前提とします。
+Backendは独立した別リポジトリです。開発workspaceとrelease sourceは、中央release matrixと同じ次の並列配置を正本とします。本番配備は固定digestのimageを使用します。
 
 ```text
-anshin-phone-infra/
-├── compose.phase1.yaml
-└── anshin-phone-backend/   # separate git clone; infra側ではgitignore
+workspace/
+├── anshin-phone-infra/
+│   └── compose.phase1.yaml
+└── anshin-phone-backend/   # separate git repository
 ```
 
-`scripts/verify_phase1.sh`は、開発用workspaceでは`anshin-phone-infra`と同じ階層の`anshin-phone-backend`も自動検出します。両方の配置が存在する場合は曖昧なrepository選択を停止します。検証対象を明示する場合は、backend repository rootの絶対pathを`ANSHIN_PHONE_BACKEND_DIR`へ設定してください。
+管理Composeのbuild contextは並列配置を既定とします。`scripts/verify_phase1.sh`の既存resolverは並列配置と旧入れ子配置を検出し、両方が存在する場合は曖昧なrepository選択を停止します。旧配置又は隔離worktreeの検証対象を明示する場合は、backend repository rootの絶対pathを`ANSHIN_PHONE_BACKEND_DIR`へ設定してください。旧配置を新しいrelease sourceには使用しません。
 
 ## Secret管理
 
