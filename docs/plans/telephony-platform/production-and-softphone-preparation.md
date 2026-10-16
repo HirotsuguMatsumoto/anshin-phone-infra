@@ -22,7 +22,7 @@ consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: []
 contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml]
 test_paths: [scripts/build_check.sh]
-last_reviewed: "2026-10-16"
+last_reviewed: "2026-10-17"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -75,7 +75,17 @@ runtime codeが変わっていない文書commitを、新しい実通信成功SH
 
 MS-A2-1の初回読取は開発VMのDocker subnetと社内LANの重なりによって停止した。ownerのoperation登録・両origin対応指示を受け、統合済みGov source `2e17033a9fae5798de6faddc131451031ee3acdb`の登録operation `configure-ui-worker-route-v1`をANSHIN_UIで実行した。固定Worker宛一件のreadbackは`ready: true`、既存Core/Docker経路とbootは不変である。kernel一時経路のため`persistent: false`であり、再起動後の自動復旧を受入済みと扱わない。共通入口と責任分界は`anshin.governance.privileged-operation-gateway`を参照する。MAC経路は登録・自動試験・独立source review済みだが、実MAC端末からの実行は未確認である。
 
-修復後、同じ統合済みSHAの既存`inspect-worker-host-recovery-v1`による観測を既存schemaで検証した。MS-A2-1は`running`、failed unitは0、固定GUI VMと既存三workerは`running`だった。物理memoryは約29.08 GiB、MemAvailableは約10.87 GiBの瞬間値、root空きは約99.75 GiBである。これらはPhone専用VMの割当・負荷・容量・復旧受入を代替しない。今回のoperationはPhone VMを作成せず、既存サービスの資源割当を変更していない。現在の配置正本はMS-A2-2の専用VM予定を維持しており、MS-A2-1の空きだけを理由に配備先を変更しない。
+修復後、同じ統合済みSHAの既存`inspect-worker-host-recovery-v1`による観測を既存schemaで検証した。MS-A2-1は`running`、failed unitは0、固定GUI VMと既存三workerは`running`だった。物理memoryは約29.08 GiB、MemAvailableは約10.87 GiBの瞬間値、root空きは約99.75 GiBである。これらはPhone専用VMの割当・負荷・容量・復旧受入を代替しない。今回のoperationはPhone VMを作成せず、既存サービスの資源割当を変更していない。この観測時点ではMS-A2-2の専用VM予定だった。現在の初期構築候補と新しい実読取は、次節の2026-10-17記録を参照する。旧瞬間値だけを配置・容量受入の根拠にしない。
+
+### 2026-10-17のMS-A2-1初期構築候補
+
+統合済みGov `ddaf5059f6754ed8ee98990032565d58b84ed86a`の登録Worker observerをMacから実行した。物理memoryは約29.077GiB、MemAvailableは約26.714GiBの瞬間値、固定LXD保存先の同一filesystem（device 64512）空きは約99.2566GiBだった。LXD5.21.8はdefault projectだけで、VM・pool・managed networkは未作成。Ubuntu24.04/x86_64の公開VM image fingerprintは`d4ff18198fb2ed8c88d408421e610c143cf1f5c1c0178e57178fb586880c3e56`である。image本体の取得・VM作成はこの観測に含めていない。
+
+Core/Authの18/7GiBを維持し、MS-A2-1にPhone専用project `anshin-phone`、VM `ms-a2-1-phone`、dir pool `phone-pool`、default project managed bridge `phone-br0`を置く初期構築案とする。共有2vCPU・memory4GiB・root32GiB、subnet `10.91.40.0/24`のGW `.1`・guest `.10`を固定する。将来worker17GiB＋Phone4GiB＋host/QEMU設計割当6GiB＝27GiBを物理量へ照合した。host6GiBは実測peak又は既存予約ではなく、同時負荷・商用通話容量の受入ではない。
+
+同一filesystemの初期予算80GiBはguest32・image8・temp/rollback16・hostgrowth24の設計割当である。再開時は検証済み保存先と固定imageの実allocated blocksだけを控除し、疎fileの論理sizeを空きへ足さない。guest32GiB内にOS、image、DB/WAL、FAX、backup・隔離restoreの一時領域を収められるかは、VM構築後の実測事項として残す。GUI保全diskを再利用・削除しない。
+
+固定入口`provision-phone-vm-v1`は既存origin、Worker carrier、sudo資格、release.lock、Release Plan DEPLOYと標準receiptを使う。Phone専用guardを最初の通信前に適用し、Core/Auth/既存workerを停止・再起動しない。本節時点ではsource実装・検査中で、VM/bridge/pool未作成・容量未受入・本番API/公開/復旧未完了である。全体構成3文書はinfra担当が同じ候補・未適用状態へ同期し、Phone writerが構築後の実結果を次の直列変更で同期する。
 
 ## 本番反映へ向けた実装単位
 
