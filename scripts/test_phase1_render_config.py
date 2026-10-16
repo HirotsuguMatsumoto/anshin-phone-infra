@@ -80,7 +80,12 @@ class ManagementComposeTest(unittest.TestCase):
                 env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
                 env.update(model["services"][name]["environment"])
                 # Only credentials are synthetic; all policy/mode inputs come from Compose.
-                env.update({"ANSHIN_PHONE_DB_PASSWORD": "compose-test-only", "ANSHIN_PHONE_INTERNAL_TOKEN": "compose-test-only"})
+                env.update({
+                    "ANSHIN_PHONE_DB_PASSWORD": "compose-test-only",
+                    "ANSHIN_PHONE_INTERNAL_TOKEN": "compose-test-only",
+                    "ANSHIN_PHONE_SIP_MASTER_SECRET": "compose-test-only",
+                    "ANSHIN_PHONE_FAX_STORAGE_KEY": "7" * 64,
+                })
                 result = subprocess.run([sys.executable, "-c",
                     "import json,runpy,sys; s=runpy.run_path(sys.argv[1])['get_settings'](); "
                     "print(json.dumps([s.environment,s.fax_retention_policy,s.fax_retention_seconds,s.telephony_enabled]))",
