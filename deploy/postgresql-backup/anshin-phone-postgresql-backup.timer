@@ -1,0 +1,15 @@
+[Unit]
+Description=Run the dedicated Phone PostgreSQL backup four times daily
+
+[Timer]
+OnCalendar=*-*-* 04:30:00 Asia/Tokyo
+OnCalendar=*-*-* 10:30:00 Asia/Tokyo
+OnCalendar=*-*-* 18:30:00 Asia/Tokyo
+OnCalendar=*-*-* 23:30:00 Asia/Tokyo
+AccuracySec=1min
+RandomizedDelaySec=0
+Persistent=true
+Unit=anshin-phone-postgresql-backup.service
+
+[Install]
+WantedBy=timers.target

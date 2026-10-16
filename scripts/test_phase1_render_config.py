@@ -257,6 +257,68 @@ class ProductionRuntimeTest(unittest.TestCase):
             self.assertNotIn('DOCKER_CONTEXT', env)
 
 
+class PhoneBackupAdapterTest(unittest.TestCase):
+    def test_dedicated_inputs_do_not_inherit_other_product_credentials(self):
+        from production_runtime import Runtime
+        from phone_postgresql_backup_adapter import environment, BUCKET, WRITER
+        profile = {'source_root': '/opt/anshin-phone/releases/infra', 'backend_sha': 'b' * 40,
+                   'backend_image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'd' * 64}
+        with patch.dict(os.environ, {'AWS_ACCESS_KEY_ID': 'foreign', 'POSTGRES_BACKUP_KMS_KEY_ID': 'foreign',
+                                    'ANSHIN_PHONE_BACKEND_IMAGE': 'foreign', 'DOCKER_HOST': 'tcp://foreign:2375'}):
+            env = environment(Runtime(), profile, {'manifest_key_id': 'a' * 64}, 'c' * 64)
+        self.assertEqual(env['POSTGRES_BACKUP_S3_BUCKET'], BUCKET)
+        self.assertEqual(env['POSTGRES_BACKUP_EXPECTED_ROLE_ARN'], WRITER)
+        self.assertEqual(env['POSTGRES_BACKUP_EXPECTED_CONTAINER_ID'], 'c' * 64)
+        self.assertEqual(env['POSTGRES_BACKUP_SOURCE_FIXED_SHA'], 'b' * 40)
+        self.assertEqual(env['DOCKER_HOST'], 'unix:///var/run/docker.sock')
+        self.assertEqual(env['POSTGRES_BACKUP_COMPOSE_ENV_FILE'], '/dev/null')
+        self.assertEqual(env['AWS_PROFILE'], 'anshin-phone-backup-writer')
+        self.assertEqual(env['ANSHIN_PHONE_BACKEND_IMAGE'], profile['backend_image'])
+        self.assertNotIn('AWS_ACCESS_KEY_ID', env)
+        self.assertNotIn('POSTGRES_BACKUP_KMS_KEY_ID', env)
+        self.assertNotIn('foreign', env.values())
+
+    def test_shared_owner_failure_and_runtime_drift_never_report_completed(self):
+        import json
+        import subprocess
+        from unittest.mock import Mock
+        from production_runtime import RuntimeFailure
+        from phone_postgresql_backup_adapter import scheduled_backup, read_profile
+        installed = {'source_root': '/opt/anshin-phone/releases/infra', 'backend_sha': 'b' * 40,
+                     'backend_image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'd' * 64}
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / 'profile.json'
+            config.write_text(json.dumps({'manifest_key_id': 'a' * 64})); config.chmod(0o600)
+            runtime = Mock()
+            runtime.project = 'anshin-phone-production'
+            runtime.environment.return_value = {}
+            runtime.profile.return_value = installed
+            runtime.compose.return_value = subprocess.CompletedProcess([], 0, 'c' * 64, '')
+            self.assertEqual(scheduled_backup(runtime=runtime, config_path=config)['status'], 'completed')
+            self.assertEqual(runtime.command.call_args.kwargs['timeout'], 1100)
+            self.assertEqual(runtime.command.call_args.args[0], ['bash', '/opt/anshin-phone-backup/sh/backup_postgresql_to_s3.sh'])
+            runtime.command.side_effect = RuntimeFailure('producer_failed')
+            with self.assertRaisesRegex(RuntimeFailure, 'producer_failed'):
+                scheduled_backup(runtime=runtime, config_path=config)
+            runtime.command.side_effect = None
+            runtime.profile.side_effect = [installed, {**installed, 'backend_sha': 'f' * 40}]
+            with self.assertRaisesRegex(RuntimeFailure, 'runtime_changed'):
+                scheduled_backup(runtime=runtime, config_path=config)
+            config.chmod(0o644)
+            with self.assertRaisesRegex(RuntimeFailure, 'permissions'):
+                read_profile(config)
+
+    def test_backup_unit_preserves_shared_lock_and_four_daily_catchup(self):
+        root = REPOSITORY_DIR / 'deploy/postgresql-backup'
+        timer = (root / 'anshin-phone-postgresql-backup.timer').read_text()
+        service = (root / 'anshin-phone-postgresql-backup.service').read_text()
+        self.assertEqual(timer.count('OnCalendar='), 4)
+        self.assertIn('Persistent=true', timer)
+        self.assertIn('PrivateTmp=false', service)
+        self.assertIn('TimeoutStartSec=20min', service)
+        self.assertIn('/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --scheduled-backup', service)
+
+
 class Phase1RenderConfigTest(unittest.TestCase):
     def render(self, auth_mode: str, overrides: dict[str, str] | None = None) -> tuple[str, str, int, int]:
         module = load_render_config()

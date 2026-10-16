@@ -1,0 +1,38 @@
+[Unit]
+Description=Use the shared PostgreSQL owner for the dedicated Phone backup
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+StartLimitIntervalSec=45m
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=HOME=/var/empty
+Environment=AWS_SHARED_CREDENTIALS_FILE=/dev/null
+Environment=AWS_EC2_METADATA_DISABLED=true
+StateDirectory=anshin-phone/postgresql-backup
+StateDirectoryMode=0700
+ExecStart=/usr/bin/python3 /opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --scheduled-backup
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/anshin-phone /opt/anshin-phone-backup /etc/anshin-phone /var/lib/anshin-phone/release
+ReadWritePaths=/var/lib/anshin-phone/postgresql-backup /tmp
+UMask=0077
+LimitCORE=0
+LockPersonality=true
+PrivateDevices=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+TimeoutStartSec=20min
+Restart=on-failure
+RestartSec=10min

@@ -143,3 +143,11 @@ FAX保護原本のoff-host backupは別projectionとし、`anshin-prod-phone-fax
 非secretの実行設定は `/var/lib/anshin-phone/release/runtime.json` に保持する。healthは実container image、Settings、DB readiness及びCompose healthを読み、profileのSHAだけで成功を判定しない。既存DBの更新では既存Phone backup adapterを共通lock取得前に呼び、lock取得後にprofileと実container・volume観測が不変であることを確認する。既存DB/FAXをprofileなしで自動採用しない。migration中断時は所有one-offを停止し、旧Backendの実healthが成功した場合だけrollback成功を返す。初回失敗はBackend停止を確認し、DB/FAX volumeを残す。
 
 共有backup ownerとの接続、管理専用の実配備fixture、host容量受入及び中央Phone operationの接続は別々に実確認する。native ownerのsourceだけで本番配備adapter全体の完成又は本番反映を宣言しない。DB rollbackは自動実行せず、適用するmigrationが旧Backendと互換であることを中央change contractで扱う。source更新とprofile更新の間で中断した場合は、既存中央release結果と実container imageを照合してから復旧する。
+
+## 既存PostgreSQL ownerへの専用入力
+
+`scripts/phone_postgresql_backup_adapter.py --scheduled-backup` はnative `runtime.json` と実Backend healthを照合し、実Postgres container ID・Backend source SHAを、既存 `backup_postgresql_to_s3.sh` へ渡す。専用bucket、`postgresql/phone` prefix、Phone writer role/profile、`/etc/anshin-phone/aws/config` と専用鍵pathだけを使い、他製品のAWS環境・KMS入力を継承しない。`/etc/anshin-phone/postgresql-backup-profile.json` はowner-onlyで、既存manifest検証鍵のSHA-256である `manifest_key_id` 一項目だけを持つ。秘密値は格納しない。
+
+共有producerがPhoneを許可し、lock取得後に `POSTGRES_BACKUP_EXPECTED_CONTAINER_ID` と実containerが一致することを検証してからinstallする。現行未対応の共有sourceへKMS値を偽装して接続しない。adapterのsource又は単体testだけで本番backup適合済みとは扱わない。共有ownerがage・SSE-S3・exact version readback及び既存receiptを所有し、adapterは別receipt/journalを作らない。
+
+同梱のservice/timerは既存PostgreSQL unitを再利用し、毎日04:30・10:30・18:30・23:30（Asia/Tokyo）の4回、Persistent catchup、共通guest lock及び限定retryを使う。定義の追加はinstall・enable・定期実行の証拠を代替しない。初回取得、4世代、隔離restore、FAX backup及び復旧鍵別保管は引き続き実受入を必要とする。
