@@ -1,0 +1,51 @@
+schema_version: 1
+change_id: anshin-phone-infra.production-runtime.2026-10-16
+title: Phone専用guest内で既存Compose配備とrollbackを所有する
+owner: anshin-phone-infra
+status: review
+risk_level: high
+production_change: false
+spec_ids: [anshin.governance.ai-driven-development, anshin.governance.privileged-operation-gateway, anshin.release.contract, anshin.phone.production-and-softphone-preparation]
+repositories: [anshin-phone-infra, anshin-phone-backend, anshin]
+code_paths:
+  - anshin-phone-infra/scripts/production_runtime.py
+  - anshin-phone-infra/compose.production.yaml
+  - anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md
+contract_paths:
+  - anshin-phone-infra/docs/specs/changes/2026-10-16-phone-production-runtime.change.yaml
+generated_artifacts: []
+test_paths: [anshin-phone-infra/scripts/test_phase1_render_config.py, anshin-phone-infra/scripts/test_phase1_sip_e2e.py]
+invariants:
+  - native ownerはPhone専用guestのCompose・migration・health・rollbackだけを担当する
+  - 中央runnerはfixed sourceとartifactの選択及び既存release receiptを所有する
+  - 新しいSSH・account・鍵・署名・authority・journal・二重receipt・gateを追加しない
+  - production imageをguestでbuildせず同じ固定digestでBackendとmigrationを実行する
+  - carrier・PBX・SIP/RTP公開を有効化しない
+  - production CLIはguest内Docker socketへ固定しambient transportを継承しない
+  - healthは実container imageとruntime profileを照合しsource欄だけで成功しない
+  - backupは共通guest lock前に実行しlock後のruntime差分を検出する
+  - 適用migrationの旧Backend互換性は中央change contractで保証し自動DB rollbackをしない
+  - 既存DBのmigration前は既存Phone専用backup ownerを使う
+  - rollbackでDB・FAX・volumeを削除せず初回失敗でも保全する
+acceptance_criteria:
+  - migrationは一回、成功後だけBackendを起動しhealthと実Settingsを確認する
+  - failure後は直前imageとComposeへ戻し初回はBackendだけを停止する
+  - source・imageとruntime profileを同じ本番ownerで保持する
+  - 既存suiteとfixtureで正常配備・migration失敗・health失敗の保持を確認する
+  - migrationが未停止又は初回Backend停止が未確認のときrollback成功を返さない
+  - 共通backup接続とhost容量受入前に本番adapter全体の完成を宣言しない
+  - 資源候補を計測しVM overheadと実host余裕を別に受入する
+out_of_scope: [汎用remote executor, Core/Authの縮小・停止, 未確認資源の容量受入, 実carrier, 外部契約・顧客開通]
+rollout:
+  strategy: existing-release-owner
+  steps: [編集前に設計・脅威reviewを行う, 既存suiteとcanonical check及びfixed SHA独立reviewを行う, main統合後に中央Phone operationへ接続する]
+  triggers: [ownerによるPhone本番配備adapterの実装指示]
+rollback:
+  strategy: previous-image-and-compose
+  steps: [直前のfixed imageとsourceへ戻しDBと原本を維持する, 初回はBackendだけを停止しDBとvolumeを保持する]
+  triggers: [migration又はhealth失敗]
+monitoring:
+  owner: anshin-phone-infra
+  signals: [実Settingsのenum, health, OOMKilledとrestart, 既存中央receipt]
+  observation_period: 本番公開と復旧受入まで
+approvals: []

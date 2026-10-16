@@ -130,9 +130,16 @@ ownerは「Clocoと同じ月単位（毎月5日に前月分を削除）」を指
 
 ## Phone PostgreSQL専用backup資源の具体化
 
-既存中央owner `scripts/postgresql_backup_storage.py` のPhone projectionを使い、既設classをPostgreSQL専用へ展開する。正本のbucket名は `anshin-prod-phone-postgresql-backup-691862619128`、KMS aliasは `alias/anshin-prod-phone-postgresql-backup` とし、既存Roles Anywhere anchorとPhone VM用のwriter/restore CNへ限定する。専用bucket・CMK・KMS alias・writer/restore role・writer/restore profile・bucket policyの8資源であり、他製品stackを変更しない。
+既存中央owner `scripts/postgresql_backup_storage.py` のPhone projectionを使い、既設classをPostgreSQL専用へ展開する。正本のbucket名は `anshin-prod-phone-postgresql-backup-691862619128` とし、既存Roles Anywhere anchorとPhone VM用のwriter/restore CNへ限定する。専用bucket・writer/restore role・writer/restore profile・bucket policyの6資源であり、他製品stackを変更しない。
 
-Governance 31日、Versioning、purposeごとの最小権限を維持し、元templateの30日expirationを持ち込まない。FAX・録音のbucket、CMK、principalをDB backupと共有しない。既存bucketへの転送増加と、新しいKMS/bucket資源の作成許可は区別し、最新費用規程に基づく具体的owner許可後だけ作成する。source、ValidateTemplate又はstack作成の成功を4世代backup・隔離restoreの成功へ読み替えない。
+DB backupはownerのKMS廃止指示に合わせ、既存age暗号化・manifest検証とSSE-S3（AES256）を使う。新しいKMS key・alias・権限を作らない。Governance 31日、Versioning、purposeごとの最小権限を維持し、元templateの30日expirationを持ち込まない。FAX・録音のbucketとprincipalをDB backupと共有しない。新規bucket等の実作成は最新費用規程に従う。共通SSE-S3 producerとrestoreの先行統合前に、このprojectionだけで本番backup適合済みとは扱わない。source、ValidateTemplate又はstack作成の成功を4世代backup・隔離restoreの成功へ読み替えない。
 
+FAX保護原本のoff-host backupは別projectionとし、`anshin-prod-phone-fax-691862619128`、`fax/*`専用のwriter/restore role/profileを使う。DBとFAXは各6資源、合計12資源で相互アクセスを許可しない。FAXはBackend既存の保護原本暗号化と独立した復旧鍵保管を維持し、S3にはSSE-S3で保存する。FAXの通常原本はBackendの月単位期限に従い、off-host backupは31日保護を維持する。bucketへ自動expirationを追加しない。通信停止中の録音用資源は今回作成しない。
 
-FAX保護原本のoff-host backupは別projectionとし、`anshin-prod-phone-fax-691862619128`、`alias/anshin-prod-phone-fax`、`fax/*`専用のwriter/restore role/profileを使う。DBとFAXは各8資源、合計16資源で相互アクセスを許可しない。FAXの通常原本はBackendの月単位期限に従い、off-host backupは31日保護を維持する。bucketへ自動expirationを追加しない。通信停止中の録音用資源は今回作成しない。
+## Phone専用guestのnative配備owner
+
+`scripts/production_runtime.py` は固定Phone guest内のDocker daemonで、既存production Compose、固定digestのBackend/PostgreSQL、実Settings検証、migration、readiness及び失敗時のBackend rollbackを担当する。中央release ownerがsourceとartifactの資格・既存release receiptを所有し、このscriptはGit取得、image build、署名、journal又はreceiptを追加しない。CLIのDocker接続はguest内socketへ固定する。fixtureのtransport指定だけをconstructorで明示する。
+
+非secretの実行設定は `/var/lib/anshin-phone/release/runtime.json` に保持する。healthは実container image、Settings、DB readiness及びCompose healthを読み、profileのSHAだけで成功を判定しない。既存DBの更新では既存Phone backup adapterを共通lock取得前に呼び、lock取得後にprofileと実container・volume観測が不変であることを確認する。既存DB/FAXをprofileなしで自動採用しない。migration中断時は所有one-offを停止し、旧Backendの実healthが成功した場合だけrollback成功を返す。初回失敗はBackend停止を確認し、DB/FAX volumeを残す。
+
+共有backup ownerとの接続、管理専用の実配備fixture、host容量受入及び中央Phone operationの接続は別々に実確認する。native ownerのsourceだけで本番配備adapter全体の完成又は本番反映を宣言しない。DB rollbackは自動実行せず、適用するmigrationが旧Backendと互換であることを中央change contractで扱う。source更新とprofile更新の間で中断した場合は、既存中央release結果と実container imageを照合してから復旧する。

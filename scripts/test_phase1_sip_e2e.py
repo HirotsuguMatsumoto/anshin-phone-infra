@@ -918,15 +918,95 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
     return 0
 
 
+def run_production_management_fixture(image: str, backend_sha: str) -> int:
+    """Exercise the packaged production image through its actual guest owner.
+
+    This proves first deployment, migration and management-only health. It
+    deliberately does not claim the pending production backup/restore adapter.
+    """
+    import secrets
+    import socket
+    from production_runtime import Runtime
+
+    if not image or not backend_sha:
+        raise RuntimeError('process-start=0: production image and source SHA are required')
+    env = os.environ.copy()
+    project = 'phone-management-' + uuid.uuid4().hex[:12]
+    transport = {key: env[key] for key in ('PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG') if key in env}
+    if not transport.get('DOCKER_HOST'):
+        transport['DOCKER_HOST'] = run(['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], env=env).stdout.strip()
+    with tempfile.TemporaryDirectory(prefix='phone-production-fixture-') as directory:
+        temporary = Path(directory)
+        secret_root = temporary / 'secrets'
+        secret_root.mkdir(mode=0o700)
+        for name in ('postgres_password', 'internal_api_token', 'smartphone_sip_password', 'fax_storage_key'):
+            path = secret_root / name
+            path.write_text(secrets.token_hex(32))
+            path.chmod(0o600)
+        with socket.socket() as reservation:
+            reservation.bind(('127.0.0.1', 0))
+            port = reservation.getsockname()[1]
+        runtime = Runtime(root=ROOT, state=temporary / 'state', secrets=secret_root, project=project,
+                          lock=temporary / 'release.lock', transport=transport, backend_port=port)
+        infra_sha = run(['git', 'rev-parse', 'HEAD'], env=env).stdout.strip()
+        profile = {'source_root': str(ROOT), 'backend_image': image, 'backend_sha': backend_sha, 'infra_sha': infra_sha}
+        failed = True
+        try:
+            result = runtime.deploy(image, backend_sha, infra_sha)
+            if result['status'] != 'deployed':
+                raise RuntimeError('production management fixture did not deploy')
+            runtime.compose(profile, 'exec', '-T', 'backend', 'python', '-c',
+                "from sqlalchemy import text; from app.core.database import engine; "
+                "c=engine.connect(); assert c.execute(text('SELECT version_num FROM alembic_version')).scalar(); c.close()")
+            probe = '''import urllib.request,urllib.error
+from pathlib import Path
+for path,headers,expected in [
+ ('/api/v1/management/me/tenants',{},401),
+ ('/api/v1/pbx-configuration?tenant_id=isolated',
+  {'X-Anshin-Internal-Token':Path('/run/secrets/internal_api_token').read_text().strip()},503)]:
+ try:
+  urllib.request.urlopen(urllib.request.Request('http://127.0.0.1:8000'+path,headers=headers),timeout=5)
+ except urllib.error.HTTPError as error:
+  assert error.code==expected
+ else:
+  raise AssertionError('management/carrier boundary unexpectedly open')
+'''
+            runtime.compose(profile, 'exec', '-T', 'backend', 'python', '-c', probe)
+            print('PASS: immutable production image -> actual settings -> migration -> readiness; unauthenticated management denied and telephony disabled', flush=True)
+            # Resource evidence is a fixture measurement, not VM capacity acceptance.
+            measurements = {}
+            for service in ('backend', 'postgres'):
+                container = runtime.compose(profile, 'ps', '--quiet', service).stdout.strip()
+                state = runtime.command(['docker', 'inspect', '--format',
+                    '{{json .State.OOMKilled}} {{json .RestartCount}}', container]).stdout.strip()
+                peak = runtime.compose(profile, 'exec', '-T', service, 'cat', '/sys/fs/cgroup/memory.peak', allow_failure=True)
+                measurements[service] = {'oom_and_restarts': state,
+                    'container_memory_peak_bytes': int(peak.stdout.strip()) if peak.returncode == 0 and peak.stdout.strip().isdigit() else None}
+            print(json.dumps({'phase': 'production-management-measurement', 'services': measurements,
+                              'vm_capacity_accepted': False}, sort_keys=True), flush=True)
+            failed = False
+        finally:
+            cleanup = runtime.compose(profile, 'down', '--volumes', '--remove-orphans', allow_failure=True)
+            selector = f'label=com.docker.compose.project={project}'
+            residue = [kind for kind in ('container', 'volume', 'network')
+                       if runtime.command(['docker', kind, 'ls', '--quiet', '--filter', selector]).stdout.strip()]
+            ensure_cleanup_succeeded(cleanup, residue, failed)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
-    modes.add_argument("--fixture", choices=("database", "management", "voice", "fax"), help="diagnose the real database/migration phase without SIP runtime")
+    modes.add_argument("--fixture", choices=("database", "management", "voice", "fax", "production"), help="diagnose a minimal real runtime")
+    parser.add_argument('--backend-image', help='immutable published image for production fixture')
+    parser.add_argument('--backend-sha', help='published Backend source for production fixture')
     args = parser.parse_args(argv)
     if args.preflight:
         return run_isolated_e2e(preflight_only=True)
     with docker_heavy_lease():
+        if args.fixture == 'production':
+            return run_production_management_fixture(args.backend_image, args.backend_sha)
         return run_isolated_e2e(fixture_only=args.fixture)
 
 

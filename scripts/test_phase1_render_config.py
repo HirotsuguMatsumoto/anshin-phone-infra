@@ -44,6 +44,7 @@ class ManagementComposeTest(unittest.TestCase):
         result, model = self.render_production()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(set(model["services"]), {"postgres", "backend", "backend-migrate"})
+        self.assertRegex(model['services']['postgres']['image'], r'^postgres@sha256:[0-9a-f]{64}$')
         for name in ("backend", "backend-migrate"):
             service = model["services"][name]
             self.assertNotIn("build", service)
@@ -92,6 +93,167 @@ class ManagementComposeTest(unittest.TestCase):
                     str(backend / "app/core/config.py")], env=env, text=True, capture_output=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), ["production", "cloco_previous_month", None, False])
+
+
+class ProductionRuntimeTest(unittest.TestCase):
+    def runtime(self, directory, *, migration_failure=False, migration_timeout=False, stop_failure=False,
+                candidate_health_failure=False, rollback_health_failure=False):
+        import json
+        import subprocess
+        from production_runtime import Runtime
+        calls = []
+        root = Path(directory)
+        state = {'image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'a' * 64,
+                 'candidate_failed': False}
+
+        def runner(argv, **kwargs):
+            calls.append((argv, kwargs['env']))
+            output = ''
+            code = 0
+            if argv[:3] == ['docker', 'image', 'inspect']:
+                output = 'b' * 40
+            elif argv[:2] == ['docker', 'inspect']:
+                output = state['image']
+            elif 'compose' in argv and 'ps' in argv:
+                output = ('abc123' if '--quiet' in argv else
+                          json.dumps([{'Service': name, 'State': 'running', 'Health': 'healthy'}
+                                      for name in ('backend', 'postgres')]))
+            elif 'compose' in argv and 'up' in argv and argv[-1] == 'backend':
+                state['image'] = kwargs['env']['ANSHIN_PHONE_BACKEND_IMAGE']
+            elif 'compose' in argv and 'exec' in argv:
+                if candidate_health_failure and state['image'].endswith('b' * 64):
+                    code = 1
+                    state['candidate_failed'] = True
+                elif rollback_health_failure and state['candidate_failed']:
+                    code = 1
+            elif 'backend-migrate' in argv and 'run' in argv:
+                if migration_timeout:
+                    raise subprocess.TimeoutExpired(argv, 180)
+                code = int(migration_failure)
+            elif argv[:3] == ['docker', 'ps', '--all'] and any('migration' in arg for arg in argv):
+                output = 'owned-migration' if migration_timeout else ''
+            elif argv[:2] == ['docker', 'stop']:
+                code = int(stop_failure)
+            elif 'compose' in argv and 'stop' in argv:
+                code = int(stop_failure)
+            return subprocess.CompletedProcess(argv, code, output, 'private diagnostic never printed')
+
+        runtime = Runtime(root=root / 'candidate', state=root / 'state', secrets=root / 'secrets',
+                          project='phone-unit', lock=root / 'release.lock', runner=runner)
+        return runtime, calls
+
+    def previous(self, runtime):
+        profile = {'source_root': str(runtime.root.parent / 'old'),
+                   'backend_image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'a' * 64,
+                   'backend_sha': 'a' * 40, 'infra_sha': 'a' * 40}
+        runtime.save(profile)
+        return profile
+
+    def deploy(self, runtime):
+        return runtime.deploy('ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'b' * 64,
+                              'b' * 40, 'c' * 40)
+
+    def test_new_deploy_migrates_once_and_preserves_actual_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, calls = self.runtime(directory)
+            result = self.deploy(runtime)
+            self.assertEqual(result['status'], 'deployed')
+            self.assertEqual(runtime.profile()['backend_sha'], 'b' * 40)
+            self.assertEqual(sum('run' in argv and 'backend-migrate' in argv for argv, _ in calls), 1)
+            self.assertFalse(any('down' in argv or '--volumes' in argv for argv, _ in calls))
+            self.assertEqual(stat.S_IMODE((runtime.state / 'runtime.json').stat().st_mode), 0o600)
+
+    def test_existing_data_requires_known_profile_before_mutation(self):
+        from production_runtime import RuntimeFailure
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, calls = self.runtime(directory)
+            with patch.object(runtime, 'observation', return_value={'containers': [], 'volumes': ['existing-db']}):
+                with self.assertRaisesRegex(RuntimeFailure, 'existing_data_without_profile'):
+                    self.deploy(runtime)
+            self.assertEqual(calls, [])
+
+    def test_backup_uses_same_lock_without_recursive_acquisition_and_detects_drift(self):
+        from production_runtime import RuntimeFailure
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, calls = self.runtime(directory)
+            previous = self.previous(runtime)
+
+            def backup():
+                with runtime.exclusive():
+                    pass
+
+            with patch.object(runtime, 'backup', side_effect=backup) as backup_call:
+                self.assertEqual(self.deploy(runtime)['status'], 'deployed')
+                backup_call.assert_called_once()
+            runtime, calls = self.runtime(Path(directory) / 'drift')
+            self.previous(runtime)
+            with patch.object(runtime, 'backup'), patch.object(runtime, 'observation', side_effect=[{}, {'changed': True}]):
+                with self.assertRaisesRegex(RuntimeFailure, 'changed_during_backup'):
+                    self.deploy(runtime)
+            self.assertFalse(any('up' in argv or 'pull' in argv for argv, _ in calls))
+
+    def test_migration_failure_restores_previous_backend_and_never_destroys_data(self):
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, calls = self.runtime(directory, migration_failure=True)
+            previous = self.previous(runtime)
+            with patch.object(runtime, 'backup'):
+                result = self.deploy(runtime)
+            self.assertEqual(result['status'], 'rolled_back')
+            self.assertEqual(runtime.profile(), previous)
+            backend_start = [(argv, env) for argv, env in calls if 'up' in argv and argv[-1] == 'backend']
+            self.assertEqual(len(backend_start), 1)
+            self.assertEqual(backend_start[0][1]['ANSHIN_PHONE_BACKEND_IMAGE'], previous['backend_image'])
+            self.assertFalse(any('down' in argv or '--volumes' in argv for argv, _ in calls))
+
+    def test_unsettled_migration_cannot_claim_rollback(self):
+        from production_runtime import RuntimeFailure
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, calls = self.runtime(directory, migration_timeout=True, stop_failure=True)
+            previous = self.previous(runtime)
+            with patch.object(runtime, 'backup'):
+                with self.assertRaises(RuntimeFailure):
+                    self.deploy(runtime)
+            self.assertEqual(runtime.profile(), previous)
+            self.assertFalse(any('up' in argv and argv[-1] == 'backend' for argv, _ in calls))
+
+    def test_candidate_health_failure_returns_only_observed_healthy_previous_runtime(self):
+        from production_runtime import RuntimeFailure
+        for previous_unhealthy in (False, True):
+            with self.subTest(previous_unhealthy=previous_unhealthy), tempfile.TemporaryDirectory() as directory:
+                runtime, calls = self.runtime(directory, candidate_health_failure=True,
+                                             rollback_health_failure=previous_unhealthy)
+                previous = self.previous(runtime)
+                with patch.object(runtime, 'backup'):
+                    if previous_unhealthy:
+                        with self.assertRaises(RuntimeFailure):
+                            self.deploy(runtime)
+                    else:
+                        self.assertEqual(self.deploy(runtime)['status'], 'rolled_back')
+                self.assertEqual(runtime.profile(), previous)
+                self.assertEqual(sum('up' in argv and argv[-1] == 'backend' for argv, _ in calls), 2)
+
+    def test_stale_profile_cannot_report_different_running_image_as_healthy(self):
+        from production_runtime import RuntimeFailure
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, calls = self.runtime(directory)
+            self.deploy(runtime)
+            with self.assertRaisesRegex(RuntimeFailure, 'backend_image_mismatch'):
+                runtime.health(self.previous(runtime))
+
+    def test_first_failure_reports_unconfirmed_cleanup(self):
+        from production_runtime import RuntimeFailure
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, calls = self.runtime(directory, migration_failure=True, stop_failure=True)
+            with self.assertRaisesRegex(RuntimeFailure, 'cleanup_unconfirmed'):
+                self.deploy(runtime)
+            self.assertIsNone(runtime.profile())
+
+    def test_production_environment_pins_local_daemon(self):
+        from production_runtime import Runtime
+        with patch.dict(os.environ, {'DOCKER_HOST': 'tcp://foreign.invalid:2375', 'DOCKER_CONTEXT': 'foreign'}):
+            env = Runtime().environment()
+            self.assertEqual(env['DOCKER_HOST'], 'unix:///var/run/docker.sock')
+            self.assertNotIn('DOCKER_CONTEXT', env)
 
 
 class Phase1RenderConfigTest(unittest.TestCase):
