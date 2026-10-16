@@ -211,6 +211,31 @@ class ProductionRuntimeTest(unittest.TestCase):
                     self.deploy(runtime)
             self.assertEqual(calls, [])
 
+    def test_initial_failure_snapshot_is_captured_before_release_unlock(self):
+        import fcntl
+        from production_runtime import RuntimeFailure
+        with tempfile.TemporaryDirectory() as directory:
+            runtime,calls=self.runtime(directory,migration_failure=True)
+            observations=[]
+            def observe():
+                # The first observation is deliberately before the lock. The
+                # failure snapshot must be the third and still hold that lock.
+                held=False
+                with runtime.lock.open('a') as competitor:
+                    try:fcntl.flock(competitor,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                    except BlockingIOError:held=True
+                result={'containers':['first-candidate'] if len(observations)>=2 else [],'volumes':[]}
+                observations.append((held,result))
+                return result
+            with patch.object(runtime,'observation',side_effect=observe):
+                with self.assertRaisesRegex(RuntimeFailure,'initial_deploy_failed_data_preserved') as failed:
+                    self.deploy(runtime)
+            recovery=failed.exception.initial_recovery
+            self.assertEqual([held for held,_ in observations],[False,True,True])
+            self.assertEqual(recovery['observation'],{'containers':['first-candidate'],'volumes':[]})
+            self.assertEqual(recovery['candidate']['infra_sha'],'c'*40)
+            with runtime.lock.open('a') as competitor:fcntl.flock(competitor,fcntl.LOCK_EX|fcntl.LOCK_NB)
+
     def test_initial_forward_repair_requires_same_candidate_and_exact_prior_resources(self):
         from production_runtime import RuntimeFailure
         import copy

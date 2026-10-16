@@ -1021,6 +1021,7 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
             except RuntimeFailure as error:
                 if str(error) != 'phone_initial_deploy_failed_data_preserved':
                     raise
+                recovery = error.initial_recovery
             else:
                 raise RuntimeError('production fixture did not exercise initial failure')
             finally:
@@ -1029,7 +1030,8 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
                 raise RuntimeError('failed initial deployment wrote a runtime profile')
             # This is the native result which the existing central failed
             # receipt will bind. No new recovery journal is introduced.
-            recovery = {'candidate': profile, 'observation': runtime.observation()}
+            if recovery is None or recovery['candidate'] != profile:
+                raise RuntimeError('initial failure did not capture its exact candidate under lock')
             runtime.compose(profile, 'exec', '-T', 'postgres', 'psql', '-U', 'anshin_phone', '-d', 'anshin_phone',
                 '-v', 'ON_ERROR_STOP=1', '-c',
                 'CREATE TABLE fixture_phone_initial_recovery (value integer PRIMARY KEY); '

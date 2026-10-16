@@ -60,6 +60,10 @@ def run_owned_process(argv, **kwargs):
 class RuntimeFailure(RuntimeError):
     """Expose an enum, never raw Docker output or consumer exceptions."""
 
+    def __init__(self, reason, *, initial_recovery=None):
+        super().__init__(reason)
+        self.initial_recovery = initial_recovery
+
 
 class Runtime:
     def __init__(self, *, root=ROOT, state=STATE, secrets=SECRETS, project=PROJECT,
@@ -290,7 +294,11 @@ class Runtime:
                 stopped = self.compose(candidate, 'stop', 'backend', allow_failure=True)
                 if stopped.returncode:
                     raise RuntimeFailure('phone_initial_cleanup_unconfirmed') from None
-                raise RuntimeFailure('phone_initial_deploy_failed_data_preserved') from None
+                # Capture under the same release lock, before any subsequent
+                # candidate can change these resources. The central owner
+                # binds this existing failure result, not a later observation.
+                raise RuntimeFailure('phone_initial_deploy_failed_data_preserved',
+                    initial_recovery={'candidate': candidate, 'observation': self.observation()}) from None
 
 
 def main():
