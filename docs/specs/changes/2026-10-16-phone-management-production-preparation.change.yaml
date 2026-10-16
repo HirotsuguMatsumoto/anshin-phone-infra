@@ -1,0 +1,62 @@
+schema_version: 1
+change_id: anshin-phone-infra.management-production-preparation.2026-10-16
+title: Phone管理専用runtimeを実carrierから分離する
+owner: anshin-phone-infra
+status: review
+risk_level: high
+production_change: false
+spec_ids:
+  - anshin.governance.ai-driven-development
+  - anshin.phone.production-and-softphone-preparation
+  - anshin.phone.backend.foundation-runtime-contract
+repositories:
+  - anshin-phone-infra
+  - anshin-phone-backend
+code_paths:
+  - anshin-phone-infra/compose.management.yaml
+  - anshin-phone-infra/compose.production.yaml
+  - anshin-phone-infra/compose.phase1.yaml
+  - anshin-phone-infra/scripts/test_phase1_render_config.py
+  - anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md
+contract_paths:
+  - anshin-phone-infra/docs/specs/changes/2026-10-16-phone-management-production-preparation.change.yaml
+generated_artifacts: []
+test_paths:
+  - anshin-phone-infra/scripts/test_phase1_render_config.py
+  - anshin-phone-infra/scripts/build_check.sh
+invariants:
+  - Core/Authの資源・runtime・credentialを変更しない
+  - 既存Phase 1の通話・FAX経路とAPI schemaを維持する
+  - production管理構成はcarrier資格・番号・SIP/RTP公開に依存しない
+  - 本番FAX保持期間をlocalの24時間defaultから確定しない
+  - 通信停止中は既存FAX jobを保持し新規送信とdispatchを拒否する
+  - production adapterのblockedを維持し未実施を成功扱いしない
+acceptance_criteria:
+  - 既存suiteでcarrier入力なしのproduction Composeをrenderできる
+  - Backendとmigrationが同じimmutable imageを使いbuildを継承しない
+  - BackendのAuth用egressとDBのinternal networkを分離する
+  - 管理CRUDは継続しPBX設定・route・FAX dispatchの全経路は通信停止時503となる
+  - DBとFAX jobを変更しない失敗とproductionの明示保持期間を既存testへ固定する
+out_of_scope:
+  - VM作成・資源変更・実carrier接続・顧客開通
+  - 未確定の公開project・domain・storageの作成
+  - 追加のtrust・署名・receipt・release gate
+rollout:
+  strategy: preparation-only
+  steps:
+    - 設計・脅威review後に既存sourceとconsumerを同期する
+    - 既存canonical checkとfixed SHA独立review後にmainへ統合する
+  triggers:
+    - ownerによるPhone残件継続指示
+rollback:
+  strategy: scoped-revert
+  steps:
+    - 本変更のsourceとtestを同一bundleでrevertする
+  triggers:
+    - Phase 1の既存業務経路に回帰が発生する
+monitoring:
+  owner: anshin-phone-infra
+  signals:
+    - 既存APIとComposeのcanonical結果
+  observation_period: 本番adapterの受入まで
+approvals: []

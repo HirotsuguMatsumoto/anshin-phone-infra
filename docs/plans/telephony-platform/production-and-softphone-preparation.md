@@ -22,7 +22,7 @@ consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: []
 contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml]
 test_paths: [scripts/build_check.sh]
-last_reviewed: "2026-10-13"
+last_reviewed: "2026-10-16"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -110,3 +110,12 @@ MS-A2-1の初回読取は開発VMのDocker subnetと社内LANの重なりによ�
 隔離の実SDK driverで登録・発着信・双方向音声・再接続・失効を確認し、その成功条件を既存suite/fixture/ownerへ固定する。背景/スリープ、OS終了、通知/マイク権限拒否、Wi-Fi/モバイル切替、重複着信、応答競合は両OSの実機と実Push consumerまで確認する。模擬SIP試験をAndroid/iPhone SDK・Push成功へ読み替えない。卸トランク資格を顧客端末へ配布しない。
 
 現在のinstruction-origin PATHと確認した既存候補pathにはFlutter/adb実行環境が見つからず、iOS toolchain・接続実機・Phone Push資格も未確認である。他製品の契約・資格の不在とは一般化せず、共有済みの対象資格・実機・toolchainの所在を調べ、不足と費用を具体化する。native未確認を、完成している基礎管理経路の追加品質gateへ変更しない。
+
+
+## Macでの再開と管理用配備定義（2026-10-16）
+
+Macのcurrent integrated sourceの既存host observerからCore/Worker両hostを読取できた。今回のMac接続にGUI VMのWorker経路修復は不要であり実行していない。Phone project/VMはmissingで、Core/Authの設定18/7 GiBを変更していない。物理memory約29.08 GiB、Core側MemAvailable約5.32 GiB、Worker側約11.42 GiBは今回の瞬間観測であり、Phone容量受入ではない。旧5 GiB候補を適用しない。
+
+Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所有し、既存Phase 1と`compose.production.yaml`がextendsする。production管理定義は実carrier入力・SIP/RTP公開・source buildを含まず、Backend/migrationの同じfixed digest image、明示した本番FAX保持秒数及び既存secret-file入力を要求する。BackendだけにAuth/JWKS取得用egressを接続し、DBはinternalのまま維持する。
+
+管理定義は`ANSHIN_PHONE_TELEPHONY_ENABLED=false`であり、既存Backendの管理・履歴は使えるが、端末資格・PBX・FAX送信/dispatchは503となる。既存のqueued/sending行を変更しない。FAX原本保持の承認値をbackup標準31日から推測せず、実機資源、API ingress、Phone hosting binding、独立key復旧・定期backup/隔離restoreが未受入のままadapterをsupportedへ変更しない。この定義のrender成功又はsource統合を本番反映・本番Auth・実回線の成功と扱わない。

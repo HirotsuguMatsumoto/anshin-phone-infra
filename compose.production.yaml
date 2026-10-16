@@ -1,0 +1,50 @@
+name: anshin-phone-production
+
+# Management deployment does not start a carrier or expose SIP/RTP.
+services:
+  postgres:
+    extends:
+      file: compose.management.yaml
+      service: postgres
+  backend:
+    extends:
+      file: compose.management.yaml
+      service: backend
+    build: !reset null
+    image: ${ANSHIN_PHONE_BACKEND_IMAGE:?set the fixed digest-pinned backend image}
+    environment:
+      ANSHIN_PHONE_ENVIRONMENT: production
+      ANSHIN_PHONE_TELEPHONY_ENABLED: "false"
+      ANSHIN_PHONE_SIP_SERVER: ""
+      ANSHIN_PHONE_FAX_RETENTION_SECONDS: ${ANSHIN_PHONE_FAX_RETENTION_SECONDS:?set the approved production FAX retention in seconds}
+  backend-migrate:
+    extends:
+      file: compose.management.yaml
+      service: backend-migrate
+    build: !reset null
+    image: ${ANSHIN_PHONE_BACKEND_IMAGE:?set the fixed digest-pinned backend image}
+    environment:
+      ANSHIN_PHONE_ENVIRONMENT: production
+      ANSHIN_PHONE_TELEPHONY_ENABLED: "false"
+      ANSHIN_PHONE_FAX_RETENTION_SECONDS: ${ANSHIN_PHONE_FAX_RETENTION_SECONDS:?set the approved production FAX retention in seconds}
+
+secrets:
+  postgres_password:
+    file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/postgres_password
+  smartphone_sip_password:
+    file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/smartphone_sip_password
+  fax_storage_key:
+    file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/fax_storage_key
+  internal_api_token:
+    file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/internal_api_token
+
+volumes:
+  postgres-data:
+  fax-protected-storage:
+
+networks:
+  phone-data:
+    driver: bridge
+    internal: true
+  phone-auth-egress:
+    driver: bridge

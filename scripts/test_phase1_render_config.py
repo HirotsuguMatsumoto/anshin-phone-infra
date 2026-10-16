@@ -24,6 +24,49 @@ def load_render_config():
     return module
 
 
+class ManagementComposeTest(unittest.TestCase):
+    def render_production(self, *, omit: str | None = None):
+        import json
+        import subprocess
+        with tempfile.TemporaryDirectory(prefix="phone-compose-") as directory:
+            env = {key: os.environ[key] for key in ("PATH", "HOME", "DOCKER_HOST", "DOCKER_CONTEXT") if key in os.environ}
+            env.update({
+                "ANSHIN_PHONE_SECRET_DIR": directory,
+                "ANSHIN_PHONE_BACKEND_IMAGE": "ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:" + "a" * 64,
+                "ANSHIN_PHONE_FAX_RETENTION_SECONDS": "604800",
+            })
+            if omit:
+                env.pop(omit)
+            result = subprocess.run(["docker", "compose", "--file", str(REPOSITORY_DIR / "compose.production.yaml"),
+                "config", "--format", "json"], cwd=directory, env=env, capture_output=True, text=True)
+            return result, json.loads(result.stdout) if result.returncode == 0 else None
+
+    def test_management_production_requires_no_carrier_and_uses_fixed_image(self):
+        result, model = self.render_production()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(set(model["services"]), {"postgres", "backend", "backend-migrate"})
+        for name in ("backend", "backend-migrate"):
+            service = model["services"][name]
+            self.assertNotIn("build", service)
+            self.assertIn("@sha256:", service["image"])
+            self.assertEqual(service["environment"]["ANSHIN_PHONE_TELEPHONY_ENABLED"], "false")
+            self.assertEqual(service["environment"]["ANSHIN_PHONE_FAX_RETENTION_SECONDS"], "604800")
+        self.assertEqual(model["services"]["backend"]["image"], model["services"]["backend-migrate"]["image"])
+        self.assertIn("phone-auth-egress", model["services"]["backend"]["networks"])
+        self.assertEqual(set(model["services"]["postgres"]["networks"]), {"phone-data"})
+        self.assertTrue(model["networks"]["phone-data"]["internal"])
+        self.assertNotIn("carrier_sip_password", model["secrets"])
+        ports = model["services"]["backend"]["ports"]
+        self.assertTrue(all(port["host_ip"] == "127.0.0.1" for port in ports))
+
+    def test_production_never_falls_back_to_local_retention_or_source_build(self):
+        for required in ("ANSHIN_PHONE_FAX_RETENTION_SECONDS", "ANSHIN_PHONE_BACKEND_IMAGE"):
+            with self.subTest(required=required):
+                result, model = self.render_production(omit=required)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIsNone(model)
+
+
 class Phase1RenderConfigTest(unittest.TestCase):
     def render(self, auth_mode: str, overrides: dict[str, str] | None = None) -> tuple[str, str, int, int]:
         module = load_render_config()
