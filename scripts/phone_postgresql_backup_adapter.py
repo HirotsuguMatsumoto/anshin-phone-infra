@@ -23,7 +23,7 @@ WRITER = 'arn:aws:iam::691862619128:role/anshin-prod-phone-postgresql-backup-wri
 
 
 def read_profile(path=CONFIG):
-    with Path(path).open('r', opener=lambda name, flags: os.open(name, flags | os.O_NOFOLLOW)) as source:
+    with open(path, 'r', opener=lambda name, flags: os.open(name, flags | os.O_NOFOLLOW)) as source:
         metadata = os.fstat(source.fileno())
         if (not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.geteuid()
                 or metadata.st_mode & 0o077 or metadata.st_size > 4096):
