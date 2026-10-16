@@ -211,6 +211,70 @@ class ProductionRuntimeTest(unittest.TestCase):
                     self.deploy(runtime)
             self.assertEqual(calls, [])
 
+    def test_initial_forward_repair_requires_same_candidate_and_exact_prior_resources(self):
+        from production_runtime import RuntimeFailure
+        import copy
+        for changed in (None, 'inode', 'image', 'missing'):
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as directory:
+                runtime, calls = self.runtime(directory)
+                candidate = {'source_root': str(runtime.root),
+                    'backend_image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'b' * 64,
+                    'backend_sha': 'b' * 40, 'infra_sha': 'c' * 40}
+                actual = {'containers': ['known-initial-container'],
+                          'volumes': [{'Name': 'known-db', 'backing': {'device': 1, 'inode': 2}}]}
+                recovery = {'candidate': candidate, 'observation': copy.deepcopy(actual)}
+                if changed == 'inode': recovery['observation']['volumes'][0]['backing']['inode'] = 3
+                if changed == 'image': recovery['candidate'] = {**candidate, 'backend_image': 'foreign'}
+                if changed == 'missing': recovery.pop('observation')
+                with patch.object(runtime, 'observation', return_value=actual):
+                    if changed is None:
+                        result = runtime.deploy(candidate['backend_image'], candidate['backend_sha'], candidate['infra_sha'],
+                                                initial_recovery=recovery)
+                        self.assertEqual(result['status'], 'deployed')
+                    else:
+                        with self.assertRaisesRegex(RuntimeFailure, 'initial_recovery_identity_changed'):
+                            runtime.deploy(candidate['backend_image'], candidate['backend_sha'], candidate['infra_sha'],
+                                           initial_recovery=recovery)
+                        self.assertEqual(calls, [])
+
+    def test_volume_observation_uses_actual_backing_inode_and_detects_recreation_or_race(self):
+        from production_runtime import Runtime, RuntimeFailure
+        import json, subprocess
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            first = root / 'first'; second = root / 'second'
+            first.mkdir(); second.mkdir()
+            name = 'phone-unit_postgres-data'
+            row = {'Name': name, 'Driver': 'local', 'Scope': 'local',
+                   'CreatedAt': '2026-10-17T00:00:00Z', 'Options': None,
+                   'Mountpoint': '/var/lib/docker/volumes/' + name + '/_data',
+                   'Labels': {'com.docker.compose.project': 'phone-unit', 'com.docker.compose.volume': 'postgres-data',
+                              'com.docker.compose.config-hash': 'a' * 64}}
+            current = [first]; reads = []; race = [False]
+            def runner(argv, **kwargs):
+                output = ''
+                if argv[:3] == ['docker', 'volume', 'ls']: output = name
+                if argv[:3] == ['docker', 'volume', 'inspect']:
+                    reads.append(name)
+                    value = {**row, **({'CreatedAt': '2026-10-18T00:00:00Z'} if race[0] and len(reads) % 2 == 0 else {})}
+                    output = json.dumps([value])
+                return subprocess.CompletedProcess(argv, 0, output, '')
+            runtime = Runtime(project='phone-unit', runner=runner,
+                              volume_stat=lambda path: Runtime.local_volume_stat(current[0]))
+            before = runtime.observation()
+            self.assertEqual(before['volumes'][0]['backing'],
+                             {'device': first.stat().st_dev, 'inode': first.stat().st_ino})
+            current[0] = second
+            after = runtime.observation()
+            self.assertNotEqual(before, after)
+            race[0] = True
+            with self.assertRaisesRegex(RuntimeFailure, 'volume_identity_changed'):
+                runtime.observation()
+            race[0] = False
+            row['Labels']['com.docker.compose.config-hash'] = 'unrecognized'
+            with self.assertRaisesRegex(RuntimeFailure, 'volume_identity_invalid'):
+                runtime.observation()
+
     def test_backup_uses_same_lock_without_recursive_acquisition_and_detects_drift(self):
         from production_runtime import RuntimeFailure
         with tempfile.TemporaryDirectory() as directory:

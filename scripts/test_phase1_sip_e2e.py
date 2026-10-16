@@ -927,7 +927,7 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
     import secrets
     import socket
     import base64
-    from production_runtime import Runtime, run_owned_process
+    from production_runtime import Runtime, RuntimeFailure, run_owned_process
 
     if not image or not backend_sha:
         raise RuntimeError('process-start=0: production image and source SHA are required')
@@ -987,16 +987,66 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
         with socket.socket() as reservation:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
+        def volume_stat(mountpoint):
+            # The daemon is inside the Mac Docker VM. Bind the already
+            # inspected backing path: unlike a named volume or -v, --mount
+            # fails if it disappeared and never creates a replacement.
+            observed = runtime.command(['docker', 'run', '--rm', '--pull', 'never', '--network', 'none',
+                '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--user', '0:0',
+                '--label', 'com.docker.compose.project=' + project,
+                '--label', 'com.docker.compose.service=volume-inspection',
+                '--mount', 'type=bind,src=' + mountpoint + ',dst=/inspect,readonly',
+                '--entrypoint', 'python', image, '-c',
+                "import os,json; s=os.lstat('/inspect'); print(json.dumps({'mode':s.st_mode,'device':s.st_dev,'inode':s.st_ino}))"], timeout=30)
+            return json.loads(observed.stdout)
         runtime = Runtime(root=ROOT, state=temporary / 'state', secrets=secret_root, project=project,
                           lock=temporary / 'release.lock', transport=transport, backend_port=port,
-                          backend_bind='127.0.0.1', compose_extra_files=(network_override,))
+                          backend_bind='127.0.0.1', compose_extra_files=(network_override,), volume_stat=volume_stat)
         infra_sha = run(['git', 'rev-parse', 'HEAD'], env=env).stdout.strip()
         profile = {'source_root': str(ROOT), 'backend_image': image, 'backend_sha': backend_sha, 'infra_sha': infra_sha}
         failed = True
         try:
-            result = runtime.deploy(image, backend_sha, infra_sha)
+            actual_health = runtime.health
+            def first_health_failure(candidate):
+                actual_health(candidate)
+                raise RuntimeFailure('phone_fixture_initial_health_failure')
+            runtime.health = first_health_failure
+            try:
+                runtime.deploy(image, backend_sha, infra_sha)
+            except RuntimeFailure as error:
+                if str(error) != 'phone_initial_deploy_failed_data_preserved':
+                    raise
+            else:
+                raise RuntimeError('production fixture did not exercise initial failure')
+            finally:
+                runtime.health = actual_health
+            if runtime.profile() is not None:
+                raise RuntimeError('failed initial deployment wrote a runtime profile')
+            # This is the native result which the existing central failed
+            # receipt will bind. No new recovery journal is introduced.
+            recovery = {'candidate': profile, 'observation': runtime.observation()}
+            runtime.compose(profile, 'exec', '-T', 'postgres', 'psql', '-U', 'anshin_phone', '-d', 'anshin_phone',
+                '-v', 'ON_ERROR_STOP=1', '-c',
+                'CREATE TABLE fixture_phone_initial_recovery (value integer PRIMARY KEY); '
+                'INSERT INTO fixture_phone_initial_recovery VALUES (1)')
+            foreign = json.loads(json.dumps(recovery))
+            foreign['observation']['volumes'][0]['backing']['inode'] += 1
+            try:
+                runtime.deploy(image, backend_sha, infra_sha, initial_recovery=foreign)
+            except RuntimeFailure as error:
+                if str(error) != 'phone_initial_recovery_identity_changed':
+                    raise
+            else:
+                raise RuntimeError('production fixture adopted a different backing identity')
+            result = runtime.deploy(image, backend_sha, infra_sha, initial_recovery=recovery)
             if result['status'] != 'deployed':
                 raise RuntimeError('production management fixture did not deploy')
+            kept = runtime.compose(profile, 'exec', '-T', 'postgres', 'psql', '-U', 'anshin_phone', '-d', 'anshin_phone',
+                '-At', '-v', 'ON_ERROR_STOP=1', '-c', 'SELECT value FROM fixture_phone_initial_recovery').stdout.strip()
+            if kept != '1':
+                raise RuntimeError('initial forward repair lost existing database data')
+            if runtime.observation()['volumes'] != recovery['observation']['volumes']:
+                raise RuntimeError('initial forward repair recreated a persistent volume')
             container = runtime.compose(profile, 'ps', '--quiet', 'backend').stdout.strip()
             published = json.loads(runtime.command(['docker', 'inspect', '--format',
                 '{{json .NetworkSettings.Ports}}', container]).stdout)
@@ -1019,7 +1069,7 @@ for path,headers,expected in [
   raise AssertionError('management/carrier boundary unexpectedly open')
 '''
             runtime.compose(profile, 'exec', '-T', 'backend', 'python', '-c', probe)
-            print('PASS: immutable production image -> actual settings -> migration -> readiness; unauthenticated management denied and telephony disabled', flush=True)
+            print('PASS: immutable image -> actual settings/migration -> initial failure -> exact-resource forward repair -> readiness; DB data and volume identities retained; foreign identity/unauthenticated management denied and telephony disabled', flush=True)
             # Resource evidence is a fixture measurement, not VM capacity acceptance.
             measurements = {}
             for service in ('backend', 'postgres'):

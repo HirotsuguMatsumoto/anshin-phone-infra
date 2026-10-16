@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
 
@@ -63,13 +64,19 @@ class RuntimeFailure(RuntimeError):
 class Runtime:
     def __init__(self, *, root=ROOT, state=STATE, secrets=SECRETS, project=PROJECT,
                  lock=LOCK, runner=run_owned_process, backend_port=8010,
-                 backend_bind='10.91.40.10', transport=None, compose_extra_files=()):
+                 backend_bind='10.91.40.10', transport=None, compose_extra_files=(), volume_stat=None):
         self.root, self.state, self.secrets = Path(root), Path(state), Path(secrets)
         self.project, self.lock, self.runner = project, Path(lock), runner
         self.backend_port = backend_port
         self.backend_bind = backend_bind
         self.transport = dict(transport or {})
         self.compose_extra_files = tuple(map(Path, compose_extra_files))
+        self.volume_stat = volume_stat or self.local_volume_stat
+
+    @staticmethod
+    def local_volume_stat(path):
+        metadata = Path(path).lstat()
+        return {'mode': metadata.st_mode, 'device': metadata.st_dev, 'inode': metadata.st_ino}
 
     def command(self, argv, *, env=None, timeout=180, allow_failure=False):
         try:
@@ -136,14 +143,42 @@ class Runtime:
         selector = f'label=com.docker.compose.project={self.project}'
         ids = self.command(['docker', 'ps', '--all', '--quiet', '--no-trunc', '--filter', selector]).stdout.split()
         names = self.command(['docker', 'volume', 'ls', '--format', '{{.Name}}']).stdout.split()
-        volumes = [name for name in names if name in {
-            self.project + '_postgres-data', self.project + '_fax-protected-storage'}]
+        volumes = []
+        for name in sorted(names):
+            if name not in {self.project + '_postgres-data', self.project + '_fax-protected-storage'}:
+                continue
+            def inspect_volume():
+                rows = json.loads(self.command(['docker', 'volume', 'inspect', name]).stdout)
+                if not isinstance(rows, list) or len(rows) != 1:
+                    raise RuntimeFailure('phone_volume_identity_invalid')
+                row = rows[0]
+                labels = row.get('Labels') or {}
+                if (row.get('Name') != name or row.get('Driver') != 'local' or row.get('Scope') != 'local'
+                        or row.get('Options') not in (None, {})
+                        or row.get('Mountpoint') != '/var/lib/docker/volumes/' + name + '/_data'
+                        or labels.get('com.docker.compose.project') != self.project
+                        or labels.get('com.docker.compose.volume') != name[len(self.project) + 1:]
+                        or set(labels) - {'com.docker.compose.project', 'com.docker.compose.volume',
+                                          'com.docker.compose.version', 'com.docker.compose.config-hash'}
+                        or ('com.docker.compose.config-hash' in labels
+                            and not re.fullmatch(r'[0-9a-f]{64}', labels['com.docker.compose.config-hash']))
+                        or not isinstance(row.get('CreatedAt'), str)):
+                    raise RuntimeFailure('phone_volume_identity_invalid')
+                return {key: row[key] for key in ('Name', 'Driver', 'Scope', 'CreatedAt', 'Mountpoint', 'Labels', 'Options')}
+            observed = inspect_volume()
+            backing = self.volume_stat(observed['Mountpoint'])
+            if (not isinstance(backing, dict) or set(backing) != {'mode', 'device', 'inode'}
+                    or type(backing['mode']) is not int or not stat.S_ISDIR(backing['mode'])
+                    or any(type(backing[key]) is not int or backing[key] <= 0 for key in ('device', 'inode'))
+                    or inspect_volume() != observed):
+                raise RuntimeFailure('phone_volume_identity_changed')
+            volumes.append({**observed, 'backing': {key: backing[key] for key in ('device', 'inode')}})
         containers = []
         for identifier in sorted(ids):
             projected = self.command(['docker', 'inspect', '--format',
                 '{{json .Id}} {{json .Image}} {{json .State.StartedAt}} {{json .RestartCount}}', identifier]).stdout.strip()
             containers.append(projected)
-        return {'containers': containers, 'volumes': sorted(volumes)}
+        return {'containers': containers, 'volumes': volumes}
 
     def health(self, profile):
         identifiers = self.compose(profile, 'ps', '--quiet', 'backend').stdout.split()
@@ -192,17 +227,27 @@ class Runtime:
             os.fsync(output.fileno())
         os.replace(temporary, path)
 
-    def deploy(self, image, backend_sha, infra_sha):
+    def deploy(self, image, backend_sha, infra_sha, *, initial_recovery=None):
         if not IMAGE.fullmatch(image) or not SHA.fullmatch(backend_sha) or not SHA.fullmatch(infra_sha):
             raise RuntimeFailure('phone_release_input_invalid')
         candidate = {'source_root': str(self.root), 'backend_image': image,
                      'backend_sha': backend_sha, 'infra_sha': infra_sha}
         previous = self.profile()
         before = self.observation()
+        if initial_recovery is not None:
+            # The central release owner supplies its existing failed result.
+            # It owns receipt/source binding; this consumer only rechecks the
+            # exact resources and candidate before forward repair.
+            if (previous is not None or not isinstance(initial_recovery, dict)
+                    or set(initial_recovery) != {'candidate', 'observation'}
+                    or initial_recovery['candidate'] != candidate
+                    or initial_recovery['observation'] != before
+                    or not (before['containers'] or before['volumes'])):
+                raise RuntimeFailure('phone_initial_recovery_identity_changed')
         if previous:
             self.health(previous)
             self.backup()
-        elif before['containers'] or before['volumes']:
+        elif (before['containers'] or before['volumes']) and initial_recovery is None:
             raise RuntimeFailure('phone_existing_data_without_profile')
         with self.exclusive():
             if self.profile() != previous or self.observation() != before:
