@@ -271,7 +271,8 @@ class PhoneBackupAdapterTest(unittest.TestCase):
         self.assertEqual(env['POSTGRES_BACKUP_EXPECTED_CONTAINER_ID'], 'c' * 64)
         self.assertEqual(env['POSTGRES_BACKUP_SOURCE_FIXED_SHA'], 'b' * 40)
         self.assertEqual(env['DOCKER_HOST'], 'unix:///var/run/docker.sock')
-        self.assertEqual(env['POSTGRES_BACKUP_COMPOSE_ENV_FILE'], '/dev/null')
+        self.assertEqual(env['POSTGRES_BACKUP_CONTAINER_NAME'], 'anshin-phone-production-postgres-1')
+        self.assertNotIn('POSTGRES_BACKUP_COMPOSE_ENV_FILE', env)
         self.assertEqual(env['AWS_PROFILE'], 'anshin-phone-backup-writer')
         self.assertEqual(env['ANSHIN_PHONE_BACKEND_IMAGE'], profile['backend_image'])
         self.assertNotIn('AWS_ACCESS_KEY_ID', env)
@@ -294,6 +295,7 @@ class PhoneBackupAdapterTest(unittest.TestCase):
             runtime.environment.return_value = {}
             runtime.profile.return_value = installed
             runtime.compose.return_value = subprocess.CompletedProcess([], 0, 'c' * 64, '')
+            runtime.command.return_value = subprocess.CompletedProcess([], 0, '/anshin-phone-production-postgres-1', '')
             self.assertEqual(scheduled_backup(runtime=runtime, config_path=config)['status'], 'completed')
             self.assertEqual(runtime.command.call_args.kwargs['timeout'], 1100)
             self.assertEqual(runtime.command.call_args.args[0], ['bash', '/opt/anshin-phone-backup/sh/backup_postgresql_to_s3.sh'])

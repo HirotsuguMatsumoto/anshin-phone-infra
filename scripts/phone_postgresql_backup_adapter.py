@@ -46,7 +46,7 @@ def environment(runtime, installed, config, container_id):
     values = {
         'COMPONENT': 'phone', 'COMPOSE_PROJECT': runtime.project, 'COMPOSE_SERVICE': 'postgres',
         'COMPOSE_FILE': str(Path(installed['source_root']) / 'compose.production.yaml'),
-        'COMPOSE_ENV_FILE': '/dev/null', 'EXPECTED_CONTAINER_ID': container_id,
+        'CONTAINER_NAME': runtime.project + '-postgres-1', 'EXPECTED_CONTAINER_ID': container_id,
         'DATABASE': 'anshin_phone', 'DATABASE_USER': 'anshin_phone',
         'SOURCE_ID': 'ms-a2-2/phone-postgresql', 'SOURCE_FIXED_SHA': installed['backend_sha'],
         'S3_BUCKET': BUCKET, 'S3_PREFIX': 'postgresql/phone',
@@ -70,6 +70,9 @@ def scheduled_backup(*, runtime=None, config_path=CONFIG, install=INSTALL):
     identifiers = runtime.compose(installed, 'ps', '--quiet', '--no-trunc', 'postgres').stdout.split()
     if len(identifiers) != 1:
         raise RuntimeFailure('phone_backup_database_identity_invalid')
+    actual_name = runtime.command(['docker', 'inspect', '--format', '{{.Name}}', identifiers[0]]).stdout.strip()
+    if actual_name != '/' + runtime.project + '-postgres-1':
+        raise RuntimeFailure('phone_backup_database_name_mismatch')
     env = environment(runtime, installed, config, identifiers[0])
     # This is the sole producer: it owns locking, age, AES256, exact-version
     # readback and the existing receipt. Phone support (including identity
