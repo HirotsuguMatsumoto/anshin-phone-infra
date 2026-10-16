@@ -126,3 +126,13 @@ Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所�
 ownerは「Clocoと同じ月単位（毎月5日に前月分を削除）」を指定した。production ComposeはBackendとmigrationへ`ANSHIN_PHONE_FAX_RETENTION_POLICY=cloco_previous_month`を渡し、Backendに継承されたlocalの秒数defaultを空へ上書きする。保存受付月の翌月5日00:00 JSTを期限とし、原本だけを対象とする。既存S3標準31日・通信履歴・監査の保持は変更しない。境界、replay、catch-up、削除範囲のsourceとconsumer契約は`anshin.phone.backend.foundation-runtime-contract`を正本とする。
 
 既存production cron ownerから同じfixed imageのBackend内`python -m app.core.fax_retention`を呼ぶ。VM・adapter・schedulerは未配備であり、sourceやCompose検証を実発火成功と扱わない。PBX一時TIFFとdead-letterのcleanupはtelephony有効化前の別受入事項として残す。
+
+
+## Phone PostgreSQL専用backup資源の具体化
+
+既存中央owner `scripts/postgresql_backup_storage.py` のPhone projectionを使い、既設classをPostgreSQL専用へ展開する。正本のbucket名は `anshin-prod-phone-postgresql-backup-691862619128`、KMS aliasは `alias/anshin-prod-phone-postgresql-backup` とし、既存Roles Anywhere anchorとPhone VM用のwriter/restore CNへ限定する。専用bucket・CMK・KMS alias・writer/restore role・writer/restore profile・bucket policyの8資源であり、他製品stackを変更しない。
+
+Governance 31日、Versioning、purposeごとの最小権限を維持し、元templateの30日expirationを持ち込まない。FAX・録音のbucket、CMK、principalをDB backupと共有しない。既存bucketへの転送増加と、新しいKMS/bucket資源の作成許可は区別し、最新費用規程に基づく具体的owner許可後だけ作成する。source、ValidateTemplate又はstack作成の成功を4世代backup・隔離restoreの成功へ読み替えない。
+
+
+FAX保護原本のoff-host backupは別projectionとし、`anshin-prod-phone-fax-691862619128`、`alias/anshin-prod-phone-fax`、`fax/*`専用のwriter/restore role/profileを使う。DBとFAXは各8資源、合計16資源で相互アクセスを許可しない。FAXの通常原本はBackendの月単位期限に従い、off-host backupは31日保護を維持する。bucketへ自動expirationを追加しない。通信停止中の録音用資源は今回作成しない。
