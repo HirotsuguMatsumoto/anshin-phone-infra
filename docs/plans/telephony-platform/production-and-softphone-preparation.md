@@ -87,6 +87,8 @@ Core/Authの18/7GiBを維持し、MS-A2-1にPhone専用project `anshin-phone`、
 
 固定入口`provision-phone-vm-v1`は既存origin、Worker carrier、sudo資格、release.lock、Release Plan DEPLOYと標準receiptを使う。Phone専用guardを最初の通信前に適用し、Core/Auth/既存workerを停止・再起動しない。本節時点ではsource実装・検査中で、VM/bridge/pool未作成・容量未受入・本番API/公開/復旧未完了である。全体構成3文書はinfra担当が同じ候補・未適用状態へ同期し、Phone writerが構築後の実結果を次の直列変更で同期する。
 
+Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbindする設計とする。直接のmanagement Composeはloopbackを既定とし、既存の実Docker fixtureも明示loopbackで動作する。描画値と実containerのHostIp/HostPortは区別して検証し、private ingressとEdgeの閉じた公開経路は後続の中央releaseで同期する。今回のsource変更だけでAPI公開済みとは扱わない。子processの回収が確認不能な場合は追加cleanup/migration/rollbackを続けず、既存の失敗enumで未確認として保全する。guest lock・backup source IDは共通producerのPhone対応mainと同じ変更束で同期するまで従来契約を維持する。
+
 ## 本番反映へ向けた実装単位
 
 | 作業 | 対象・既存資産 | 完了に使う結果 |

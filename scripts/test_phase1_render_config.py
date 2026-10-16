@@ -47,7 +47,7 @@ class ManagementComposeTest(unittest.TestCase):
                     for name in ("backend", "backend-migrate"):
                         self.assertEqual(services[name]["build"]["context"], expected)
 
-    def render_production(self, *, omit: str | None = None):
+    def render_production(self, *, omit: str | None = None, bind_ip: str | None = None):
         import json
         import subprocess
         with tempfile.TemporaryDirectory(prefix="phone-compose-") as directory:
@@ -56,6 +56,8 @@ class ManagementComposeTest(unittest.TestCase):
                 "ANSHIN_PHONE_SECRET_DIR": directory,
                 "ANSHIN_PHONE_BACKEND_IMAGE": "ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:" + "a" * 64,
             })
+            if bind_ip is not None:
+                env['ANSHIN_PHONE_BACKEND_BIND_IP'] = bind_ip
             if omit:
                 env.pop(omit)
             result = subprocess.run(["docker", "compose", "--file", str(REPOSITORY_DIR / "compose.production.yaml"),
@@ -90,6 +92,14 @@ class ManagementComposeTest(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIsNone(model)
 
+    def test_production_compose_accepts_phone_private_binding_only_on_backend(self):
+        result, model = self.render_production(bind_ip='10.91.40.10')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(model['services']['backend']['ports'][0]['host_ip'], '10.91.40.10')
+        self.assertEqual(model['services']['backend']['ports'][0]['target'], 8000)
+        self.assertNotIn('ports', model['services']['postgres'])
+        self.assertNotIn('ports', model['services']['backend-migrate'])
+
     def test_production_retention_input_is_accepted_by_backend_settings(self):
         import json
         import subprocess
@@ -120,10 +130,11 @@ class ManagementComposeTest(unittest.TestCase):
 
 class ProductionRuntimeTest(unittest.TestCase):
     def runtime(self, directory, *, migration_failure=False, migration_timeout=False, stop_failure=False,
-                candidate_health_failure=False, rollback_health_failure=False):
+                candidate_health_failure=False, rollback_health_failure=False,
+                settings_unknown=False, migration_unknown=False, compose_extra_files=()):
         import json
         import subprocess
-        from production_runtime import Runtime
+        from production_runtime import Runtime, RuntimeFailure
         calls = []
         root = Path(directory)
         state = {'image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'a' * 64,
@@ -150,9 +161,13 @@ class ProductionRuntimeTest(unittest.TestCase):
                 elif rollback_health_failure and state['candidate_failed']:
                     code = 1
             elif 'backend-migrate' in argv and 'run' in argv:
+                if migration_unknown:
+                    raise RuntimeFailure('phone_command_children_unknown')
                 if migration_timeout:
                     raise subprocess.TimeoutExpired(argv, 180)
                 code = int(migration_failure)
+            elif 'run' in argv and '--entrypoint' in argv and settings_unknown:
+                raise RuntimeFailure('phone_command_children_unknown')
             elif argv[:3] == ['docker', 'ps', '--all'] and any('migration' in arg for arg in argv):
                 output = 'owned-migration' if migration_timeout else ''
             elif argv[:2] == ['docker', 'stop']:
@@ -162,7 +177,8 @@ class ProductionRuntimeTest(unittest.TestCase):
             return subprocess.CompletedProcess(argv, code, output, 'private diagnostic never printed')
 
         runtime = Runtime(root=root / 'candidate', state=root / 'state', secrets=root / 'secrets',
-                          project='phone-unit', lock=root / 'release.lock', runner=runner)
+                          project='phone-unit', lock=root / 'release.lock', runner=runner,
+                          compose_extra_files=compose_extra_files)
         return runtime, calls
 
     def previous(self, runtime):
@@ -273,10 +289,82 @@ class ProductionRuntimeTest(unittest.TestCase):
 
     def test_production_environment_pins_local_daemon(self):
         from production_runtime import Runtime
-        with patch.dict(os.environ, {'DOCKER_HOST': 'tcp://foreign.invalid:2375', 'DOCKER_CONTEXT': 'foreign'}):
-            env = Runtime().environment()
+        with patch.dict(os.environ, {'DOCKER_HOST': 'tcp://foreign.invalid:2375', 'DOCKER_CONTEXT': 'foreign',
+                                    'ANSHIN_PHONE_BACKEND_BIND_IP': '0.0.0.0'}):
+            env = Runtime(transport={'ANSHIN_PHONE_BACKEND_BIND_IP': '0.0.0.0'}).environment()
             self.assertEqual(env['DOCKER_HOST'], 'unix:///var/run/docker.sock')
             self.assertNotIn('DOCKER_CONTEXT', env)
+            self.assertEqual(env['ANSHIN_PHONE_BACKEND_BIND_IP'], '10.91.40.10')
+            self.assertEqual(Runtime(backend_bind='127.0.0.1').environment()['ANSHIN_PHONE_BACKEND_BIND_IP'], '127.0.0.1')
+
+    def test_unconfirmed_settings_or_migration_children_never_mutate_cleanup_or_rollback(self):
+        from production_runtime import RuntimeFailure
+        from unittest.mock import call
+        for phase in ('settings', 'migration'):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
+                runtime, calls = self.runtime(raw, **{phase + '_unknown': True})
+                previous = self.previous(runtime)
+                with patch.object(runtime, 'backup'), patch.object(runtime, 'stop_oneoff', wraps=runtime.stop_oneoff) as cleanup:
+                    with self.assertRaisesRegex(RuntimeFailure, 'phone_command_children_unknown'):
+                        self.deploy(runtime)
+                self.assertEqual(cleanup.call_args_list, [] if phase == 'settings' else [call('settings', 'backend')])
+                self.assertFalse(any('stop' in argv or 'rm' in argv or ('up' in argv and argv[-1] == 'backend') for argv, _ in calls))
+                self.assertEqual(runtime.profile(), previous)
+
+    def test_fixture_network_file_is_explicit_and_follows_production_through_cleanup(self):
+        with tempfile.TemporaryDirectory() as raw:
+            runtime, calls = self.runtime(raw)
+            profile = self.previous(runtime)
+            with patch.dict(os.environ, {'COMPOSE_FILE': '/foreign/override.yaml'}):
+                runtime.compose(profile, 'config')
+            self.assertEqual(calls[-1][0].count('--file'), 1)
+            self.assertNotIn('COMPOSE_FILE', calls[-1][1])
+            extra = Path(raw) / 'fixture-networks.json'
+            fixture, calls = self.runtime(Path(raw) / 'fixture', compose_extra_files=(extra,))
+            profile = self.previous(fixture)
+            for args in (('run', '--rm', 'backend'), ('exec', '-T', 'backend', 'true'),
+                         ('down', '--volumes', '--remove-orphans')):
+                fixture.compose(profile, *args)
+                command = calls[-1][0]
+                first = command.index('--file')
+                self.assertEqual(command[first:first + 4],
+                    ['--file', str(Path(profile['source_root']) / 'compose.production.yaml'), '--file', str(extra)])
+                self.assertEqual(command[first + 4:], list(args))
+
+    def test_owned_process_stops_descendants_when_leader_exits_or_term_closes_pipes(self):
+        import signal, subprocess, sys, time
+        from production_runtime import run_owned_process
+        real_popen = subprocess.Popen
+        for leader_exit in (True, False):
+            with self.subTest(leader_exit=leader_exit), tempfile.TemporaryDirectory() as raw:
+                path = Path(raw) / 'child-pid'; processes = []
+                child = ('import os,signal,time; from pathlib import Path; '
+                         'signal.signal(signal.SIGTERM,lambda *_:(os.close(1),os.close(2))); '
+                         'Path(' + repr(str(path)) + ').write_text(str(os.getpid())); time.sleep(30)')
+                parent = ('import subprocess,sys,time; from pathlib import Path; '
+                          'subprocess.Popen([sys.executable,"-c",' + repr(child) + ']); '
+                          'p=Path(' + repr(str(path)) + '); '
+                          '\nwhile not p.exists(): time.sleep(0.01)\n' + ('' if leader_exit else 'time.sleep(30)'))
+                def launch(*args, **kwargs):
+                    process = real_popen(*args, **kwargs); processes.append(process); return process
+                try:
+                    with patch('production_runtime.subprocess.Popen', side_effect=launch):
+                        with self.assertRaises(subprocess.TimeoutExpired):
+                            run_owned_process([sys.executable, '-c', parent], timeout=2,
+                                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                    deadline = time.monotonic() + 2
+                    while True:
+                        state = subprocess.run(['ps', '-p', path.read_text().strip(), '-o', 'stat='],
+                            text=True, capture_output=True, timeout=5).stdout.strip()
+                        if not state or state.startswith('Z'):
+                            break
+                        self.assertLess(time.monotonic(), deadline, 'owned descendant still executing')
+                        time.sleep(0.02)
+                finally:
+                    for process in processes:
+                        try: os.killpg(process.pid, signal.SIGKILL)
+                        except ProcessLookupError: pass
+                        process.wait(timeout=5)
 
 
 class PhoneBackupAdapterTest(unittest.TestCase):

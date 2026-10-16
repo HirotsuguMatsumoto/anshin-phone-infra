@@ -42,14 +42,17 @@ def run_owned_process(argv, **kwargs):
     try:
         stdout, stderr = process.communicate(timeout=timeout)
         return subprocess.CompletedProcess(argv, process.returncode, stdout, stderr)
-    except (subprocess.TimeoutExpired, KeyboardInterrupt):
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGTERM)
+    except BaseException:
+        for stop_signal in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.killpg(process.pid, stop_signal)
+            except ProcessLookupError:
+                pass
             try:
                 process.communicate(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                process.communicate()
+                if stop_signal == signal.SIGKILL:
+                    raise RuntimeFailure('phone_command_children_unknown') from None
         raise
 
 
@@ -59,11 +62,14 @@ class RuntimeFailure(RuntimeError):
 
 class Runtime:
     def __init__(self, *, root=ROOT, state=STATE, secrets=SECRETS, project=PROJECT,
-                 lock=LOCK, runner=run_owned_process, backend_port=8010, transport=None):
+                 lock=LOCK, runner=run_owned_process, backend_port=8010,
+                 backend_bind='10.91.40.10', transport=None, compose_extra_files=()):
         self.root, self.state, self.secrets = Path(root), Path(state), Path(secrets)
         self.project, self.lock, self.runner = project, Path(lock), runner
         self.backend_port = backend_port
+        self.backend_bind = backend_bind
         self.transport = dict(transport or {})
+        self.compose_extra_files = tuple(map(Path, compose_extra_files))
 
     def command(self, argv, *, env=None, timeout=180, allow_failure=False):
         try:
@@ -94,15 +100,21 @@ class Runtime:
         # guest-local daemon and inherits no ambient Compose/AWS/DB inputs.
         env.update(self.transport)
         env.update(ANSHIN_PHONE_SECRET_DIR=str(self.secrets),
-                   ANSHIN_PHONE_BACKEND_PORT=str(self.backend_port))
+                   ANSHIN_PHONE_BACKEND_PORT=str(self.backend_port),
+                   ANSHIN_PHONE_BACKEND_BIND_IP=self.backend_bind)
         if profile:
             env['ANSHIN_PHONE_BACKEND_IMAGE'] = profile['backend_image']
         return env
 
     def compose(self, profile, *args, timeout=180, allow_failure=False):
-        return self.command(['docker', 'compose', '--project-name', self.project,
+        command = ['docker', 'compose', '--project-name', self.project,
             '--project-directory', profile['source_root'], '--env-file', '/dev/null',
-            '--file', str(Path(profile['source_root']) / 'compose.production.yaml'), *args],
+            '--file', str(Path(profile['source_root']) / 'compose.production.yaml')]
+        # Explicit fixture input only. The production CLI never obtains extra
+        # files from argv or ambient COMPOSE_FILE.
+        for path in self.compose_extra_files:
+            command.extend(('--file', str(path)))
+        return self.command([*command, *args],
             env=self.environment(profile), timeout=timeout, allow_failure=allow_failure)
 
     @contextmanager
@@ -201,11 +213,16 @@ class Runtime:
                 '{{index .Config.Labels "org.opencontainers.image.revision"}}', image]).stdout.strip()
             if revision != backend_sha:
                 raise RuntimeFailure('phone_image_revision_mismatch')
+            settings_unknown = False
             try:
                 self.compose(candidate, 'run', '--rm', '--no-deps', '--name', self.project + '-settings',
                              '--entrypoint', 'python', 'backend', '-c', SETTINGS_CHECK, timeout=60)
+            except RuntimeFailure as error:
+                settings_unknown = str(error) == 'phone_command_children_unknown'
+                raise
             finally:
-                self.stop_oneoff('settings', 'backend')
+                if not settings_unknown:
+                    self.stop_oneoff('settings', 'backend')
             try:
                 self.compose(candidate, 'up', '--detach', '--wait', '--wait-timeout', '90', 'postgres')
                 self.compose(candidate, 'run', '--rm', '--no-deps', '--name', self.project + '-migration',
@@ -214,7 +231,9 @@ class Runtime:
                 result = self.health(candidate)
                 self.save(candidate)
                 return {**result, 'status': 'deployed'}
-            except (RuntimeFailure, OSError, ValueError, KeyError, KeyboardInterrupt):
+            except (RuntimeFailure, OSError, ValueError, KeyError, KeyboardInterrupt) as error:
+                if isinstance(error, RuntimeFailure) and str(error) == 'phone_command_children_unknown':
+                    raise
                 # A timed-out Compose CLI can leave its one-off migration alive.
                 # Stop that owned process before attempting application rollback.
                 self.stop_oneoff('migration', 'backend-migrate')

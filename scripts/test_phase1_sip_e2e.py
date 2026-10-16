@@ -46,7 +46,7 @@ MOCK_SUBNETS = ("10.254.250.0/24", "10.254.251.0/24")
 
 
 @contextmanager
-def docker_heavy_lease():
+def docker_test_lease():
     descriptor = os.open(DOCKER_HEAVY_LOCK_PATH, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
     lock_stat = os.fstat(descriptor)
     if (
@@ -59,9 +59,9 @@ def docker_heavy_lease():
         raise RuntimeError("Docker-heavy resource lease is not an owner-only regular file")
     with os.fdopen(descriptor, "r+") as lock_file:
         try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_SH | fcntl.LOCK_NB)
         except BlockingIOError as exc:
-            raise RuntimeError("another Docker-heavy build, test, or cleanup owns the resource lease") from exc
+            raise RuntimeError("exclusive Docker cleanup or rebuild owns the resource lease") from exc
         yield
 
 
@@ -932,12 +932,19 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
     if not image or not backend_sha:
         raise RuntimeError('process-start=0: production image and source SHA are required')
     env = os.environ.copy()
+    ensure_mock_networks_available(env)
     project = 'phone-management-' + uuid.uuid4().hex[:12]
     transport = {key: env[key] for key in ('PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG') if key in env}
     if not transport.get('DOCKER_HOST'):
         transport['DOCKER_HOST'] = run(['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], env=env).stdout.strip()
     with tempfile.TemporaryDirectory(prefix='phone-production-fixture-') as directory:
         temporary = Path(directory)
+        network_override = temporary / 'production-fixture-networks.json'
+        network_override.write_text(json.dumps({'networks': {
+            name: {'ipam': {'config': [{'subnet': subnet}]}}
+            for name, subnet in zip(('phone-data', 'phone-auth-egress'), MOCK_SUBNETS, strict=True)
+        }}))
+        network_override.chmod(0o600)
         # Reuse the owner-issued publisher credential without touching the
         # user's Docker config or Keychain. Values remain in stdin/memory and
         # the private temporary credential file until the last consumer exits.
@@ -981,7 +988,8 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
             reservation.bind(('127.0.0.1', 0))
             port = reservation.getsockname()[1]
         runtime = Runtime(root=ROOT, state=temporary / 'state', secrets=secret_root, project=project,
-                          lock=temporary / 'release.lock', transport=transport, backend_port=port)
+                          lock=temporary / 'release.lock', transport=transport, backend_port=port,
+                          backend_bind='127.0.0.1', compose_extra_files=(network_override,))
         infra_sha = run(['git', 'rev-parse', 'HEAD'], env=env).stdout.strip()
         profile = {'source_root': str(ROOT), 'backend_image': image, 'backend_sha': backend_sha, 'infra_sha': infra_sha}
         failed = True
@@ -989,6 +997,11 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
             result = runtime.deploy(image, backend_sha, infra_sha)
             if result['status'] != 'deployed':
                 raise RuntimeError('production management fixture did not deploy')
+            container = runtime.compose(profile, 'ps', '--quiet', 'backend').stdout.strip()
+            published = json.loads(runtime.command(['docker', 'inspect', '--format',
+                '{{json .NetworkSettings.Ports}}', container]).stdout)
+            if published.get('8000/tcp') != [{'HostIp': '127.0.0.1', 'HostPort': str(port)}]:
+                raise RuntimeError('production fixture actual API binding differs')
             runtime.compose(profile, 'exec', '-T', 'backend', 'python', '-c',
                 "from sqlalchemy import text; from app.core.database import engine; "
                 "c=engine.connect(); assert c.execute(text('SELECT version_num FROM alembic_version')).scalar(); c.close()")
@@ -1038,7 +1051,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.preflight:
         return run_isolated_e2e(preflight_only=True)
-    with docker_heavy_lease():
+    with docker_test_lease():
         if args.fixture == 'production':
             return run_production_management_fixture(args.backend_image, args.backend_sha)
         return run_isolated_e2e(fixture_only=args.fixture)

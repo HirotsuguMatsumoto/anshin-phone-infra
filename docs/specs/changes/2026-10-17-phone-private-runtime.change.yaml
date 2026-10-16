@@ -1,0 +1,71 @@
+schema_version: 1
+change_id: anshin.phone.private-runtime.2026-10-17
+title: Phone専用guestの固定private API bindingと子process終了を同期する
+owner: anshin-phone-infra
+status: review
+risk_level: high
+production_change: false
+spec_ids: [anshin.governance.ai-driven-development, anshin.governance.local-docker-resource-operation, anshin.phone.production-and-softphone-preparation, anshin.phone.backend.foundation-runtime-contract, anshin.release.contract]
+repositories: [anshin-phone-infra]
+code_paths:
+  - anshin-phone-infra/scripts/production_runtime.py
+  - anshin-phone-infra/compose.management.yaml
+contract_paths:
+  - anshin-phone-infra/docs/specs/changes/2026-10-17-phone-private-runtime.change.yaml
+  - anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md
+generated_artifacts: []
+test_paths: [anshin-phone-infra/scripts/test_phase1_render_config.py, anshin-phone-infra/scripts/test_phase1_sip_e2e.py, anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py]
+invariants:
+  - 基礎Phone専用guest MS-A2-1/anshin-phone/ms-a2-1-phoneのprivate APIは10.91.40.10とする。VM構築や容量受入済みとは扱わない
+  - production CLIはfixed private IPv4を供給しambient環境のDocker endpointやbind値を継承しない
+  - 既存management Composeの直接実行は127.0.0.1を既定としlocal UI/runtimeを公開しない。実Docker fixtureだけ明示loopbackを使う
+  - 許可する本番API経路とEdge ingress guardの適用は後続中央配備ownerの同じreleaseで同期する。本変更だけで公開しない
+  - 固定image/DB migration/実Settings/health/既存rollbackとdata保全を維持する
+  - run_owned_processの異常終了ではleader exitの有無に依存せず自分のPGIDだけTERM/KILLし最終drainを有界にする。確認不能を成功又はrollback済みへ読み替えない
+  - 既存guest lockとbackup producerのlock契約は共通producerのPhone対応main確定までは変更しない
+  - 新しいSSH/account/key/authority/署名/journal/receipt/gateを追加せず実secretをsource/argv/logへ含めない
+  - Phoneの既存test leaseは同じ既設lockfileのshared flockへ同期する。各processが自分のfdを取得し最後のconsumerと自分のcleanupまで保持する。global cleanup/rebuildのexclusiveを迂回せず新しいlockfile/queueを追加しない
+  - 実production fixtureでDocker既定address pool枯渇を確認したため、既存Phone mock用2subnetの非重複preflightを再利用しfixtureだけのCompose追加fileで2networkのIPAMを明示する。production source/CLIのnetwork設定は変更せずnative CLIにoverride selectorを公開しない
+  - 助成4機能、carrier・顧客開通、Core/Auth変更、新AWS資源を含めない
+acceptance_criteria:
+  - 実Compose consumerが既定loopbackと明示private/fixture bindを描画しbackendだけへ反映する
+  - 後続の既存実Docker fixtureは実HostIp/HostPortを確認する。本束の描画確認を実private ingress/Edge到達確認へ読み替えない
+  - production Runtimeは実env設定を固定しforeign bind入力を継承しない
+  - 既存suiteでleader先行終了/TERM時のpipe閉鎖後生存を実processで再現し対象PGIDの停止を確認する
+  - 有界回収不能を既存RuntimeFailure enumで失敗させmigration又はrollbackを続けない
+  - 既存fixtureで実process間shared同居とexclusive拒否を確認しhelp/preflightはleaseを取得しない
+  - fixture overrideは既存production Composeの後に読み、settings/migration/health/rollback/cleanupの全consumer完了まで維持する。DB/FAX/認証/secret/imageの設定やassertを変更しない
+  - 変更pathの既存canonicalと固定SHA独立reviewを通しmainへ統合する。実install/公開/復旧とは分ける
+out_of_scope: [VM native適用, Edge guard/proxy適用, backup lock置換, 新しい汎用transport, 実carrier, 助成対象4機能]
+rollout:
+  strategy: existing-phone-compose-owner
+  steps: [編集前設計review, 既存consumerと回帰caseの同期, canonical及びfixed SHA review, 最新mainへ統合, 後続の中央配備releaseで適用]
+  triggers: [本人の基礎Phone本番化継続指示]
+rollback:
+  strategy: previous-qualified-source-and-image
+  steps: [未適用中は直前sourceを維持する, 適用後は既存ownerで直前Compose/imageへ戻しDBとFAXを保持する]
+  triggers: [consumer又はhealth失敗]
+monitoring:
+  owner: anshin-phone-infra
+  signals: [Compose host_ipと実env, 対象process groupの終了, 既存healthとrollback結果]
+  observation_period: source qualification及び後続native配備まで
+approvals: []
+concurrency:
+  strategy: isolated-worktree
+  branches: {anshin-phone-infra: task/phone-production-20261016}
+  base_commits: {anshin-phone-infra: 6dcd78fa7d91763ea1acac57c6866312480589a1}
+  owned_paths:
+    - anshin-phone-infra/scripts/production_runtime.py
+    - anshin-phone-infra/compose.management.yaml
+    - anshin-phone-infra/scripts/test_phase1_render_config.py
+    - anshin-phone-infra/scripts/test_phase1_sip_e2e.py
+    - anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py
+    - anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md
+    - anshin-phone-infra/docs/specs/changes/2026-10-17-phone-private-runtime.change.yaml
+  pre_edit_blob_ids:
+    anshin-phone-infra/scripts/production_runtime.py: b2ba11db9aef238235af45425a91fe89d3c5c76b
+    anshin-phone-infra/compose.management.yaml: e7f35be1c583e7178a9a093abe6ec980b7fe2ecd
+    anshin-phone-infra/scripts/test_phase1_render_config.py: fcf9d03e534e187ac0492071af5337dcb3f2693f
+    anshin-phone-infra/scripts/test_phase1_sip_e2e.py: 10a9914c75d1e1ce512c31d30c8cc2fc00e57581
+    anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py: 941eb11915c595bda50e8ec31a6e3738012f793c
+    anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md: a2f0658256f393e3473a7cbee7c8d0dd350ed920

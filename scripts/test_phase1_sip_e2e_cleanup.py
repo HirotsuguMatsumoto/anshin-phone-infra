@@ -24,13 +24,42 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][-2:], ["config", "--quiet"])
 
     @mock.patch("test_phase1_sip_e2e.run_isolated_e2e")
-    @mock.patch("test_phase1_sip_e2e.docker_heavy_lease")
+    @mock.patch("test_phase1_sip_e2e.docker_test_lease")
     def test_help_does_not_acquire_resources_or_start_runtime(self, lease, e2e) -> None:
         with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as result:
             test_phase1_sip_e2e.main(["--help"])
         self.assertEqual(result.exception.code, 0)
         lease.assert_not_called()
         e2e.assert_not_called()
+
+    @mock.patch('test_phase1_sip_e2e.docker_test_lease')
+    @mock.patch('test_phase1_sip_e2e.run_isolated_e2e', return_value=0)
+    def test_main_preflight_does_not_acquire_resource_lease(self, e2e, lease):
+        self.assertEqual(test_phase1_sip_e2e.main(['--preflight']), 0)
+        e2e.assert_called_once_with(preflight_only=True)
+        lease.assert_not_called()
+
+    def test_independent_shared_leases_coexist_and_both_exclude_global_exclusive(self):
+        import fcntl, os, sys, tempfile
+        with tempfile.TemporaryDirectory() as raw:
+            path = Path(raw) / 'test.lock'
+            script = ('import fcntl,os,sys; '
+                      'fd=os.open(sys.argv[1],os.O_RDWR|os.O_CREAT,0o600); '
+                      '\ntry: fcntl.flock(fd,int(sys.argv[2])|fcntl.LOCK_NB)'
+                      '\nexcept BlockingIOError: sys.exit(75)\n')
+            def acquire(mode):
+                return subprocess.run([sys.executable, '-c', script, str(path), str(mode)],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5).returncode
+            with mock.patch.object(test_phase1_sip_e2e, 'DOCKER_HEAVY_LOCK_PATH', path):
+                with test_phase1_sip_e2e.docker_test_lease():
+                    self.assertEqual(acquire(fcntl.LOCK_SH), 0)
+                    self.assertEqual(acquire(fcntl.LOCK_EX), 75)
+                with path.open('r+') as exclusive:
+                    fcntl.flock(exclusive, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with self.assertRaisesRegex(RuntimeError, 'exclusive Docker'):
+                        with test_phase1_sip_e2e.docker_test_lease():
+                            self.fail('shared lease entered during global exclusive')
+                self.assertEqual(acquire(fcntl.LOCK_EX), 0)
 
     @mock.patch("test_phase1_sip_e2e.resolve_backend")
     @mock.patch("test_phase1_sip_e2e.run")
