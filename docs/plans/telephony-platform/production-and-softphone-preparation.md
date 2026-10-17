@@ -88,7 +88,7 @@ Core/Authの18/7GiBを維持し、MS-A2-1にPhone専用project `anshin-phone`、
 
 固定入口`provision-phone-vm-v1`は既存origin、Worker carrier、sudo資格、release.lock、Release Plan DEPLOYと標準receiptを使う。Phone専用guardを最初の通信前に適用し、Core/Auth/既存workerを停止・再起動しない。main `ee519f2d28f4c0e8350511cc07ceaa3b14f90260`、release `release-2a5c6f2351cad4963ae8339b`の標準plan/transport receipt consumerからVM/bridge/pool構築とbootstrap成功を照合した。Docker 29.1.3・Compose 2.40.3+ds1-0ubuntu1~24.04.1・agent active、SSH masked・root locked・interactive account 0、既存worker IDとhost boot不変、LXD operation終端を確認した。autostartは設定後の読取まででhost再起動試験は未実施、商用容量未受入・本番API/公開/復旧未完了である。Phone writerが構成正本・移行計画B3・復旧計画・七ページ図へ同じ結果と未受入を同期する。
 
-構築前inspectの物理memory31,221,350,400 bytes、MemAvailable27,514,101,760 bytes、Phone4GiB控除後の残memory予算6,442,450,944 bytes、同一filesystem空き103,018,164,224 bytesは初期配置の観測であり、負荷時の保証ではない。guest root空き29,706,870,784 bytesをhost空きへ加算しない。`vm_capacity_accepted=false`、`public_proxy_installed=false`を維持する。
+今回apply前のinspect（既存VM Running時）で物理memory31,221,350,400 bytes、MemAvailable27,514,101,760 bytes、同一filesystem空き103,018,164,224 bytesを観測した。`remaining_memory_budget_bytes=6,442,450,944`はこの状態で要求する最低MemAvailable閾値6GiBであり、実測残容量やPhone4GiB控除後の計算値ではない。これらは初期配置の観測・設計条件であり、負荷時の保証ではない。guest root空き29,706,870,784 bytesをhost空きへ加算しない。`vm_capacity_accepted=false`、`public_proxy_installed=false`を維持する。
 
 Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbindする設計とする。直接のmanagement Composeはloopbackを既定とし、既存の実Docker fixtureも明示loopbackで動作する。描画値と実containerのHostIp/HostPortは区別して検証し、private ingressとEdgeの閉じた公開経路は後続の中央releaseで同期する。今回のsource変更だけでAPI公開済みとは扱わない。子processの回収が確認不能な場合は追加cleanup/migration/rollbackを続けず、既存の失敗enumで未確認として保全する。guest lock・backup source IDは共通producerのPhone対応mainと同じ変更束で同期するまで従来契約を維持する。
 
