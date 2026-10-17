@@ -14,13 +14,14 @@ risk_level: high
 source_doc_ids:
   - anshin.corporate.anshin-phone.foundation-development-instructions
   - anshin.infrastructure.system-architecture
+  - anshin.infrastructure.mac-codex-ms-a2-runtime-migration
   - anshin.runbook.system-architecture.ms-a2-server-access
   - anshin.governance.privileged-operation-gateway
   - anshin.release.contract
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: []
-contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml]
 test_paths: [scripts/build_check.sh]
 last_reviewed: "2026-10-17"
 review_interval_days: 30
@@ -54,7 +55,7 @@ ownerの本番反映依頼と基礎開発指示に対する準備計画である
 | 基礎管理経路 | 実Docker、隔離Auth、Backend、実PBX、架空番号・模擬carrierを通す番号/端末管理・通話・G.711 FAX・監査・隔離復元 | 実Cloco、実番号、T.38、顧客通信、本番復元・商用容量 |
 | 管理画面 | 説明iconのclick/Escape、必要状態・エラー・FAX制限表示。対象画面の自動試験・右サイド実browser確認。ownerの「画面問題ない。本番反映お願い」により当該画面の本人確認受領済み | 本番画面の実確認 |
 | source | Backend `7770e877b2901d1b99c09cf32606f8abdc55178d`のruntime変更、Infraの既存runtime変更、Frontend `ba6bcbdb97cc4d80c0f45cb0c4aebb2e3d301c57`の説明・文書整備をmainへ統合 | source統合を本番提供と扱わない |
-| 本番adapter | 既存中央registryにPhone Backend/Infraの登録がある | `production adapter is not implemented`でblocked。VM、配備、公開URL、provider設定及び本番資格の確認 |
+| 本番adapter | 中央registryとPhone固定配備source、MS-A2-1専用VM bootstrap構築済み | 中央registryのPhone Backend/Infraは引き続きblocked。管理API/DB配備・公開URL・本番Auth・backup/復旧は未受入 |
 | 無料Softphone | 既存employee/customer mobileはFlutter。公式SDK条件を比較 | Phone SDK実装、Android/iPhone実機、Push、背景着信・音声品質、採用方式・費用・UI/UX詳細設計 |
 
 runtime codeが変わっていない文書commitを、新しい実通信成功SHAへ読み替えない。正式な詳細結果はinstruction originの既存Git外証跡で管理し、秘密、一時path、原本又はraw観測結果を本書へコピーしない。
@@ -77,15 +78,17 @@ MS-A2-1の初回読取は開発VMのDocker subnetと社内LANの重なりによ�
 
 修復後、同じ統合済みSHAの既存`inspect-worker-host-recovery-v1`による観測を既存schemaで検証した。MS-A2-1は`running`、failed unitは0、固定GUI VMと既存三workerは`running`だった。物理memoryは約29.08 GiB、MemAvailableは約10.87 GiBの瞬間値、root空きは約99.75 GiBである。これらはPhone専用VMの割当・負荷・容量・復旧受入を代替しない。今回のoperationはPhone VMを作成せず、既存サービスの資源割当を変更していない。この観測時点ではMS-A2-2の専用VM予定だった。現在の初期構築候補と新しい実読取は、次節の2026-10-17記録を参照する。旧瞬間値だけを配置・容量受入の根拠にしない。
 
-### 2026-10-17のMS-A2-1初期構築候補
+### 2026-10-17のMS-A2-1初期構築と未受入事項
 
 統合済みGov `ddaf5059f6754ed8ee98990032565d58b84ed86a`の登録Worker observerをMacから実行した。物理memoryは約29.077GiB、MemAvailableは約26.714GiBの瞬間値、固定LXD保存先の同一filesystem（device 64512）空きは約99.2566GiBだった。LXD5.21.8はdefault projectだけで、VM・pool・managed networkは未作成。Ubuntu24.04/x86_64の公開VM image fingerprintは`d4ff18198fb2ed8c88d408421e610c143cf1f5c1c0178e57178fb586880c3e56`である。image本体の取得・VM作成はこの観測に含めていない。
 
-Core/Authの18/7GiBを維持し、MS-A2-1にPhone専用project `anshin-phone`、VM `ms-a2-1-phone`、dir pool `phone-pool`、default project managed bridge `phone-br0`を置く初期構築案とする。共有2vCPU・memory4GiB・root32GiB、subnet `10.91.40.0/24`のGW `.1`・guest `.10`を固定する。将来worker17GiB＋Phone4GiB＋host/QEMU設計割当6GiB＝27GiBを物理量へ照合した。host6GiBは実測peak又は既存予約ではなく、同時負荷・商用通話容量の受入ではない。
+Core/Authの18/7GiBを維持し、MS-A2-1にPhone専用project `anshin-phone`、VM `ms-a2-1-phone`、dir pool `phone-pool`、default project managed bridge `phone-br0`を置く初期構築案を採用し、同日の登録済みreleaseからVM bootstrapを構築した。共有2vCPU・memory4GiB・root32GiB、subnet `10.91.40.0/24`のGW `.1`・guest `.10`を固定する。将来worker17GiB＋Phone4GiB＋host/QEMU設計割当6GiB＝27GiBを物理量へ照合した。host6GiBは実測peak又は既存予約ではなく、同時負荷・商用通話容量の受入ではない。
 
 同一filesystemの初期予算80GiBはguest32・image8・temp/rollback16・hostgrowth24の設計割当である。再開時は検証済み保存先と固定imageの実allocated blocksだけを控除し、疎fileの論理sizeを空きへ足さない。guest32GiB内にOS、image、DB/WAL、FAX、backup・隔離restoreの一時領域を収められるかは、VM構築後の実測事項として残す。GUI保全diskを再利用・削除しない。
 
-固定入口`provision-phone-vm-v1`は既存origin、Worker carrier、sudo資格、release.lock、Release Plan DEPLOYと標準receiptを使う。Phone専用guardを最初の通信前に適用し、Core/Auth/既存workerを停止・再起動しない。本節時点ではsource実装・検査中で、VM/bridge/pool未作成・容量未受入・本番API/公開/復旧未完了である。全体構成3文書はinfra担当が同じ候補・未適用状態へ同期し、Phone writerが構築後の実結果を次の直列変更で同期する。
+固定入口`provision-phone-vm-v1`は既存origin、Worker carrier、sudo資格、release.lock、Release Plan DEPLOYと標準receiptを使う。Phone専用guardを最初の通信前に適用し、Core/Auth/既存workerを停止・再起動しない。main `ee519f2d28f4c0e8350511cc07ceaa3b14f90260`、release `release-2a5c6f2351cad4963ae8339b`の標準plan/transport receipt consumerからVM/bridge/pool構築とbootstrap成功を照合した。Docker 29.1.3・Compose 2.40.3+ds1-0ubuntu1~24.04.1・agent active、SSH masked・root locked・interactive account 0、既存worker IDとhost boot不変、LXD operation終端を確認した。autostartは設定後の読取まででhost再起動試験は未実施、商用容量未受入・本番API/公開/復旧未完了である。Phone writerが構成正本・移行計画B3・復旧計画・七ページ図へ同じ結果と未受入を同期する。
+
+構築前inspectの物理memory31,221,350,400 bytes、MemAvailable27,514,101,760 bytes、Phone4GiB控除後の残memory予算6,442,450,944 bytes、同一filesystem空き103,018,164,224 bytesは初期配置の観測であり、負荷時の保証ではない。guest root空き29,706,870,784 bytesをhost空きへ加算しない。`vm_capacity_accepted=false`、`public_proxy_installed=false`を維持する。
 
 Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbindする設計とする。直接のmanagement Composeはloopbackを既定とし、既存の実Docker fixtureも明示loopbackで動作する。描画値と実containerのHostIp/HostPortは区別して検証し、private ingressとEdgeの閉じた公開経路は後続の中央releaseで同期する。今回のsource変更だけでAPI公開済みとは扱わない。子processの回収が確認不能な場合は追加cleanup/migration/rollbackを続けず、既存の失敗enumで未確認として保全する。guest lock・backup source IDは共通producerのPhone対応mainと同じ変更束で同期するまで従来契約を維持する。
 
@@ -94,7 +97,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 | 作業 | 対象・既存資産 | 完了に使う結果 |
 | --- | --- | --- |
 | 配置と資源 | 既存host observer、Phone専用VM。Core/AuthのVM・DB・volume・credentialは分離 | 実targetと必要資源・保存・復旧経路の事実。未測定値や旧案のPASSではない |
-| 配備adapter | InfraのCompose・既存backup/restore、中央release registry/matrix、既設admin alias。中央matrixの`phone-backend`はstandalone配置へ同期済み | 選定targetへ固定する薄いtransportと既存release owner。中央runnerのPhone Backend/Infra production adapterは引き続き未実装 |
+| 配備adapter | InfraのCompose・既存backup/restore、中央release registry/matrix、既設admin alias。中央matrixの`phone-backend`はstandalone配置へ同期済み | 選定targetへ固定する薄いtransportと既存release owner。中央runnerのPhone固定配備sourceは実装済みだが、本番管理配備と公開・復旧の適用/受入は未完了 |
 | 実入力確認 | Backend Settings、DB migration、Auth `anshin-phone` client、issuer/JWKS/audience、frontend API origin | 今回の実env/configを各consumerが受理する軽い確認後、対象の実業務integration。local Auth成功を本番Auth確認にしない |
 | UI配備 | 現行frontend、既存hosting/release owner | Phoneの実project/公開経路・domain・権限・費用条件。Phone projectと既存release bindingの未確認を登録済みと扱わない |
 | 保管・復旧 | 既存保護FAX・DB backup/隔離restore・rollback実装 | Phone専用の実保存先、保持期間、暗号化入力、隔離restore、既存ownerによる結果確認。新trust/journal/署名/gateを追加しない |
@@ -126,7 +129,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 
 ## Macでの再開と管理用配備定義（2026-10-16）
 
-Macのcurrent integrated sourceの既存host observerからCore/Worker両hostを読取できた。今回のMac接続にGUI VMのWorker経路修復は不要であり実行していない。Phone project/VMはmissingで、Core/Authの設定18/7 GiBを変更していない。物理memory約29.08 GiB、Core側MemAvailable約5.32 GiB、Worker側約11.42 GiBは今回の瞬間観測であり、Phone容量受入ではない。旧5 GiB候補を適用しない。
+Macのcurrent integrated sourceの既存host observerからCore/Worker両hostを読取できた。今回のMac接続にGUI VMのWorker経路修復は不要であり実行していない。この10月16日観測ではPhone project/VMはmissingで、Core/Authの設定18/7 GiBを変更していない。10月17日の構築実績は上記のMS-A2-1初期構築節を参照する。物理memory約29.08 GiB、Core側MemAvailable約5.32 GiB、Worker側約11.42 GiBは今回の瞬間観測であり、Phone容量受入ではない。旧5 GiB候補を適用しない。
 
 Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所有し、既存Phase 1と`compose.production.yaml`がextendsする。production管理定義は実carrier入力・SIP/RTP公開・source buildを含まず、Backend/migrationの同じfixed digest image、owner指定の本番FAX月単位policy及び既存secret-file入力を要求する。BackendだけにAuth/JWKS取得用egressを接続し、DBはinternalのまま維持する。
 
@@ -137,7 +140,7 @@ Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所�
 
 ownerは「Clocoと同じ月単位（毎月5日に前月分を削除）」を指定した。production ComposeはBackendとmigrationへ`ANSHIN_PHONE_FAX_RETENTION_POLICY=cloco_previous_month`を渡し、Backendに継承されたlocalの秒数defaultを空へ上書きする。保存受付月の翌月5日00:00 JSTを期限とし、原本だけを対象とする。既存S3標準31日・通信履歴・監査の保持は変更しない。境界、replay、catch-up、削除範囲のsourceとconsumer契約は`anshin.phone.backend.foundation-runtime-contract`を正本とする。
 
-既存production cron ownerから同じfixed imageのBackend内`python -m app.core.fax_retention`を呼ぶ。VM・adapter・schedulerは未配備であり、sourceやCompose検証を実発火成功と扱わない。PBX一時TIFFとdead-letterのcleanupはtelephony有効化前の別受入事項として残す。
+既存production cron ownerから同じfixed imageのBackend内`python -m app.core.fax_retention`を呼ぶ。VM bootstrapは構築済みだが、管理API/DB・adapterの実適用・schedulerは未配備であり、sourceやCompose検証を実発火成功と扱わない。PBX一時TIFFとdead-letterのcleanupはtelephony有効化前の別受入事項として残す。
 
 
 ## Phone PostgreSQL専用backup資源の具体化

@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin.phone.vm-native-architecture-sync.infra.2026-10-17",
+  "title": "Phone本番準備資料へ専用VM構築実績と配備残件を同期",
+  "owner": "anshin-phone-infra",
+  "status": "draft",
+  "risk_level": "high",
+  "production_change": false,
+  "spec_ids": [
+    "anshin.phone.production-and-softphone-preparation",
+    "anshin.infrastructure.system-architecture",
+    "anshin.infrastructure.mac-codex-ms-a2-runtime-migration"
+  ],
+  "repositories": [
+    "anshin-phone-infra"
+  ],
+  "code_paths": [],
+  "contract_paths": [
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml"
+  ],
+  "test_paths": [
+    "anshin-phone-infra/scripts/build_check.sh"
+  ],
+  "generated_artifacts": [],
+  "invariants": [
+    "reference/draft/proposedを維持し配置・費用・商用の承認書へ昇格しない",
+    "登録済み実行source ee519f2d28f4c0e8350511cc07ceaa3b14f90260とrelease-2a5c6f2351cad4963ae8339bのVM bootstrapだけ構築済みとする",
+    "MS-A2-1のshared2vCPU/4GiB/root32GiB適用と商用容量・管理API/DB・公開・復旧・本番Auth未受入を区別する",
+    "過去の不存在観測は日付付き履歴として保持し、Core/Authや他chatの資産を操作しない",
+    "文書同期をruntime再検証・本番公開・S3資源作成成功と扱わない"
+  ],
+  "acceptance_criteria": [
+    "構成正本とVM実行結果に一致する",
+    "既存documents-only canonical一回とfixed-SHA独立review後guardedmain統合する"
+  ],
+  "out_of_scope": [
+    "runtime変更・顧客開通・助成4機能・新費用操作",
+    "他chat差分・process・Docker資産・lockへの干渉"
+  ],
+  "rollout": {
+    "strategy": "documents-only-noop",
+    "steps": [
+      "依存構成正本と同じ実績を同期",
+      "既存検査とfixedreview後mainへ統合"
+    ],
+    "triggers": [
+      "本人のPhone本番化継続指示"
+    ]
+  },
+  "rollback": {
+    "strategy": "forward-document-correction",
+    "steps": [
+      "誤記だけ訂正する"
+    ],
+    "triggers": [
+      "実績不整合"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "構築と管理配備/復旧未受入の区別"
+    ],
+    "observation_period": "Phone基礎管理本番化まで"
+  },
+  "approvals": [],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "27d1b48233c20494b36e1dab1939447d9a490e6a"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "df6ad3c0d995941f6207e4155d03f76b91e10c17"
+    }
+  }
+}
