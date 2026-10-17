@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Supply Phone's actual runtime to the existing PostgreSQL backup owner."""
+"""Supply the existing Phone backup and FAX retention owners with its runtime."""
 from __future__ import annotations
 
 import argparse
@@ -48,7 +48,7 @@ def environment(runtime, installed, config, container_id):
         'COMPOSE_FILE': str(Path(installed['source_root']) / 'compose.production.yaml'),
         'CONTAINER_NAME': runtime.project + '-postgres-1', 'EXPECTED_CONTAINER_ID': container_id,
         'DATABASE': 'anshin_phone', 'DATABASE_USER': 'anshin_phone',
-        'SOURCE_ID': 'ms-a2-2/phone-postgresql', 'SOURCE_FIXED_SHA': installed['backend_sha'],
+        'SOURCE_ID': 'ms-a2-1/phone-postgresql', 'SOURCE_FIXED_SHA': installed['backend_sha'],
         'S3_BUCKET': BUCKET, 'S3_PREFIX': 'postgresql/phone',
         'EXPECTED_BUCKET_OWNER': '691862619128', 'EXPECTED_ROLE_ARN': WRITER,
         'AGE_RECIPIENT_FILE': str(KEYS / 'phone-age-recipient.txt'),
@@ -85,15 +85,73 @@ def scheduled_backup(*, runtime=None, config_path=CONFIG, install=INSTALL):
     return {'status': 'completed', 'source_fixed_sha': installed['backend_sha']}
 
 
+def purge_expired(*, runtime=None):
+    runtime = runtime or Runtime()
+    with runtime.exclusive():
+        installed = runtime.profile()
+        if not installed:
+            raise RuntimeFailure('phone_retention_runtime_not_installed')
+        runtime.health(installed)
+        name = runtime.project + '-fax-retention'
+        # Runtime.exclusive checks unresolved retention absence before yielding.
+        identifier = None
+        owned = False
+        children_unknown = False
+        try:
+            created = runtime.compose(installed, 'run', '--detach', '--no-deps',
+                '--name', name, 'backend-retention', timeout=60).stdout.strip()
+            if not re.fullmatch(r'[0-9a-f]{64}', created):
+                raise RuntimeFailure('phone_retention_create_identity_unknown')
+            identifier = created
+            rows = json.loads(runtime.command(['docker', 'inspect', '--format',
+                '[{{json .Id}},{{json .Name}},{{json .Config.Labels}},{{json .Config.Image}},{{json .Config.User}}]',
+                identifier], timeout=10).stdout)
+            if (not isinstance(rows, list) or len(rows) != 5
+                    or rows[0] != identifier or rows[1] != '/' + name
+                    or not isinstance(rows[2], dict)
+                    or rows[2].get('com.docker.compose.project') != runtime.project
+                    or rows[2].get('com.docker.compose.service') != 'backend-retention'
+                    or rows[2].get('com.docker.compose.oneoff') != 'True'
+                    or rows[3] != installed['backend_image'] or rows[4] != '10001:10001'):
+                raise RuntimeFailure('phone_retention_oneoff_identity_mismatch')
+            owned = True
+            status = runtime.command(['docker', 'wait', identifier], timeout=180).stdout.strip()
+            if status != '0':
+                raise RuntimeFailure('phone_retention_consumer_failed')
+            raw = runtime.command(['docker', 'logs', '--tail', '2', identifier], timeout=10).stdout
+            if len(raw) > 8192:
+                raise RuntimeFailure('phone_retention_consumer_result_invalid')
+            value = json.loads(raw)
+            if (not isinstance(value, dict) or set(value) != {'status', 'purged_count'}
+                    or value['status'] != 'ok' or type(value['purged_count']) is not int
+                    or value['purged_count'] < 0):
+                raise RuntimeFailure('phone_retention_consumer_result_invalid')
+        except RuntimeFailure as error:
+            children_unknown = str(error) == 'phone_command_children_unknown'
+            raise
+        finally:
+            # Lost create response or unverified identity never adopts a name.
+            if owned and identifier is not None and not children_unknown:
+                runtime.stop_oneoff('fax-retention', 'backend-retention', expected_id=identifier)
+        if runtime.profile() != installed:
+            raise RuntimeFailure('phone_retention_runtime_changed')
+        runtime.health(installed)
+        return {'status': 'completed', 'purged_count': value['purged_count'],
+                'source_fixed_sha': installed['backend_sha']}
+
+
 def main():
     def terminate(_signal, _frame):
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, terminate)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--scheduled-backup', action='store_true', required=True)
-    parser.parse_args()
+    modes = parser.add_mutually_exclusive_group(required=True)
+    modes.add_argument('--scheduled-backup', action='store_true')
+    modes.add_argument('--purge-expired', action='store_true')
+    arguments = parser.parse_args()
     try:
-        print(json.dumps(scheduled_backup(), sort_keys=True))
+        result = purge_expired() if arguments.purge_expired else scheduled_backup()
+        print(json.dumps(result, sort_keys=True))
         return 0
     except (RuntimeFailure, OSError, ValueError, KeyError, KeyboardInterrupt) as error:
         print(json.dumps({'status': 'failed', 'reason': str(error) if isinstance(error, RuntimeFailure)

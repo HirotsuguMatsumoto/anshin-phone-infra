@@ -1,0 +1,100 @@
+schema_version: 1
+change_id: anshin-phone-infra.fax-retention-ms1.2026-10-17
+title: Phone専用guestの月単位FAX原本削除を既存ownerで定期化する
+owner: anshin-phone-infra
+status: draft
+risk_level: high
+production_change: false
+spec_ids:
+- anshin.governance.ai-driven-development
+- anshin.phone.production-and-softphone-preparation
+- anshin.release.contract
+repositories:
+- anshin-phone-infra
+- anshin-phone-backend
+- anshin
+code_paths:
+- anshin-phone-infra/scripts/production_runtime.py
+- anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py
+- anshin-phone-infra/compose.production.yaml
+- anshin-phone-infra/deploy/postgresql-backup/anshin-phone-fax-retention.service
+- anshin-phone-infra/deploy/postgresql-backup/anshin-phone-fax-retention.timer
+contract_paths:
+- anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md
+- anshin-phone-infra/docs/specs/changes/2026-10-17-phone-fax-retention-ms1.change.yaml
+generated_artifacts: []
+test_paths:
+- anshin-phone-infra/scripts/test_phase1_render_config.py
+- anshin-phone-infra/scripts/test_phase1_sip_e2e.py
+invariants:
+- Phone専用VMの配置ms-a2-1へRuntime guest lockとbackup SOURCE_IDを同期し、Core/Authのlock又は資源を変更しない
+- 既存Phone backup adapterへ閉じたpurge-expired入口だけを追加し、新runner・gateway・receipt・journal・authorityを作らない
+- 固定immutable Backend imageと既存app.core.fax_retentionをmaintenance profileで使い、restartなし・UID/GID10001:10001・公開portなし・phone-dataだけとする
+- 既存Runtime.exclusiveの同じguest lock取得後・yield前に固定retention actor不存在を確認し、unknown・command失敗・stoppedを成功へ変換しない
+- shared backup/restoreのPhone対応には同lock取得後の未解決retention actor不存在を同束で実装する。現行shared producerはPhone未許可のため保存操作を開始しない
+- oneoff作成前は固定name不存在、作成後は返却64hex IDと実name/project/service/oneoff/image/userを照合し、以後stop/rmはそのIDだけを使う
+- create応答喪失・不正ID・metadata不一致・children unknownは名前で採用又は回収せず保全する
+- Runtime.stop_oneoffの既存expected_idなし動作は維持し、新purgeだけ内部expected_idを渡し、最終absenceを確認する
+- 期限は既存cloco_previous_monthの毎月5日JST期限、実行は既存systemd方式の毎日00:00 Asia/Tokyo・Persistent=trueで取りこぼしを回収する
+- 履歴・監査・S3保持31日・S3自動削除なしを維持し、24時間fixtureを本番保持へ流用しない
+- unitはsourceとして追加するだけで、実install/enableはshared Phone backup/restore整合と実consumer検証後の既存本番ownerから行う
+acceptance_criteria:
+- 既存unit suiteで返却ID cleanup、置換name拒否、失敗consumer、unknown children、create応答喪失と次のRuntime保存操作開始0を固定する
+- 既存actual production fixtureで同じfixed image・Settings・DB・volumeを使い、期限内原本は残り期限切れ原本だけ削除され、履歴rowは残ることを実readerで確認する
+- actual production fixtureの保持期間はcalendar policyを使い、expired/active synthetic dataを分離し、実顧客dataを使わない
+- actual Compose modelとconsumer settingsへ今回のproduction入力を通し、追加port・capability・restart又はegressがないことを確認する
+- 既存repository-local fast canonicalとfixed SHA独立reviewを行い、最新mainへrebaseしてguarded main統合する
+- 文書は実装・検証・main統合・本番導入を区別し、source追加だけでtimer稼働又はbackup/restore完成を宣言しない
+out_of_scope:
+- 実S3/IAM資源作成又は費用承認の代行
+- 共通DB snapshot/capture helperの新実装・SSE-S3 producer本番導入
+- Core/Auth/Vulne/Studyの変更
+- 実carrier・実顧客開通
+- 助成対象4機能
+rollout:
+  strategy: existing-phone-owner
+  steps:
+  - 編集前contractと別session設計review
+  - 既存actual fixtureと必要なfocused unitで検証後canonicalを一回行う
+  - fixed SHA独立reviewとfresh main rebase後guarded統合
+  - Phone初回配備sourceとして接続し、timerの実導入はbackup/restore整合確認後に既存ownerから実行する
+  triggers:
+  - ownerのPhone基礎本番化継続指示とCloco月単位保持指定
+rollback:
+  strategy: retain-data-and-previous-source
+  steps:
+  - timer未導入時は前sourceへ戻す
+  - 導入後は既存ownerでtimerを停止しDB/FAX volume/keyを保持する。source切戻しは削除済み原本を復元しない
+  triggers:
+  - retention consumer又はactor identity不整合
+monitoring:
+  owner: anshin-phone-infra
+  signals:
+  - 固定consumer statusとpurged_count
+  - 未解決oneoffの有無
+  - 実healthとprofile同一性
+  observation_period: 本番定期処理・復旧受入まで
+approvals: []
+concurrency:
+  strategy: isolated-worktree
+  branches:
+    anshin-phone-infra: task/phone-production-20261016
+  base_commits:
+    anshin-phone-infra: e2d7f848ea715aea43f9795c58fbe501e3fbaa96
+  owned_paths:
+  - anshin-phone-infra/scripts/production_runtime.py
+  - anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py
+  - anshin-phone-infra/compose.production.yaml
+  - anshin-phone-infra/deploy/postgresql-backup/anshin-phone-fax-retention.service
+  - anshin-phone-infra/deploy/postgresql-backup/anshin-phone-fax-retention.timer
+  - anshin-phone-infra/scripts/test_phase1_render_config.py
+  - anshin-phone-infra/scripts/test_phase1_sip_e2e.py
+  - anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md
+  - anshin-phone-infra/docs/specs/changes/2026-10-17-phone-fax-retention-ms1.change.yaml
+  pre_edit_blob_ids:
+    anshin-phone-infra/scripts/production_runtime.py: 7ef9113ca52eea411d8f0e9a7b33f6618bab2a57
+    anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py: 9952c3ed4c305ad6c3ee77f5ae3ca8ec1430d07c
+    anshin-phone-infra/compose.production.yaml: e6c56da0a84582983f050ccd5f2079939f647432
+    anshin-phone-infra/scripts/test_phase1_render_config.py: 24fc6ba977652fba111ee8be745fffdfec0dc78e
+    anshin-phone-infra/scripts/test_phase1_sip_e2e.py: 30e58c5c2b2e5d948eb0be6617945ce629ae73db
+    anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md: adca69a70225f29b93301f16bd1a22ce11fd9422

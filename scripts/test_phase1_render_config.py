@@ -47,7 +47,7 @@ class ManagementComposeTest(unittest.TestCase):
                     for name in ("backend", "backend-migrate"):
                         self.assertEqual(services[name]["build"]["context"], expected)
 
-    def render_production(self, *, omit: str | None = None, bind_ip: str | None = None):
+    def render_production(self, *, omit: str | None = None, bind_ip: str | None = None, maintenance=False):
         import json
         import subprocess
         with tempfile.TemporaryDirectory(prefix="phone-compose-") as directory:
@@ -60,7 +60,8 @@ class ManagementComposeTest(unittest.TestCase):
                 env['ANSHIN_PHONE_BACKEND_BIND_IP'] = bind_ip
             if omit:
                 env.pop(omit)
-            result = subprocess.run(["docker", "compose", "--file", str(REPOSITORY_DIR / "compose.production.yaml"),
+            result = subprocess.run(["docker", "compose", *(['--profile', 'maintenance'] if maintenance else []),
+                "--file", str(REPOSITORY_DIR / "compose.production.yaml"),
                 "config", "--format", "json"], cwd=directory, env=env, capture_output=True, text=True)
             return result, json.loads(result.stdout) if result.returncode == 0 else None
 
@@ -106,10 +107,19 @@ class ManagementComposeTest(unittest.TestCase):
         import sys
         from resolve_phone_backend import resolve_backend
 
-        result, model = self.render_production()
+        result, model = self.render_production(maintenance=True)
         self.assertEqual(result.returncode, 0, result.stderr)
+        retention = model['services']['backend-retention']
+        self.assertEqual(retention['image'], model['services']['backend']['image'])
+        self.assertEqual(retention['user'], '10001:10001')
+        self.assertEqual(retention['restart'], 'no')
+        self.assertEqual(retention['profiles'], ['maintenance'])
+        self.assertEqual(retention['entrypoint'], ['python', '-m', 'app.core.fax_retention'])
+        self.assertEqual(set(retention['networks']), {'phone-data'})
+        for inherited in ('ports', 'depends_on', 'cap_add'):
+            self.assertFalse(retention.get(inherited))
         backend = resolve_backend(REPOSITORY_DIR, os.getenv("ANSHIN_PHONE_BACKEND_DIR"))
-        for name in ("backend", "backend-migrate"):
+        for name in ("backend", "backend-migrate", "backend-retention"):
             with self.subTest(service=name):
                 env = {key: os.environ[key] for key in ("PATH", "HOME") if key in os.environ}
                 env.update(model["services"][name]["environment"])
@@ -458,8 +468,9 @@ class ProductionRuntimeTest(unittest.TestCase):
 
 class PhoneBackupAdapterTest(unittest.TestCase):
     def test_dedicated_inputs_do_not_inherit_other_product_credentials(self):
-        from production_runtime import Runtime
+        from production_runtime import Runtime, LOCK
         from phone_postgresql_backup_adapter import environment, BUCKET, WRITER
+        self.assertEqual(str(LOCK), '/tmp/anshin-ms-a2-1-platform-release.lock')
         profile = {'source_root': '/opt/anshin-phone/releases/infra', 'backend_sha': 'b' * 40,
                    'backend_image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'd' * 64}
         with patch.dict(os.environ, {'AWS_ACCESS_KEY_ID': 'foreign', 'POSTGRES_BACKUP_KMS_KEY_ID': 'foreign',
@@ -469,6 +480,7 @@ class PhoneBackupAdapterTest(unittest.TestCase):
         self.assertEqual(env['POSTGRES_BACKUP_EXPECTED_ROLE_ARN'], WRITER)
         self.assertEqual(env['POSTGRES_BACKUP_EXPECTED_CONTAINER_ID'], 'c' * 64)
         self.assertEqual(env['POSTGRES_BACKUP_SOURCE_FIXED_SHA'], 'b' * 40)
+        self.assertEqual(env['POSTGRES_BACKUP_SOURCE_ID'], 'ms-a2-1/phone-postgresql')
         self.assertEqual(env['DOCKER_HOST'], 'unix:///var/run/docker.sock')
         self.assertEqual(env['POSTGRES_BACKUP_CONTAINER_NAME'], 'anshin-phone-production-postgres-1')
         self.assertNotIn('POSTGRES_BACKUP_COMPOSE_ENV_FILE', env)
@@ -518,6 +530,135 @@ class PhoneBackupAdapterTest(unittest.TestCase):
         self.assertIn('PrivateTmp=false', service)
         self.assertIn('TimeoutStartSec=20min', service)
         self.assertIn('/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --scheduled-backup', service)
+
+    def retention_runtime(self):
+        import contextlib
+        import json
+        import subprocess
+        from unittest.mock import Mock
+        runtime = Mock()
+        runtime.project = 'anshin-phone-production'
+        runtime.exclusive.return_value = contextlib.nullcontext()
+        runtime.profile.return_value = {
+            'source_root': '/opt/anshin-phone/releases/' + 'a' * 40, 'backend_sha': 'b' * 40,
+            'backend_image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'd' * 64}
+        identifier = 'c' * 64
+        projection = [identifier, '/' + runtime.project + '-fax-retention', {
+            'com.docker.compose.project': runtime.project,
+            'com.docker.compose.service': 'backend-retention',
+            'com.docker.compose.oneoff': 'True'}, runtime.profile()['backend_image'], '10001:10001']
+        runtime.compose.return_value = subprocess.CompletedProcess([], 0, identifier, '')
+        runtime.command.side_effect = [subprocess.CompletedProcess([], 0, value, '') for value in (
+            json.dumps(projection), '0', json.dumps({'status': 'ok', 'purged_count': 3}))]
+        return runtime, identifier, projection
+
+    def test_retention_success_cleans_only_verified_returned_id(self):
+        from phone_postgresql_backup_adapter import purge_expired
+        runtime, identifier, _ = self.retention_runtime()
+        result = purge_expired(runtime=runtime)
+        self.assertEqual(result['purged_count'], 3)
+        self.assertEqual(result['source_fixed_sha'], 'b' * 40)
+        runtime.stop_oneoff.assert_called_once_with('fax-retention', 'backend-retention', expected_id=identifier)
+        self.assertEqual(runtime.health.call_count, 2)
+
+    def test_retention_lost_or_invalid_create_response_never_adopts_name(self):
+        import subprocess
+        from production_runtime import RuntimeFailure
+        from phone_postgresql_backup_adapter import purge_expired
+        for response in (RuntimeFailure('phone_command_timeout'), 'invalid'):
+            with self.subTest(response=type(response).__name__):
+                runtime, _, _ = self.retention_runtime()
+                if isinstance(response, RuntimeFailure):
+                    runtime.compose.side_effect = response
+                else:
+                    runtime.compose.return_value = subprocess.CompletedProcess([], 0, response, '')
+                with self.assertRaises(RuntimeFailure):
+                    purge_expired(runtime=runtime)
+                runtime.command.assert_not_called()
+                runtime.stop_oneoff.assert_not_called()
+
+    def test_retention_unverified_or_unknown_actor_is_preserved(self):
+        import json
+        import subprocess
+        from production_runtime import RuntimeFailure
+        from phone_postgresql_backup_adapter import purge_expired
+        for failure in ('metadata', 'children'):
+            with self.subTest(failure=failure):
+                runtime, _, projection = self.retention_runtime()
+                if failure == 'metadata':
+                    projection[3] = 'foreign-image'
+                    runtime.command.side_effect = [subprocess.CompletedProcess([], 0, json.dumps(projection), '')]
+                else:
+                    runtime.command.side_effect = [subprocess.CompletedProcess([], 0, json.dumps(projection), ''),
+                                                   RuntimeFailure('phone_command_children_unknown')]
+                with self.assertRaises(RuntimeFailure):
+                    purge_expired(runtime=runtime)
+                runtime.stop_oneoff.assert_not_called()
+
+    def test_retention_failed_consumer_cleans_verified_id(self):
+        import json
+        import subprocess
+        from production_runtime import RuntimeFailure
+        from phone_postgresql_backup_adapter import purge_expired
+        runtime, identifier, projection = self.retention_runtime()
+        runtime.command.side_effect = [subprocess.CompletedProcess([], 0, value, '')
+                                       for value in (json.dumps(projection), '1')]
+        with self.assertRaisesRegex(RuntimeFailure, 'consumer_failed'):
+            purge_expired(runtime=runtime)
+        runtime.stop_oneoff.assert_called_once_with('fax-retention', 'backend-retention', expected_id=identifier)
+
+    def test_unresolved_retention_prevents_next_exclusive_storage_body(self):
+        import subprocess
+        from unittest.mock import Mock
+        from production_runtime import Runtime, RuntimeFailure
+        for observation in ('c' * 64, RuntimeFailure('phone_command_failed_daemon_unavailable_exit_1')):
+            with self.subTest(observation=type(observation).__name__), tempfile.TemporaryDirectory() as directory:
+                runtime = Runtime(lock=Path(directory) / 'release.lock')
+                runtime.command = Mock()
+                if isinstance(observation, RuntimeFailure):
+                    runtime.command.side_effect = observation
+                else:
+                    runtime.command.return_value = subprocess.CompletedProcess([], 0, observation, '')
+                entered = False
+                with self.assertRaises(RuntimeFailure):
+                    with runtime.exclusive():
+                        entered = True
+                self.assertFalse(entered)
+                runtime.command.assert_called_once()
+                self.assertIn('--all', runtime.command.call_args.args[0])
+
+    def test_retention_name_replacement_is_preserved_and_cleanup_uses_exact_id(self):
+        import json
+        import subprocess
+        from unittest.mock import Mock
+        from production_runtime import Runtime, RuntimeFailure
+        runtime = Runtime()
+        identifier = 'c' * 64
+        runtime.command = Mock(return_value=subprocess.CompletedProcess([], 0, 'f' * 64, ''))
+        with self.assertRaisesRegex(RuntimeFailure, 'identity_changed'):
+            runtime.stop_oneoff('fax-retention', 'backend-retention', expected_id=identifier)
+        self.assertEqual(runtime.command.call_count, 1)
+        projection = [identifier, '/' + runtime.project + '-fax-retention', {
+            'com.docker.compose.project': runtime.project,
+            'com.docker.compose.service': 'backend-retention', 'com.docker.compose.oneoff': 'True'}]
+        runtime.command = Mock(side_effect=[subprocess.CompletedProcess([], 0, value, '')
+            for value in (identifier, json.dumps(projection), '', '', '')])
+        runtime.stop_oneoff('fax-retention', 'backend-retention', expected_id=identifier)
+        cleanup = [call.args[0] for call in runtime.command.call_args_list
+                   if call.args[0][:2] in (['docker', 'stop'], ['docker', 'rm'])]
+        self.assertEqual(cleanup, [['docker', 'stop', '--time', '10', identifier], ['docker', 'rm', identifier]])
+        self.assertIn('id=' + identifier, runtime.command.call_args.args[0])
+
+    def test_retention_timer_catches_up_in_jst_without_private_lock_namespace(self):
+        root = REPOSITORY_DIR / 'deploy/postgresql-backup'
+        service = (root / 'anshin-phone-fax-retention.service').read_text()
+        timer = (root / 'anshin-phone-fax-retention.timer').read_text()
+        self.assertIn('--purge-expired', service)
+        self.assertIn('PrivateTmp=false', service)
+        self.assertIn('Restart=no', service)
+        self.assertIn('OnCalendar=*-*-* 00:00:00 Asia/Tokyo', timer)
+        self.assertEqual(timer.count('OnCalendar='), 1)
+        self.assertIn('Persistent=true', timer)
 
 
 class Phase1RenderConfigTest(unittest.TestCase):

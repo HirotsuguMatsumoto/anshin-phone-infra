@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STATE = Path('/var/lib/anshin-phone/release')
 SECRETS = Path('/etc/anshin-phone/secrets')
 PROJECT = 'anshin-phone-production'
-LOCK = Path('/tmp/anshin-ms-a2-2-platform-release.lock')
+LOCK = Path('/tmp/anshin-ms-a2-1-platform-release.lock')
 IMAGE = re.compile(r'ghcr\.io/hirotsugumatsumoto/anshin-phone-backend@sha256:[0-9a-f]{64}')
 SHA = re.compile(r'[0-9a-f]{40}')
 SETTINGS_CHECK = (
@@ -128,6 +128,13 @@ class Runtime:
         return self.command([*command, *args],
             env=self.environment(profile), timeout=timeout, allow_failure=allow_failure)
 
+    def require_retention_absent(self):
+        name = self.project + '-fax-retention'
+        current = self.command(['docker', 'ps', '--all', '--quiet', '--no-trunc',
+            '--filter', 'name=^/' + name + '$'], timeout=10).stdout.strip()
+        if current:
+            raise RuntimeFailure('phone_retention_existing_oneoff_preserved')
+
     @contextmanager
     def exclusive(self):
         descriptor = os.open(self.lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
@@ -136,6 +143,7 @@ class Runtime:
                 fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 raise RuntimeFailure('phone_release_busy') from None
+            self.require_retention_absent()
             yield
 
     def profile(self):
@@ -204,14 +212,40 @@ class Runtime:
         return {'status': 'healthy', 'backend_sha': profile['backend_sha'],
                 'infra_sha': profile['infra_sha'], 'telephony_enabled': False}
 
-    def stop_oneoff(self, suffix, service):
+    def stop_oneoff(self, suffix, service, *, expected_id=None):
         name = self.project + '-' + suffix
-        result = self.command(['docker', 'ps', '--all', '--quiet', '--filter', f'name=^/{name}$',
-            '--filter', f'label=com.docker.compose.project={self.project}',
-            '--filter', 'label=com.docker.compose.service=' + service])
-        if result.stdout.strip():
-            self.command(['docker', 'stop', '--time', '10', name], timeout=30)
-            self.command(['docker', 'rm', name], timeout=30)
+        if expected_id is None:
+            result = self.command(['docker', 'ps', '--all', '--quiet', '--filter', f'name=^/{name}$',
+                '--filter', f'label=com.docker.compose.project={self.project}',
+                '--filter', 'label=com.docker.compose.service=' + service])
+            if result.stdout.strip():
+                self.command(['docker', 'stop', '--time', '10', name], timeout=30)
+                self.command(['docker', 'rm', name], timeout=30)
+            return
+        if not re.fullmatch(r'[0-9a-f]{64}', expected_id):
+            raise RuntimeFailure('phone_oneoff_expected_identity_invalid')
+        exact_id = ['docker', 'ps', '--all', '--quiet', '--no-trunc', '--filter', 'id=' + expected_id]
+        current = self.command(['docker', 'ps', '--all', '--quiet', '--no-trunc',
+            '--filter', f'name=^/{name}$'], timeout=10).stdout.split()
+        if not current:
+            if self.command(exact_id, timeout=10).stdout.strip():
+                raise RuntimeFailure('phone_oneoff_identity_changed')
+            return
+        if current != [expected_id]:
+            raise RuntimeFailure('phone_oneoff_identity_changed')
+        value = json.loads(self.command(['docker', 'inspect', '--format',
+            '[{{json .Id}},{{json .Name}},{{json .Config.Labels}}]', expected_id], timeout=10).stdout)
+        if (not isinstance(value, list) or len(value) != 3
+                or value[0] != expected_id or value[1] != '/' + name
+                or not isinstance(value[2], dict)
+                or value[2].get('com.docker.compose.project') != self.project
+                or value[2].get('com.docker.compose.service') != service
+                or value[2].get('com.docker.compose.oneoff') != 'True'):
+            raise RuntimeFailure('phone_oneoff_identity_changed')
+        self.command(['docker', 'stop', '--time', '10', expected_id], timeout=30)
+        self.command(['docker', 'rm', expected_id], timeout=30)
+        if self.command(exact_id, timeout=10).stdout.strip():
+            raise RuntimeFailure('phone_oneoff_cleanup_unconfirmed')
 
     def backup(self):
         # The existing shared producer takes the same guest lock. Run it

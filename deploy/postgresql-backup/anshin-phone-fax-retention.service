@@ -1,0 +1,30 @@
+[Unit]
+Description=Remove only expired Phone FAX protected originals
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+Environment=HOME=/var/empty
+ExecStart=/usr/bin/python3 /opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --purge-expired
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectHome=true
+ProtectSystem=strict
+ReadOnlyPaths=/opt/anshin-phone /opt/anshin-phone-backup /etc/anshin-phone /var/lib/anshin-phone/release
+ReadWritePaths=/tmp
+UMask=0077
+LimitCORE=0
+LockPersonality=true
+PrivateDevices=true
+ProtectClock=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+ProtectProc=invisible
+RestrictSUIDSGID=true
+TimeoutStartSec=8min
+Restart=no

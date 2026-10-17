@@ -32,6 +32,21 @@ services:
       ANSHIN_PHONE_TELEPHONY_ENABLED: "false"
       ANSHIN_PHONE_FAX_RETENTION_POLICY: cloco_previous_month
 
+  backend-retention:
+    extends:
+      service: backend
+    profiles: [maintenance]
+    restart: "no"
+    user: "10001:10001"
+    entrypoint: [python, -m, app.core.fax_retention]
+    command: []
+    ports: !reset []
+    depends_on: !reset {}
+    cap_add: !reset []
+    networks: !override [phone-data]
+    healthcheck:
+      disable: true
+
 secrets:
   postgres_password:
     file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/postgres_password

@@ -90,7 +90,7 @@ Core/Authの18/7GiBを維持し、MS-A2-1にPhone専用project `anshin-phone`、
 
 今回apply前のinspect（既存VM Running時）で物理memory31,221,350,400 bytes、MemAvailable27,514,101,760 bytes、同一filesystem空き103,018,164,224 bytesを観測した。`remaining_memory_budget_bytes=6,442,450,944`はこの状態で要求する最低MemAvailable閾値6GiBであり、実測残容量やPhone4GiB控除後の計算値ではない。これらは初期配置の観測・設計条件であり、負荷時の保証ではない。guest root空き29,706,870,784 bytesをhost空きへ加算しない。`vm_capacity_accepted=false`、`public_proxy_installed=false`を維持する。
 
-Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbindする設計とする。直接のmanagement Composeはloopbackを既定とし、既存の実Docker fixtureも明示loopbackで動作する。描画値と実containerのHostIp/HostPortは区別して検証し、private ingressとEdgeの閉じた公開経路は後続の中央releaseで同期する。今回のsource変更だけでAPI公開済みとは扱わない。子processの回収が確認不能な場合は追加cleanup/migration/rollbackを続けず、既存の失敗enumで未確認として保全する。guest lock・backup source IDは共通producerのPhone対応mainと同じ変更束で同期するまで従来契約を維持する。
+Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbindする設計とする。直接のmanagement Composeはloopbackを既定とし、既存の実Docker fixtureも明示loopbackで動作する。描画値と実containerのHostIp/HostPortは区別して検証し、private ingressとEdgeの閉じた公開経路は後続の中央releaseで同期する。今回のsource変更だけでAPI公開済みとは扱わない。子processの回収が確認不能な場合は追加cleanup/migration/rollbackを続けず、既存の失敗enumで未確認として保全する。Phone app未配備・shared producerがPhoneを拒否・新timer未導入の状態に限り、guest lockを`/tmp/anshin-ms-a2-1-platform-release.lock`、backup source IDを`ms-a2-1/phone-postgresql`へsource上で先行同期する。旧lockでactorが稼働する状態へこの順序を一般化しない。実backup/restoreの有効化前にはshared側も同じMS1 lockと未解決retention actor除外へ同期し、実consumerで確認する。
 
 ## 本番反映へ向けた実装単位
 
@@ -140,7 +140,7 @@ Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所�
 
 ownerは「Clocoと同じ月単位（毎月5日に前月分を削除）」を指定した。production ComposeはBackendとmigrationへ`ANSHIN_PHONE_FAX_RETENTION_POLICY=cloco_previous_month`を渡し、Backendに継承されたlocalの秒数defaultを空へ上書きする。保存受付月の翌月5日00:00 JSTを期限とし、原本だけを対象とする。既存S3標準31日・通信履歴・監査の保持は変更しない。境界、replay、catch-up、削除範囲のsourceとconsumer契約は`anshin.phone.backend.foundation-runtime-contract`を正本とする。
 
-既存production cron ownerから同じfixed imageのBackend内`python -m app.core.fax_retention`を呼ぶ。VM bootstrapは構築済みだが、管理API/DB・adapterの実適用・schedulerは未配備であり、sourceやCompose検証を実発火成功と扱わない。PBX一時TIFFとdead-letterのcleanupはtelephony有効化前の別受入事項として残す。
+既存Phone backup adapterの`--purge-expired`から、production Composeの`backend-retention` maintenance serviceで同じfixed imageの`python -m app.core.fax_retention`を呼ぶsourceを追加する。UID/GIDは10001:10001、restartなし・公開portなし・DB用internal networkだけを使う。systemdの`anshin-phone-fax-retention.timer`は毎日00:00 Asia/Tokyoに実行し、Persistent catchupで毎月5日期限の取りこぼしを回収する。VM bootstrapは構築済みだが、管理API/DB・adapterの実適用・schedulerは未配備であり、sourceやCompose検証を実発火成功と扱わない。PBX一時TIFFとdead-letterのcleanupはtelephony有効化前の別受入事項として残す。
 
 
 ## Phone PostgreSQL専用backup資源の具体化
@@ -165,6 +165,8 @@ FAX保護原本のoff-host backupは別projectionとし、`anshin-prod-phone-fax
 
 `scripts/phone_postgresql_backup_adapter.py --scheduled-backup` はnative `runtime.json` と実Backend healthを照合し、実Postgres container ID・Backend source SHAを、既存 `backup_postgresql_to_s3.sh` へ渡す。専用bucket、`postgresql/phone` prefix、Phone writer role/profile、`/etc/anshin-phone/aws/config` と専用鍵pathだけを使い、他製品のAWS環境・KMS入力を継承しない。`/etc/anshin-phone/postgresql-backup-profile.json` はowner-onlyで、既存manifest検証鍵のSHA-256である `manifest_key_id` 一項目だけを持つ。秘密値は格納しない。
 
-共有producerがPhoneを許可し、lock取得後に `POSTGRES_BACKUP_EXPECTED_CONTAINER_ID` と実containerが一致することを検証してからinstallする。現行未対応の共有sourceへKMS値を偽装して接続しない。adapterのsource又は単体testだけで本番backup適合済みとは扱わない。共有ownerがage・SSE-S3・exact version readback及び既存receiptを所有し、adapterは別receipt/journalを作らない。
+共有producerがPhoneを許可し、同じMS1 guest lock取得後に `POSTGRES_BACKUP_EXPECTED_CONTAINER_ID` と実containerの一致及び固定retention actor不存在を検証してからinstallする。shared restoreにも保存操作前の同じ未解決actor除外を適用する。現行未対応の共有sourceへKMS値を偽装して接続しない。adapterのsource又は単体testだけで本番backup適合済みとは扱わない。共有ownerがage・SSE-S3・exact version readback及び既存receiptを所有し、adapterは別receipt/journalを作らない。
 
 同梱のservice/timerは既存PostgreSQL unitを再利用し、毎日04:30・10:30・18:30・23:30（Asia/Tokyo）の4回、Persistent catchup、共通guest lock及び限定retryを使う。定義の追加はinstall・enable・定期実行の証拠を代替しない。初回取得、4世代、隔離restore、FAX backup及び復旧鍵別保管は引き続き実受入を必要とする。
+
+FAX retentionは同じguest lockを取得してから固定one-offの不存在を確認する。作成が返した64桁IDと実name・project・service・oneoff・image・userが一致した場合だけ、そのIDを使ってwait・stop・rmし、最終absenceを確認する。create応答喪失、未知ID、metadata不一致又はchildren unknownを名前で採用せず保全する。Runtimeのlock取得後も、stoppedを含む未解決retention actorが残っていれば保存操作を始めない。source切戻しは削除済み原本を復元しない。削除済み原本の復旧可否は、独立した既存backup・保持・隔離restoreの受入で判定する。新timerはshared backup/restore整合と実consumer検証後に既存installerから導入する。

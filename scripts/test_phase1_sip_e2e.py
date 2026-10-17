@@ -1077,6 +1077,76 @@ for path,headers,expected in [
 '''
             runtime.compose(profile, 'exec', '-T', 'backend', 'python', '-c', probe)
             print('PASS: immutable image -> actual settings/migration -> initial failure -> exact-resource forward repair -> readiness; DB data and volume identities retained; foreign identity/unauthenticated management denied and telephony disabled', flush=True)
+            # Only this fixture's synthetic documents are involved. Use the
+            # real encrypted writer and calendar policy, including a missed
+            # monthly run, rather than changing expiry directly in SQL.
+            retention_setup = '''import io,json,hashlib
+from datetime import datetime,timezone
+from unittest.mock import patch
+from fastapi import HTTPException
+from pypdf import PdfWriter
+from sqlalchemy import func,select
+from app.core.database import SessionLocal
+from app.core import fax_storage
+from app.models.telephony import AuditLog,FaxDocument,FaxRecord,PhoneNumber
+now=datetime.now(timezone.utc)
+first=now.replace(day=1,hour=0,minute=0,second=0,microsecond=0)
+old=first.replace(year=first.year-1)
+buffer=io.BytesIO(); writer=PdfWriter(); writer.add_blank_page(width=100,height=100); writer.write(buffer)
+content=buffer.getvalue()
+with SessionLocal() as db:
+ with patch.object(fax_storage,'utcnow',return_value=old):
+  expired=fax_storage.store(db,'fixture-retention',content,'application/pdf')
+ active=fax_storage.store(db,'fixture-retention',content,'application/pdf')
+ number=PhoneNumber(tenant_id='fixture-retention',e164='+81300000000',national_number='0300000000',
+  area_code='03',usage='fax',carrier_name='fixture-only')
+ db.add(number); db.flush()
+ record=FaxRecord(tenant_id='fixture-retention',phone_number_id=number.id,pbx_unique_id='fixture-retention',
+  direction='inbound',remote_number_masked='fixture-only',status='received',
+  storage_reference=expired.id,occurred_at=old)
+ audit=AuditLog(tenant_id='fixture-retention',actor_subject='fixture-only',action='fax.received',
+  resource_type='fax_document',resource_id=expired.id)
+ db.add_all([record,audit]); db.commit()
+ assert expired.expires_at < now < active.expires_at
+ assert fax_storage.storage_path(expired.id).is_file()
+ assert fax_storage.read(db,'fixture-retention',active.id)[1]==content
+ try: fax_storage.read(db,'fixture-retention',expired.id)
+ except HTTPException as error: assert error.status_code==410
+ else: raise AssertionError('expired original was readable')
+ assert db.scalar(select(func.count()).select_from(FaxDocument))==2
+ print(json.dumps({'expired':expired.id,'active':active.id,'record':record.id,'audit':audit.id,
+  'sha256':hashlib.sha256(content).hexdigest()}))
+'''
+            documents = json.loads(runtime.compose(profile, 'exec', '-T', 'backend', 'python', '-c', retention_setup).stdout)
+            from phone_postgresql_backup_adapter import purge_expired
+            purged = purge_expired(runtime=runtime)
+            if purged['status'] != 'completed' or purged['purged_count'] != 1:
+                raise RuntimeError('production retention fixture did not purge only its expired original')
+            retention_readback = '''import json,sys,hashlib
+from fastapi import HTTPException
+from sqlalchemy import func,select
+from app.core.database import SessionLocal
+from app.core import fax_storage
+from app.models.telephony import AuditLog,FaxDocument,FaxRecord
+value=json.loads(sys.argv[1])
+with SessionLocal() as db:
+ expired=db.get(FaxDocument,value['expired']); active,content=fax_storage.read(db,'fixture-retention',value['active'])
+ assert expired is not None and expired.purged_at is not None
+ assert not fax_storage.storage_path(expired.id).exists()
+ assert active.purged_at is None and fax_storage.storage_path(active.id).is_file()
+ assert hashlib.sha256(content).hexdigest()==value['sha256']
+ assert db.scalar(select(func.count()).select_from(FaxDocument))==2
+ assert db.get(FaxRecord,value['record']).storage_reference==expired.id
+ assert db.get(AuditLog,value['audit']).resource_id==expired.id
+ try: fax_storage.read(db,'fixture-retention',expired.id)
+ except HTTPException as error: assert error.status_code==410
+ else: raise AssertionError('purged original was readable')
+'''
+            runtime.compose(profile, 'exec', '-T', 'backend', 'python', '-c', retention_readback, json.dumps(documents))
+            runtime.require_retention_absent()
+            if runtime.observation()['volumes'] != recovery['observation']['volumes']:
+                raise RuntimeError('production retention changed persistent volume identity')
+            print('PASS: actual calendar-policy encrypted FAX writer -> fixed maintenance consumer -> exact-ID cleanup -> reader; expired ciphertext removed, active ciphertext readable, both history rows and volume identities retained', flush=True)
             # Resource evidence is a fixture measurement, not VM capacity acceptance.
             measurements = {}
             for service in ('backend', 'postgres'):

@@ -1,0 +1,12 @@
+[Unit]
+Description=Catch up Phone FAX monthly expiration daily
+
+[Timer]
+OnCalendar=*-*-* 00:00:00 Asia/Tokyo
+AccuracySec=1min
+RandomizedDelaySec=0
+Persistent=true
+Unit=anshin-phone-fax-retention.service
+
+[Install]
+WantedBy=timers.target
