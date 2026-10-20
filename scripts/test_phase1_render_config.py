@@ -6,6 +6,7 @@ import os
 import stat
 import tempfile
 import unittest
+from contextlib import contextmanager, ExitStack
 from pathlib import Path
 from unittest.mock import patch
 
@@ -467,6 +468,177 @@ class ProductionRuntimeTest(unittest.TestCase):
 
 
 class PhoneBackupAdapterTest(unittest.TestCase):
+    @contextmanager
+    def backup_update_fixture(self):
+        import json, base64, copy, subprocess
+        from types import SimpleNamespace
+        import phone_postgresql_backup_adapter as owner
+        with tempfile.TemporaryDirectory() as raw, ExitStack() as stack:
+            root = Path(raw)
+            for name in ('install', 'keys', 'state', 'units', 'work'):
+                (root/name).mkdir(mode=0o700)
+            for name, value in {'INSTALL':root/'install', 'KEYS':root/'keys', 'STATE':root/'state',
+                                'CONFIG':root/'profile.json', 'AWS_CONFIG':root/'aws-config', 'UNIT_ROOT':root/'units'}.items():
+                stack.enter_context(patch.object(owner, name, value))
+            original_mkdtemp = tempfile.mkdtemp
+            stack.enter_context(patch.object(owner.tempfile, 'mkdtemp', side_effect=lambda **kwargs:
+                original_mkdtemp(prefix=kwargs['prefix'], dir=root/'work')))
+            public = {'trust_anchor_arn':'arn:aws:rolesanywhere:ap-northeast-1:691862619128:trust-anchor/916219bc-2500-4f73-a7b2-82e0c94ec215',
+                      'manifest_key_id':'a'*64, 'credential_versions':{key:1 for key in owner.CREDENTIAL_IDS}}
+            for data, product in (('db','phone-postgresql'),('fax','phone-fax')):
+                for role in ('writer','restore'):
+                    public[data+'_'+role+'_role_arn']='arn:aws:iam::691862619128:role/anshin-prod-'+product+'-backup-'+role
+                    public[data+'_'+role+'_profile_arn']='arn:aws:rolesanywhere:ap-northeast-1:691862619128:profile/12345678-1234-1234-1234-123456789abc'
+            profile = {'manifest_key_id':'a'*64,'governance_sha':'b'*40,'infra_sha':'c'*40,'public':public}
+            owner.write_private(owner.CONFIG, (json.dumps(profile,sort_keys=True)+'\n').encode())
+            owner.write_private(owner.AWS_CONFIG, owner.aws_profiles(public))
+            for name in owner.PRODUCER_KEYS: owner.write_private(owner.KEYS/name, (name+'-old').encode())
+            assets = {'scripts/phone_postgresql_backup_adapter.py':b'old-source',
+                      'deploy/postgresql-backup/'+owner.BACKUP_TIMER:b'old-unit'}
+            for name, body in assets.items():
+                (owner.INSTALL/name).parent.mkdir(parents=True,exist_ok=True)
+                owner.write_private(owner.INSTALL/name,body)
+                if name.endswith('.timer'):
+                    (owner.UNIT_ROOT/Path(name).name).write_bytes(body);(owner.UNIT_ROOT/Path(name).name).chmod(0o644)
+            class Runtime:
+                def __init__(self):
+                    self.schedule={name:{'enabled':True,'active':True} for name in (owner.BACKUP_TIMER,owner.RETENTION_TIMER)}
+                    self.locked=False;self.calls=[]
+                def command(self, args, **kwargs):
+                    self.calls.append(args)
+                    if args[:2]==['systemctl','show']:
+                        state=self.schedule[args[2]]
+                        value='ActiveState='+('active' if state['active'] else 'inactive')+'\nUnitFileState='+('enabled' if state['enabled'] else 'disabled')
+                        return subprocess.CompletedProcess(args,0,value,'')
+                    if args[0]=='systemctl':
+                        action=args[1]
+                        for name in args[2:]:
+                            if name not in self.schedule:continue
+                            if action in ('enable','disable'):self.schedule[name]['enabled']=action=='enable'
+                            if action in ('start','stop') or '--now' in args:
+                                if action=='start':assert not self.locked
+                                self.schedule[name]['active']=action=='start'
+                    return subprocess.CompletedProcess(args,0,'','')
+                @contextmanager
+                def exclusive(self):
+                    assert not self.locked;self.locked=True
+                    try:yield
+                    finally:self.locked=False
+                def profile(self):return {}
+                def health(self, profile):return {'status':'healthy'}
+            runtime=Runtime();expected=owner.installation_state(assets,runtime=runtime)
+            renewed=copy.deepcopy(public)
+            for key in renewed['credential_versions']:
+                if '-backup-' in key:renewed['credential_versions'][key]=2
+            keys={name:base64.b64encode((name+'-new').encode() if '-writer-' in name else (owner.KEYS/name).read_bytes()).decode()
+                  for name in owner.PRODUCER_KEYS}
+            keys.update({name:base64.b64encode((name+'-new').encode()).decode() for name in owner.RESTORE_KEYS if '-restore-' in name})
+            material={'public':renewed,'keys':keys};new_assets={name:body+b'-new' for name,body in assets.items()}
+            snapshots={p:p.read_bytes() for p in root.rglob('*') if p.is_file()}
+            yield SimpleNamespace(owner=owner,runtime=runtime,expected=expected,material=material,assets=new_assets,old_assets=assets,
+                                  snapshots=snapshots,root=root,original_schedule=copy.deepcopy(runtime.schedule))
+
+    def test_backup_update_switches_known_files_and_restarts_timers_after_unlock(self):
+        with self.backup_update_fixture() as f, patch.object(f.owner,'credential_canary',return_value={'authenticated_roles':4}) as canary:
+            value=f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=f.expected)
+            self.assertTrue(value['updated']);canary.assert_called_once()
+            self.assertEqual(f.original_schedule,f.runtime.schedule)
+            for name,body in f.assets.items():self.assertEqual(body,(f.owner.INSTALL/name).read_bytes())
+            self.assertEqual('d'*40,f.owner.read_profile(f.owner.CONFIG)['governance_sha'])
+            for path,body in f.snapshots.items():
+                if path.parent==f.owner.KEYS and '-writer-' not in path.name:self.assertEqual(body,path.read_bytes())
+            self.assertEqual([],list((f.root/'work').iterdir()))
+            current=f.owner.installation_state(f.assets,runtime=f.runtime)
+            value=f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=current)
+            self.assertFalse(value['updated']);self.assertEqual(1,canary.call_count)
+            self.assertEqual(f.original_schedule,f.runtime.schedule)
+
+    def test_backup_update_preserves_nonleaf_keys_and_versions(self):
+        import base64
+        from production_runtime import RuntimeFailure
+        for field in ('key','version'):
+            with self.subTest(field=field),self.backup_update_fixture() as f:
+                if field=='key':f.material['keys']['phone-age-recipient.txt']=base64.b64encode(b'changed').decode()
+                else:f.material['public']['credential_versions']['anshin.production.phone.backup-age-identity']=2
+                with self.assertRaisesRegex(RuntimeFailure,'nonleaf'):
+                    f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=f.expected)
+                for path,body in f.snapshots.items():self.assertEqual(body,path.read_bytes())
+                self.assertEqual(f.original_schedule,f.runtime.schedule)
+
+    def test_backup_update_rejects_stale_preimage_before_schedule_or_file_changes(self):
+        from production_runtime import RuntimeFailure
+        with self.backup_update_fixture() as f:
+            f.expected['profile_sha256']='f'*64
+            f.runtime.calls.clear()
+            with self.assertRaisesRegex(RuntimeFailure,'preimage_changed'):
+                f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=f.expected)
+            self.assertFalse(any(args[1] in {'disable','stop','enable','start'} for args in f.runtime.calls))
+            self.assertEqual(f.original_schedule,f.runtime.schedule)
+            for path,body in f.snapshots.items():self.assertEqual(body,path.read_bytes())
+
+    def test_backup_update_known_canary_failure_rolls_back_and_unknown_keeps_inputs(self):
+        from production_runtime import RuntimeFailure
+        for reason in ('phone_backup_update_certificate_pair_invalid','phone_command_children_unknown'):
+            with self.subTest(reason=reason),self.backup_update_fixture() as f, \
+                    patch.object(f.owner,'credential_canary',side_effect=RuntimeFailure(reason)):
+                with self.assertRaises(RuntimeFailure) as failure:
+                    f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=f.expected)
+                for path,body in f.snapshots.items():self.assertEqual(body,path.read_bytes())
+                if reason.endswith('unknown'):
+                    self.assertEqual('phone_backup_update_cleanup_unconfirmed',str(failure.exception))
+                    self.assertTrue(Path(failure.exception.retained_private_configuration).is_dir())
+                    self.assertTrue(all(not s['enabled'] and not s['active'] for s in f.runtime.schedule.values()))
+                else:
+                    self.assertEqual(f.original_schedule,f.runtime.schedule)
+                    self.assertEqual([],list((f.root/'work').iterdir()))
+
+    def test_backup_update_compensates_file_renamed_before_fsync_failure(self):
+        with self.backup_update_fixture() as f, patch.object(f.owner,'credential_canary',return_value={}), ExitStack() as stack:
+            original=f.owner.replace_known;failed=False
+            def interrupted(path,before,after,mode):
+                nonlocal failed
+                original(path,before,after,mode)
+                if not failed:failed=True;raise OSError('fixture-after-rename')
+            stack.enter_context(patch.object(f.owner,'replace_known',side_effect=interrupted))
+            with self.assertRaises(OSError):
+                f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=f.expected)
+            for path,body in f.snapshots.items():self.assertEqual(body,path.read_bytes())
+            self.assertEqual(f.original_schedule,f.runtime.schedule)
+            self.assertEqual([],list((f.root/'work').iterdir()))
+
+    def test_backup_update_schedule_readback_failure_restores_source_and_prior_schedule(self):
+        import subprocess
+        from production_runtime import RuntimeFailure
+        with self.backup_update_fixture() as f, patch.object(f.owner,'credential_canary',return_value={}), ExitStack() as stack:
+            original=f.runtime.command;failed=False
+            def command(args,**kwargs):
+                nonlocal failed
+                if args[:2]==['systemctl','start'] and not failed:
+                    failed=True;return subprocess.CompletedProcess(args,0,'','')
+                return original(args,**kwargs)
+            stack.enter_context(patch.object(f.runtime,'command',side_effect=command))
+            with self.assertRaisesRegex(RuntimeFailure,'schedule_readback_failed'):
+                f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=f.expected)
+            for path,body in f.snapshots.items():self.assertEqual(body,path.read_bytes())
+            self.assertEqual(f.original_schedule,f.runtime.schedule)
+
+    def test_backup_update_compensation_continues_after_one_file_cannot_be_restored(self):
+        from production_runtime import RuntimeFailure
+        with self.backup_update_fixture() as f, patch.object(f.owner,'credential_canary',return_value={}), ExitStack() as stack:
+            original=f.owner.replace_known;blocked=f.owner.INSTALL/'scripts/phone_postgresql_backup_adapter.py'
+            def compensate(path,before,after,mode):
+                if path==blocked and after==f.snapshots[path]:raise RuntimeFailure('phone_backup_update_preimage_changed')
+                return original(path,before,after,mode)
+            stack.enter_context(patch.object(f.owner,'replace_known',side_effect=compensate))
+            stack.enter_context(patch.object(f.runtime,'health',side_effect=[{},RuntimeFailure('phone_runtime_unhealthy'),{}]))
+            with self.assertRaisesRegex(RuntimeFailure,'cleanup_unconfirmed'):
+                f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=f.expected)
+            for path,body in f.snapshots.items():
+                if path!=blocked:self.assertEqual(body,path.read_bytes())
+            self.assertEqual(f.assets['scripts/phone_postgresql_backup_adapter.py'],blocked.read_bytes())
+            self.assertTrue(all(not state['enabled'] and not state['active'] for state in f.runtime.schedule.values()))
+            self.assertTrue(list((f.root/'work').iterdir()))
+
     def test_dedicated_inputs_do_not_inherit_other_product_credentials(self):
         from production_runtime import Runtime, LOCK
         from phone_postgresql_backup_adapter import environment, BUCKET, WRITER

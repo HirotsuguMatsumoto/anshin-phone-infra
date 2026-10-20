@@ -21,10 +21,10 @@ source_doc_ids:
   - anshin.release.contract
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
-code_paths: []
-contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml]
+code_paths: [scripts/phone_postgresql_backup_adapter.py, scripts/production_runtime.py]
+contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml]
 test_paths: [scripts/build_check.sh]
-last_reviewed: "2026-10-20"
+last_reviewed: "2026-10-21"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -53,10 +53,10 @@ ownerの本番反映依頼と基礎開発指示に対する準備計画である
 
 | 対象 | 確認済み | 未確認・未実施 |
 | --- | --- | --- |
-| 基礎管理経路 | 実Docker、隔離Auth、Backend、実PBX、架空番号・模擬carrierを通す番号/端末管理・通話・G.711 FAX・監査・隔離復元 | 実Cloco、実番号、T.38、顧客通信、本番復元・商用容量 |
-| 管理画面 | 説明iconのclick/Escape、必要状態・エラー・FAX制限表示。対象画面の自動試験・右サイド実browser確認。ownerの「画面問題ない。本番反映お願い」により当該画面の本人確認受領済み | 本番画面の実確認 |
+| 基礎管理経路 | 実Docker、隔離Auth、Backend、実PBX、架空番号・模擬carrierを通す番号/端末管理・通話・G.711 FAX・監査・隔離復元 | 実Cloco、実番号、T.38、顧客通信、商用容量 |
+| 管理画面 | 説明iconのclick/Escape、必要状態・エラー・FAX制限表示。対象画面の自動試験・右サイド実browser確認。ownerの「画面問題ない。本番反映お願い」により当該画面の本人確認受領済み。公式 https://phone.anshin.care で本番Google loginと管理6画面を確認 | MFA復旧の本人操作・再登録後確認は別に未確認 |
 | source | Backend `7770e877b2901d1b99c09cf32606f8abdc55178d`のruntime変更、Infraの既存runtime変更、Frontend `ba6bcbdb97cc4d80c0f45cb0c4aebb2e3d301c57`の説明・文書整備をmainへ統合 | source統合を本番提供と扱わない |
-| 本番adapter | 中央registryとPhone固定配備source、MS-A2-1専用VM bootstrap構築済み | 中央registryのPhone Backend/Infraは引き続きblocked。管理API/DB配備・公開URL・本番Auth・backup/復旧は未受入 |
+| 本番adapter | MS-A2-1専用VM・管理API/DB・公式公開・本番Google認証・実S34世代・同世代DB/FAX隔離復旧と両timer有効化を2026-10-20に受入 | 中央generic経路の完成は専用operationの受入から推定せず、中央runnerの実装・検査・release結果で判定。定期実発火と証明書更新切替の実施結果を別記 |
 | 無料Softphone | 既存employee/customer mobileはFlutter。公式SDK条件を比較 | Phone SDK実装、Android/iPhone実機、Push、背景着信・音声品質、採用方式・費用・UI/UX詳細設計 |
 
 runtime codeが変わっていない文書commitを、新しい実通信成功SHAへ読み替えない。正式な詳細結果はinstruction originの既存Git外証跡で管理し、秘密、一時path、原本又はraw観測結果を本書へコピーしない。
@@ -141,7 +141,7 @@ Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所�
 
 ownerは「Clocoと同じ月単位（毎月5日に前月分を削除）」を指定した。production ComposeはBackendとmigrationへ`ANSHIN_PHONE_FAX_RETENTION_POLICY=cloco_previous_month`を渡し、Backendに継承されたlocalの秒数defaultを空へ上書きする。保存受付月の翌月5日00:00 JSTを期限とし、原本だけを対象とする。既存S3標準31日・通信履歴・監査の保持は変更しない。境界、replay、catch-up、削除範囲のsourceとconsumer契約は`anshin.phone.backend.foundation-runtime-contract`を正本とする。
 
-既存Phone backup adapterの`--purge-expired`から、production Composeの`backend-retention` maintenance serviceで同じfixed imageの`python -m app.core.fax_retention`を呼ぶsourceを追加する。UID/GIDは10001:10001、restartなし・公開portなし・DB用internal networkだけを使う。systemdの`anshin-phone-fax-retention.timer`は毎日00:00 Asia/Tokyoに実行し、Persistent catchupで毎月5日期限の取りこぼしを回収する。VM bootstrapは構築済みだが、管理API/DB・adapterの実適用・schedulerは未配備であり、sourceやCompose検証を実発火成功と扱わない。PBX一時TIFFとdead-letterのcleanupはtelephony有効化前の別受入事項として残す。
+既存Phone backup adapterの`--purge-expired`から、production Composeの`backend-retention` maintenance serviceで同じfixed imageの`python -m app.core.fax_retention`を呼ぶsourceを追加する。UID/GIDは10001:10001、restartなし・公開portなし・DB用internal networkだけを使う。systemdの`anshin-phone-fax-retention.timer`は毎日00:00 Asia/Tokyoに実行し、Persistent catchupで毎月5日期限の取りこぼしを回収する。VM・管理API/DBと専用backup adapterは実配備済みであり、両timerのenable/active読取まで受入済みである。sourceやCompose検証・enableを実発火成功へ読み替えない。PBX一時TIFFとdead-letterのcleanupはtelephony有効化前の別受入事項として残す。
 
 
 ## Phone PostgreSQL専用backup資源の具体化
@@ -181,3 +181,14 @@ producerは同じguest lock下でPhone writerを止め、native DB dumpと暗号
 隔離restoreは同じmanifestが指すDB/FAX object versionとbackend imageを使用する。DB schema/件数、実backendのFAX復号・tenant拒否・有効期限・監査履歴を確認し、本番DBへ書き込まない。子processや未知containerの終端を確認できない場合はprivate入力と既存attention証跡を保全する。確認済みの失敗では自分の一時資格とruntimeだけを回収する。producer/restoreは有限timeoutとcleanup猶予で管理し、未知actorを名前で停止・削除しない。
 
 初回取得・同世代の隔離復旧に合格してから既存backup/retention timerを有効化し、同じownerのstatusで確認する。source、main統合、native install、取得、隔離復旧、定期有効化を別状態として既存案件記録へ残す。月次の期限・保管・復旧確認と失敗改善は共通PostgreSQL S3 backup正本§7のPDCAへ接続する。
+
+
+### 2026-10-20の基礎本番受入と更新運用
+
+中央source `b6c00f076afb22f51ffc3cc16d88539d77a21967` とbackup source Infra `a10b2515befdcd63088855a9111013698c38a562` の登録済みoperationで、Phone VMへの初回install、実S3の手動4世代取得、4世代目の同exact manifest/VersionIdによるDB/FAX隔離復旧を受入した。11 table/head `20261012_0002` と `public.phone_numbers` 0件のread-only assertion、固定Backend imageのFAX reader、隔離project及び一時資格の回収が成功した。実回線FAXの成功とは区別する。既存標準receiptはinstall `release-cdd9e00647043c6b9b77d2d4`、4世代目restore `release-ee27b437b7aa5da3d48bf818`、schedule `release-f1bf22e35c2ceabffb923721` である。
+
+backup/retention timerはenabled/activeを読取済み。4手動世代を4定期実行の実績へ読み替えない。`backup-status`はtimerのLastTrigger/次回UTC時刻とserviceの開始・終了時刻、Result/exit statusを投影し、JSTへの変換と実発火・取得成功を既存完了記録へ残す。新しい監視基盤や台帳は作らない。
+
+更新は同じ `backup-install` とoptional公開preimageを使う。originは旧Gov/InfraのGit blobから全sourceとunitのhashを再構成し、statusのsource closureと照合する。profile fingerprintは公開profile、AWS profile及び既設producer鍵のbyte hashを束ね、秘密値は返さない。候補codeは自己所有の一時directoryから読み込み、旧installed moduleと混在させず、旧sourceを先に書き換えて実行しない。
+
+native ownerはPhone timerと管理serviceだけを有限時間で停止し、既存guest lock下でpreimageを再確認する。非leaf鍵・既存S3世代・latest-successを保持し、固定4roleの新leafで証明書pair/CN/期限、実Roles Anywhere認証と保持中exact世代の読取を確認する。source/profile/leafは既知の旧byteに限りatomic置換し、失敗時は自分が変更したfileを独立に補償する。既存のenabled/active状態の復元はguest lock解放後に行い、Persistent timerの即時発火と競合させない。未知consumer・補償未確認では一時資格/candidateを保全し、標準FAILED結果へ記録する。初回installへこの更新入力を暗黙適用しない。

@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin.phone.backup-maintenance.2026-10-21",
+  "title": "Phone既設backupの固定preimage更新・leaf切替・schedule復元を既存ownerで完成",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "critical",
+  "production_change": true,
+  "spec_ids": [
+    "anshin.phone.production-and-softphone-preparation",
+    "anshin.infrastructure.postgresql-s3-backup-recovery",
+    "anshin.security.external-credential-management"
+  ],
+  "repositories": [
+    "anshin",
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py"
+  ],
+  "contract_paths": [
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml"
+  ],
+  "generated_artifacts": [],
+  "test_paths": [
+    "anshin-phone-infra/scripts/test_phase1_render_config.py",
+    "anshin/tests/test_release_ms_a2_transport.py"
+  ],
+  "invariants": [
+    "既存backup-install/deploy-phone-backend-v1/guest lock/単一receiptを再利用",
+    "旧source/profile/producer鍵とunitのpreimageを固定し未知byteを上書きしない",
+    "age/FAX原本鍵/manifest鍵・保持世代・31日保護・自動削除なしを維持",
+    "Phone timer/serviceだけ停止しlock解放後に元enabled/activeへ復元",
+    "4role認証/retained exact generation read、unknown候補/資格保全、独立した補償",
+    "MAC sole writer、他chat/製品/助成4機能/実carrier変更なし"
+  ],
+  "acceptance_criteria": [
+    "既設old sourceを新candidateでread-only観測し旧Git blobへ照合",
+    "正常更新/NOOP・非leaf保全・stale preimage無変更・canary既知/未知失敗・rename後失敗の補償・schedule readbackを既存回帰へ固定",
+    "repository-local selector/canonicalとcritical fixedSHA独立reviewに合格",
+    "本番で固定数値SMversionのleaf切替・新世代取得/同世代隔離復旧と元scheduleを実確認",
+    "初回4手動世代の受入と定期発火を区別"
+  ],
+  "out_of_scope": [
+    "実carrier",
+    "助成4機能",
+    "他製品保存先/資格",
+    "新SSH/authority/receipt/KMS"
+  ],
+  "rollout": {
+    "strategy": "existing-registered-phone-deploy-owner",
+    "steps": [
+      "I検査/review/main統合",
+      "中央qualified candidate status/旧source照合",
+      "既存SM新数値versionの4用途leafとbackup-install optional更新",
+      "新世代取得/隔離復旧/既存schedule・次回時刻確認"
+    ],
+    "triggers": [
+      "owner依頼の基礎Phone本番化"
+    ]
+  },
+  "rollback": {
+    "strategy": "existing-owner-preserve-backup",
+    "steps": [
+      "既知の変更file/profile/leafだけ元byteへ独立補償",
+      "guest lock解放後に元timer状態を復元",
+      "unknown consumer/preimageは資格/candidateを保全し標準失敗結果へ記録",
+      "S3世代・nonleaf鍵を削除しない"
+    ],
+    "triggers": [
+      "取得/復旧/health失敗"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "既存manifest/restore結果",
+      "backup/retention timer status",
+      "証明書/CRL期限と復旧PDCA"
+    ],
+    "observation_period": "初回受入と定期運用"
+  },
+  "approvals": [],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "a10b2515befdcd63088855a9111013698c38a562"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py": "a92b9b84ad409ddb07b052071870368c4f8a0a38",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py": "2ebd44c6ba82509557d13471f24d44f6cbc04a1e",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "8cf4af0afb93b71d30515d4b1a48f1581cd40b04"
+    },
+    "integration_order": [
+      "anshin-phone-infra",
+      "anshin"
+    ]
+  }
+}

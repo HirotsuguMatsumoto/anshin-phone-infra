@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import shutil
+import tempfile
 
 from production_runtime import Runtime, RuntimeFailure
 
@@ -27,6 +28,8 @@ BUCKET = 'anshin-prod-phone-postgresql-backup-691862619128'
 WRITER = 'arn:aws:iam::691862619128:role/anshin-prod-phone-postgresql-backup-writer'
 FAX_BUCKET = 'anshin-prod-phone-fax-691862619128'
 RESTORE_INPUT = Path('/run/anshin-phone-restore')
+AWS_CONFIG = Path('/etc/anshin-phone/aws/config')
+UNIT_ROOT = Path('/etc/systemd/system')
 BACKUP_SERVICE = 'anshin-phone-postgresql-backup.service'
 BACKUP_TIMER = 'anshin-phone-postgresql-backup.timer'
 RETENTION_TIMER = 'anshin-phone-fax-retention.timer'
@@ -87,12 +90,12 @@ def write_private(path, body):
         target.write(body); target.flush(); os.fsync(target.fileno())
 
 
-def aws_profiles(public):
+def aws_profiles(public, *, writer_root=None, restore_root=None):
     import shlex
     lines = []
     for purpose in ('db', 'fax'):
         for role in ('writer', 'restore'):
-            root = KEYS if role == 'writer' else RESTORE_INPUT
+            root = (writer_root or KEYS) if role == 'writer' else (restore_root or RESTORE_INPUT)
             name = 'phone-' + purpose + '-' + role
             arguments = [str(INSTALL / 'tools/aws_signing_helper'), 'credential-process', '--certificate', str(root / (name + '-certificate.pem')),
                 '--private-key', str(root / (name + '-private-key.pem')), '--trust-anchor-arn', public['trust_anchor_arn'],
@@ -102,9 +105,12 @@ def aws_profiles(public):
     return '\n'.join(lines).encode()
 
 
-def install_backup(material, *, source_sha, infra_sha, runtime=None):
+def install_backup(material, *, source_sha, infra_sha, runtime=None, assets=None, expected_installed=None):
     import base64
     runtime = runtime or Runtime()
+    if expected_installed is not None:
+        return update_backup(material, assets=assets, expected=expected_installed,
+                             source_sha=source_sha, infra_sha=infra_sha, runtime=runtime)
     public = backup_public(material['public'])
     if set(material['keys']) != PRODUCER_KEYS:
         raise RuntimeFailure('phone_backup_producer_keys_invalid')
@@ -231,11 +237,249 @@ ROLLBACK;
             shutil.rmtree(RESTORE_INPUT)
 
 
-def backup_status(*, runtime=None):
+def owned_bytes(path, mode=0o600):
+    path = Path(path)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, 'rb') as source:
+        facts = os.fstat(source.fileno())
+        if (not stat.S_ISREG(facts.st_mode) or facts.st_uid != os.geteuid()
+                or facts.st_nlink != 1 or stat.S_IMODE(facts.st_mode) != mode):
+            raise RuntimeFailure('phone_backup_owned_input_changed')
+        return source.read()
+
+
+def fingerprint(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+
+
+def installation_state(assets, *, runtime):
+    """Project exact preimages; hashes contain no credential payloads."""
+    profile = read_profile(CONFIG)
+    source = {}
+    for name in sorted(assets):
+        relative = Path(name)
+        if relative.is_absolute() or '..' in relative.parts:
+            raise RuntimeFailure('phone_backup_asset_path_invalid')
+        source[name] = hashlib.sha256(owned_bytes(INSTALL / name)).hexdigest()
+        if name.startswith('deploy/postgresql-backup/') and relative.suffix in {'.service', '.timer'}:
+            source['systemd/' + relative.name] = hashlib.sha256(
+                owned_bytes(UNIT_ROOT / relative.name, 0o644)).hexdigest()
+    inputs = {'profile': hashlib.sha256(owned_bytes(CONFIG)).hexdigest(),
+              'aws': hashlib.sha256(owned_bytes(AWS_CONFIG)).hexdigest()}
+    inputs.update({name: hashlib.sha256(owned_bytes(KEYS / name)).hexdigest() for name in sorted(PRODUCER_KEYS)})
+    schedule = {}
+    for name in (BACKUP_TIMER, RETENTION_TIMER):
+        value = runtime.command(['systemctl', 'show', name, '--property=ActiveState,UnitFileState'], timeout=10).stdout
+        fields = dict(line.split('=', 1) for line in value.splitlines() if '=' in line)
+        schedule[name] = {'enabled': {'enabled': True, 'disabled': False}.get(fields.get('UnitFileState')),
+                          'active': {'active': True, 'inactive': False}.get(fields.get('ActiveState'))}
+    return {'governance_sha': profile['governance_sha'], 'infra_sha': profile['infra_sha'],
+            'source_closure_sha256': fingerprint(source), 'profile_sha256': fingerprint(inputs),
+            'schedule': schedule}
+
+
+def replace_known(path, before, after, mode):
+    """Replace only this transaction's known preimage, including compensation."""
+    path = Path(path)
+    if owned_bytes(path, mode) != before:
+        raise RuntimeFailure('phone_backup_update_preimage_changed')
+    descriptor, name = tempfile.mkstemp(prefix='.phone-backup-input-', dir=path.parent)
+    temporary = Path(name)
+    try:
+        with os.fdopen(descriptor, 'wb') as target:
+            os.fchmod(target.fileno(), mode); target.write(after); target.flush(); os.fsync(target.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+        try: os.fsync(directory)
+        finally: os.close(directory)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def credential_canary(runtime, public, work):
+    """Authenticate all four fixed roles and read the retained exact generation."""
+    configuration = work / 'aws-config'
+    write_private(configuration, aws_profiles(public, writer_root=work, restore_root=work))
+    environment = runtime.environment(runtime.profile())
+    environment.update(AWS_CONFIG_FILE=str(configuration), AWS_SHARED_CREDENTIALS_FILE='/dev/null',
+                       AWS_EC2_METADATA_DISABLED='true', AWS_REGION='ap-northeast-1')
+    def aws(data, purpose, service, *arguments):
+        profile = 'anshin-phone-' + ('fax-' if data == 'fax' else '') + 'backup-' + purpose
+        value = runtime.command([str(INSTALL / 'tools/aws'), '--no-cli-pager', '--output', 'json',
+            '--cli-connect-timeout', '5', '--cli-read-timeout', '30', '--region', 'ap-northeast-1',
+            '--profile', profile, service, *arguments], env=environment, timeout=60)
+        return json.loads(value.stdout)
+    for data, product in (('db', 'postgresql'), ('fax', 'fax')):
+        for purpose in ('writer', 'restore'):
+            stem = 'phone-' + data + '-' + purpose
+            certificate, private = work / (stem + '-certificate.pem'), work / (stem + '-private-key.pem')
+            runtime.command(['openssl', 'x509', '-in', str(certificate), '-noout', '-checkend', str(14 * 86400)], timeout=10)
+            subject = runtime.command(['openssl', 'x509', '-in', str(certificate), '-noout', '-subject', '-nameopt', 'RFC2253'], timeout=10).stdout.strip()
+            if subject.removeprefix('subject=').strip() != 'CN=anshin-prod-ms-a2-1-phone-' + product + '-backup-' + purpose:
+                raise RuntimeFailure('phone_backup_update_certificate_subject_invalid')
+            public_key = runtime.command(['openssl', 'x509', '-in', str(certificate), '-noout', '-pubkey'], timeout=10).stdout
+            private_public = runtime.command(['openssl', 'pkey', '-in', str(private), '-pubout'], timeout=10).stdout
+            if public_key != private_public:
+                raise RuntimeFailure('phone_backup_update_certificate_pair_invalid')
+            identity = aws(data, purpose, 'sts', 'get-caller-identity')
+            prefix = 'arn:aws:sts::691862619128:assumed-role/anshin-prod-phone-' + product + '-backup-' + purpose + '/'
+            if identity.get('Account') != '691862619128' or not str(identity.get('Arn', '')).startswith(prefix):
+                raise RuntimeFailure('phone_backup_update_role_canary_failed')
+    if not (STATE / 'latest-success.json').exists():
+        return {'authenticated_roles': 4, 'retained_generation_read': False}
+    latest = latest_backup()
+    manifest = work / 'retained-manifest.json'
+    fetched = aws('db', 'restore', 's3api', 'get-object', '--expected-bucket-owner', '691862619128',
+        '--bucket', BUCKET, '--key', latest['manifest_key'], '--version-id', latest['manifest_version_id'], str(manifest))
+    if (fetched.get('VersionId') != latest['manifest_version_id']
+            or hashlib.sha256(manifest.read_bytes()).hexdigest() != latest['manifest_sha256']):
+        raise RuntimeFailure('phone_backup_update_generation_canary_failed')
+    # The producer's existing receipt binds these exact signed manifest bytes.
+    fax = json.loads(manifest.read_bytes())['payload']['fax']
+    for data, bucket, key, version, checksum in (
+            ('db', BUCKET, latest['artifact_key'], latest['artifact_version_id'], latest['artifact_checksum_sha256']),
+            ('fax', FAX_BUCKET, fax['key'], fax['version_id'], fax['checksum_sha256'])):
+        for purpose in ('writer', 'restore'):
+            value = aws(data, purpose, 's3api', 'head-object', '--expected-bucket-owner', '691862619128',
+                '--bucket', bucket, '--key', key, '--version-id', version, '--checksum-mode', 'ENABLED')
+            if (value.get('VersionId') != version or value.get('ChecksumSHA256') != checksum
+                    or value.get('ServerSideEncryption') != 'AES256'):
+                raise RuntimeFailure('phone_backup_update_generation_canary_failed')
+    return {'authenticated_roles': 4, 'retained_generation_read': True}
+
+
+def restore_schedule(runtime, schedule):
+    # The caller has released the guest lock before a Persistent timer can fire.
+    for name, state in schedule.items():
+        runtime.command(['systemctl', 'enable' if state['enabled'] else 'disable', name], timeout=30)
+        runtime.command(['systemctl', 'start' if state['active'] else 'stop', name], timeout=30)
+        observed = runtime.command(['systemctl', 'show', name, '--property=ActiveState,UnitFileState'], timeout=10).stdout
+        fields = dict(line.split('=', 1) for line in observed.splitlines() if '=' in line)
+        if (fields.get('UnitFileState') != ('enabled' if state['enabled'] else 'disabled')
+                or fields.get('ActiveState') != ('active' if state['active'] else 'inactive')):
+            raise RuntimeFailure('phone_backup_update_schedule_readback_failed')
+
+
+def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime):
+    """Update a qualified installation under its existing lock and preimages."""
+    import base64
+    if not isinstance(assets, dict) or not assets or installation_state(assets, runtime=runtime) != expected:
+        raise RuntimeFailure('phone_backup_update_preimage_changed')
+    schedule = expected['schedule']
+    if (set(schedule) != {BACKUP_TIMER, RETENTION_TIMER}
+            or any(set(value) != {'enabled', 'active'} or any(type(v) is not bool for v in value.values()) for value in schedule.values())):
+        raise RuntimeFailure('phone_backup_update_schedule_unconfirmed')
+    previous = read_profile(CONFIG); public = backup_public(material['public'])
+    leaf_ids = {key for key in CREDENTIAL_IDS if '-backup-' in key}
+    if ({key: value for key, value in public.items() if key != 'credential_versions'}
+            != {key: value for key, value in previous['public'].items() if key != 'credential_versions'}
+            or any(public['credential_versions'][key] != previous['public']['credential_versions'][key]
+                   for key in CREDENTIAL_IDS - leaf_ids)
+            or any(public['credential_versions'][key] < previous['public']['credential_versions'][key] for key in leaf_ids)):
+        raise RuntimeFailure('phone_backup_update_nonleaf_binding_changed')
+    restore_leafs = {name for name in RESTORE_KEYS if '-restore-' in name}
+    if set(material['keys']) != PRODUCER_KEYS | restore_leafs:
+        raise RuntimeFailure('phone_backup_update_keys_invalid')
+    decoded = {name: base64.b64decode(value, validate=True) for name, value in material['keys'].items()}
+    if any(not body or len(body) > 16384 for body in decoded.values()):
+        raise RuntimeFailure('phone_backup_key_size_invalid')
+    for name in PRODUCER_KEYS:
+        old = owned_bytes(KEYS / name)
+        if '-writer-' not in name and old != decoded[name]:
+            raise RuntimeFailure('phone_backup_update_nonleaf_key_changed')
+        if '-writer-' in name and old != decoded[name]:
+            data, kind = name.split('-')[1], 'certificate' if name.endswith('certificate.pem') else 'private-key'
+            credential = 'anshin.production.phone.' + data + '-backup-writer-' + kind
+            if public['credential_versions'][credential] <= previous['public']['credential_versions'][credential]:
+                raise RuntimeFailure('phone_backup_update_leaf_version_unchanged')
+    if owned_bytes(AWS_CONFIG) != aws_profiles(previous['public']):
+        raise RuntimeFailure('phone_backup_update_aws_profile_changed')
+    changes = {INSTALL / name: (body, 0o600) for name, body in assets.items()}
+    changes.update({UNIT_ROOT / Path(name).name: (body, 0o644) for name, body in assets.items()
+                    if name.startswith('deploy/postgresql-backup/') and Path(name).suffix in {'.service', '.timer'}})
+    changes.update({KEYS / name: (decoded[name], 0o600) for name in PRODUCER_KEYS if '-writer-' in name})
+    configuration = {'manifest_key_id': public['manifest_key_id'], 'governance_sha': source_sha, 'infra_sha': infra_sha, 'public': public}
+    changes[CONFIG] = ((json.dumps(configuration, sort_keys=True) + '\n').encode(), 0o600)
+    changes[AWS_CONFIG] = (aws_profiles(public), 0o600)
+    before = {path: owned_bytes(path, mode) for path, (_, mode) in changes.items()}
+    changes = {path: value for path, value in changes.items() if value[0] != before[path]}
+    if not changes:
+        return {'status': 'installed', 'updated': False, 'source_sha': source_sha, 'infra_sha': infra_sha}
+    work = Path(tempfile.mkdtemp(prefix='anshin-phone-backup-update-', dir='/run'))
+    changed = []; stopped = False; locked = False; safe_cleanup = True
+    try:
+        for name, body in decoded.items(): write_private(work / name, body)
+        timers = (BACKUP_TIMER, RETENTION_TIMER)
+        safe_cleanup = False
+        runtime.command(['systemctl', 'disable', '--now', *timers], timeout=60)
+        runtime.command(['systemctl', 'stop', BACKUP_SERVICE, 'anshin-phone-fax-retention.service'], timeout=330, termination_grace=5)
+        stopped = True; safe_cleanup = True
+        with runtime.exclusive():
+            locked = True
+            actual = installation_state(assets, runtime=runtime)
+            if {k: v for k, v in actual.items() if k != 'schedule'} != {k: v for k, v in expected.items() if k != 'schedule'}:
+                raise RuntimeFailure('phone_backup_update_preimage_changed')
+            runtime.health(runtime.profile())
+            canary = credential_canary(runtime, public, work)
+            for path, (body, mode) in changes.items():
+                changed.append(path)
+                replace_known(path, before[path], body, mode)
+            runtime.command(['systemctl', 'daemon-reload'], timeout=30)
+            for path, (body, mode) in changes.items():
+                if owned_bytes(path, mode) != body:
+                    raise RuntimeFailure('phone_backup_update_readback_failed')
+            runtime.health(runtime.profile())
+        restore_schedule(runtime, schedule)
+        return {'status': 'installed', 'updated': True, 'source_sha': source_sha, 'infra_sha': infra_sha, 'canary': canary}
+    except BaseException as error:
+        if str(error) == 'phone_command_children_unknown' or stopped and not locked:
+            safe_cleanup = False
+        if stopped and safe_cleanup:
+            try:
+                # Stop any timer started by a partially restored schedule before compensation.
+                runtime.command(['systemctl', 'disable', '--now', BACKUP_TIMER, RETENTION_TIMER], timeout=60)
+                runtime.command(['systemctl', 'stop', BACKUP_SERVICE, 'anshin-phone-fax-retention.service'], timeout=330)
+                with runtime.exclusive():
+                    compensation_failed = False
+                    for path in reversed(changed):
+                        try:
+                            body, mode = changes[path]
+                            if owned_bytes(path, mode) != before[path]:
+                                replace_known(path, body, before[path], mode)
+                        except BaseException:
+                            compensation_failed = True
+                    try: runtime.command(['systemctl', 'daemon-reload'], timeout=30)
+                    except BaseException: compensation_failed = True
+                    try: runtime.health(runtime.profile())
+                    except BaseException: compensation_failed = True
+                    if compensation_failed:
+                        raise RuntimeFailure('phone_backup_update_cleanup_unconfirmed')
+                restore_schedule(runtime, schedule)
+            except BaseException:
+                safe_cleanup = False
+        if not safe_cleanup:
+            try: runtime.command(['systemctl', 'disable', '--now', BACKUP_TIMER, RETENTION_TIMER], timeout=60)
+            except BaseException: pass
+            failure = RuntimeFailure('phone_backup_update_cleanup_unconfirmed')
+            failure.retained_private_configuration = str(work)
+            raise failure from None
+        raise
+    finally:
+        if safe_cleanup: shutil.rmtree(work)
+
+
+def backup_status(*, runtime=None, assets=None):
     runtime = runtime or Runtime()
-    return {'status': 'observed', 'latest_backup': latest_backup(), 'timers': {
-        name: runtime.command(['systemctl', 'show', name, '--property=ActiveState,UnitFileState,NextElapseUSecRealtime'], timeout=10).stdout.strip()
-        for name in (BACKUP_TIMER, RETENTION_TIMER)}}
+    result = {'status': 'observed', 'latest_backup': latest_backup() if (STATE / 'latest-success.json').exists() else None,
+              'timers': {name: runtime.command(['systemctl', 'show', name,
+                  '--property=ActiveState,UnitFileState,NextElapseUSecRealtime,LastTriggerUSec'], timeout=10).stdout.strip()
+                  for name in (BACKUP_TIMER, RETENTION_TIMER)},
+              'services': {name: runtime.command(['systemctl', 'show', name,
+                  '--property=ActiveState,Result,ExecMainCode,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp'], timeout=10).stdout.strip()
+                  for name in (BACKUP_SERVICE, 'anshin-phone-fax-retention.service')}}
+    if assets is not None:
+        result['installation'] = installation_state(assets, runtime=runtime)
+    return result
 
 
 def activate_backup(*, runtime=None):
