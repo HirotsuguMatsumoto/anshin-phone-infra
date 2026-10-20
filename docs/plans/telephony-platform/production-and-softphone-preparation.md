@@ -171,3 +171,13 @@ FAX保護原本のoff-host backupは別projectionとし、`anshin-prod-phone-fax
 同梱のservice/timerは既存PostgreSQL unitを再利用し、毎日04:30・10:30・18:30・23:30（Asia/Tokyo）の4回、Persistent catchup、共通guest lock及び限定retryを使う。定義の追加はinstall・enable・定期実行の証拠を代替しない。初回取得、4世代、隔離restore、FAX backup及び復旧鍵別保管は引き続き実受入を必要とする。
 
 FAX retentionは同じguest lockを取得してから固定one-offの不存在を確認する。作成が返した64桁IDと実name・project・service・oneoff・image・userが一致した場合だけ、そのIDを使ってwait・stop・rmし、最終absenceを確認する。create応答喪失、未知ID、metadata不一致又はchildren unknownを名前で採用せず保全する。Runtimeのlock取得後も、stoppedを含む未解決retention actorが残っていれば保存操作を始めない。source切戻しは削除済み原本を復元しない。削除済み原本の復旧可否は、独立した既存backup・保持・隔離restoreの受入で判定する。新timerはshared backup/restore整合と実consumer検証後に既存installerから導入する。
+
+### Phone専用本番backupの実行adapter
+
+固定MS-A2-1 Phone guestへ既存`deploy-phone-backend-v1`のstdinから資格を配布し、共通PostgreSQL producer/restoreを使用する。新SSH入口・CA秘密鍵のguest配布・別receiptは作らない。承認済み共通issuerの実anchor `916219bc-2500-4f73-a7b2-82e0c94ec215`とPhone専用4 role/profile、11 credentialの固定数値versionを受け付ける。旧anchor/他製品資格へfallbackしない。
+
+producerは同じguest lock下でPhone writerを止め、native DB dumpと暗号化FAX原本を同じcutoffへ固定し、age/SSE-S3・31日保護・exact object versionを既存manifestへ記録する。GOVERNANCE31日は削除期日ではなく、今回の自動削除を追加しない。FAX運用原本の毎月5日前月分削除とは区別する。復旧鍵はSecret Managerへ別障害領域で保管し、対応するS3 objectが残る間は旧鍵も保持する。
+
+隔離restoreは同じmanifestが指すDB/FAX object versionとbackend imageを使用する。DB schema/件数、実backendのFAX復号・tenant拒否・有効期限・監査履歴を確認し、本番DBへ書き込まない。子processや未知containerの終端を確認できない場合はprivate入力と既存attention証跡を保全する。確認済みの失敗では自分の一時資格とruntimeだけを回収する。producer/restoreは有限timeoutとcleanup猶予で管理し、未知actorを名前で停止・削除しない。
+
+初回取得・同世代の隔離復旧に合格してから既存backup/retention timerを有効化し、同じownerのstatusで確認する。source、main統合、native install、取得、隔離復旧、定期有効化を別状態として既存案件記録へ残す。月次の期限・保管・復旧確認と失敗改善は共通PostgreSQL S3 backup正本§7のPDCAへ接続する。

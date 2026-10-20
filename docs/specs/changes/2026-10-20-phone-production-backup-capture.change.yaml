@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin.phone.production-backup-capture.2026-10-20",
+  "title": "Phone専用DB/FAXの同世代S3取得と隔離復旧を既存ownerへ接続",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "critical",
+  "production_change": true,
+  "spec_ids": [
+    "anshin.phone.production-and-softphone-preparation",
+    "anshin.infrastructure.postgresql-s3-backup-recovery",
+    "anshin.security.external-credential-management"
+  ],
+  "repositories": [
+    "anshin",
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py",
+    "anshin-phone-infra/scripts/production_runtime.py",
+    "anshin-phone-infra/deploy/postgresql-backup/anshin-phone-postgresql-backup.service"
+  ],
+  "contract_paths": [
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "anshin-phone-infra/docs/specs/changes/2026-10-20-phone-production-backup-capture.change.yaml"
+  ],
+  "generated_artifacts": [],
+  "test_paths": [
+    "anshin/tests/test_release_ms_a2_transport.py",
+    "anshin/tests/test_postgresql_s3_backup.py",
+    "anshin-phone-infra/scripts/verify_phase1.sh"
+  ],
+  "invariants": [
+    "Phone専用固定guest/role/credentialと既存lock/producer/manifest/receipt",
+    "DB/FAX同cutoff・exactS3version・SSE-S3AES25631日・KMSなし・自動削除なし",
+    "本番DBへrestoreしない・未知actor保全・既知actorだけ回収",
+    "source/main/実取得/隔離復旧/定期化を区別",
+    "他製品・助成4機能・実carrier変更なし"
+  ],
+  "acceptance_criteria": [
+    "明示候補Infraを使う既存共有回帰で成功/失敗/未知actor/private stdinを検証",
+    "canonical検査とfixedSHA独立reviewに合格",
+    "registered deploy operationでinstall/capture/同世代隔離restore/statusを確認",
+    "実取得と復旧合格後に既存timerを有効化/readback"
+  ],
+  "out_of_scope": [
+    "実carrier",
+    "助成4機能",
+    "他製品保存先/資格",
+    "新SSH/authority/receipt/KMS"
+  ],
+  "rollout": {
+    "strategy": "existing-registered-phone-deploy-owner",
+    "steps": [
+      "検査/review/main統合",
+      "固定資格install",
+      "DB/FAX取得と隔離復旧",
+      "timer有効化/status/PDCA"
+    ],
+    "triggers": [
+      "owner依頼の基礎Phone本番化"
+    ]
+  },
+  "rollback": {
+    "strategy": "existing-owner-preserve-backup",
+    "steps": [
+      "未受入timerを有効化しない",
+      "既存preimageへ復元しS3/鍵を保全",
+      "未知actor/attention証跡を保全"
+    ],
+    "triggers": [
+      "取得/復旧/health失敗"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "既存manifest/restore結果",
+      "backup/retention timer status",
+      "証明書/CRL期限と復旧PDCA"
+    ],
+    "observation_period": "初回受入と定期運用"
+  },
+  "approvals": [],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "189f66ddddcd903d67149df4d358fbe4c6663184"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py",
+      "anshin-phone-infra/scripts/production_runtime.py",
+      "anshin-phone-infra/deploy/postgresql-backup/anshin-phone-postgresql-backup.service",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-20-phone-production-backup-capture.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py": "a7b84553e349df49222b73f75ab1a31f1ccc8c17",
+      "anshin-phone-infra/scripts/production_runtime.py": "1db6a9b85f5b66ced00d6a53badd8de2e8e47e45",
+      "anshin-phone-infra/deploy/postgresql-backup/anshin-phone-postgresql-backup.service": "5617e1ed9953b74cb9f2b8d254b7706b11848d5e",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "caee61934fd1a43ddf46e242ce2ee53570a78f96"
+    },
+    "integration_order": [
+      "anshin-phone-infra",
+      "anshin"
+    ]
+  }
+}

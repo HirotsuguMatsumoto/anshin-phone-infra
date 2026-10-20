@@ -17,6 +17,7 @@ import signal
 import stat
 import subprocess
 import sys
+import time
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,6 +40,7 @@ SETTINGS_CHECK = (
 def run_owned_process(argv, **kwargs):
     """A cancelled local CLI must not outlive its release owner."""
     timeout = kwargs.pop('timeout')
+    termination_grace = kwargs.pop('termination_grace', 5)
     process = subprocess.Popen(argv, start_new_session=True, **kwargs)
     try:
         stdout, stderr = process.communicate(timeout=timeout)
@@ -50,7 +52,7 @@ def run_owned_process(argv, **kwargs):
             except ProcessLookupError:
                 pass
             try:
-                process.communicate(timeout=5)
+                process.communicate(timeout=termination_grace)
             except subprocess.TimeoutExpired:
                 if stop_signal == signal.SIGKILL:
                     raise RuntimeFailure('phone_command_children_unknown') from None
@@ -82,10 +84,11 @@ class Runtime:
         metadata = Path(path).lstat()
         return {'mode': metadata.st_mode, 'device': metadata.st_dev, 'inode': metadata.st_ino}
 
-    def command(self, argv, *, env=None, timeout=180, allow_failure=False):
+    def command(self, argv, *, env=None, timeout=180, allow_failure=False, termination_grace=5):
         try:
             result = self.runner(argv, env=env or self.environment(), text=True,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout,
+                                 **({'termination_grace': termination_grace} if termination_grace != 5 else {}))
         except subprocess.TimeoutExpired:
             raise RuntimeFailure('phone_command_timeout') from None
         if result.returncode and not allow_failure:
@@ -150,17 +153,24 @@ class Runtime:
         path = self.state / 'runtime.json'
         return json.loads(path.read_text()) if path.exists() else None
 
-    def observation(self):
+    def observation(self, *, timeout=None):
         """Read only identity/state fields; Docker inspect's Env stays private."""
         selector = f'label=com.docker.compose.project={self.project}'
-        ids = self.command(['docker', 'ps', '--all', '--quiet', '--no-trunc', '--filter', selector]).stdout.split()
-        names = self.command(['docker', 'volume', 'ls', '--format', '{{.Name}}']).stdout.split()
+        deadline = None if timeout is None else time.monotonic() + timeout
+        def budget():
+            remaining = 180 if deadline is None else deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeFailure('phone_observation_deadline')
+            return remaining
+            return min(180, remaining)
+        ids = self.command(['docker', 'ps', '--all', '--quiet', '--no-trunc', '--filter', selector], timeout=budget()).stdout.split()
+        names = self.command(['docker', 'volume', 'ls', '--format', '{{.Name}}'], timeout=budget()).stdout.split()
         volumes = []
         for name in sorted(names):
             if name not in {self.project + '_postgres-data', self.project + '_fax-protected-storage'}:
                 continue
             def inspect_volume():
-                rows = json.loads(self.command(['docker', 'volume', 'inspect', name]).stdout)
+                rows = json.loads(self.command(['docker', 'volume', 'inspect', name], timeout=budget()).stdout)
                 if not isinstance(rows, list) or len(rows) != 1:
                     raise RuntimeFailure('phone_volume_identity_invalid')
                 row = rows[0]
@@ -188,21 +198,27 @@ class Runtime:
         containers = []
         for identifier in sorted(ids):
             projected = self.command(['docker', 'inspect', '--format',
-                '{{json .Id}} {{json .Image}} {{json .State.StartedAt}} {{json .RestartCount}}', identifier]).stdout.strip()
+                '{{json .Id}} {{json .Image}} {{json .State.StartedAt}} {{json .RestartCount}}', identifier], timeout=budget()).stdout.strip()
             containers.append(projected)
         return {'containers': containers, 'volumes': volumes}
 
-    def health(self, profile):
-        identifiers = self.compose(profile, 'ps', '--quiet', 'backend').stdout.split()
+    def health(self, profile, *, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        def budget(default):
+            remaining = default if deadline is None else deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeFailure('phone_health_deadline')
+            return min(default, remaining)
+        identifiers = self.compose(profile, 'ps', '--quiet', 'backend', timeout=budget(180)).stdout.split()
         if len(identifiers) != 1:
             raise RuntimeFailure('phone_backend_identity_missing')
-        image = self.command(['docker', 'inspect', '--format', '{{.Config.Image}}', identifiers[0]]).stdout.strip()
+        image = self.command(['docker', 'inspect', '--format', '{{.Config.Image}}', identifiers[0]], timeout=budget(180)).stdout.strip()
         if image != profile['backend_image']:
             raise RuntimeFailure('phone_backend_image_mismatch')
-        self.compose(profile, 'exec', '-T', 'backend', 'python', '-c', SETTINGS_CHECK, timeout=30)
+        self.compose(profile, 'exec', '-T', 'backend', 'python', '-c', SETTINGS_CHECK, timeout=budget(30))
         self.compose(profile, 'exec', '-T', 'backend', 'python', '-c',
-            "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=5).read()", timeout=15)
-        result = self.compose(profile, 'ps', '--format', 'json', 'backend', 'postgres')
+            "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=5).read()", timeout=budget(15))
+        result = self.compose(profile, 'ps', '--format', 'json', 'backend', 'postgres', timeout=budget(180))
         # Compose v2 versions emit a JSON array or one object per line.
         raw = result.stdout.strip()
         rows = json.loads(raw) if raw.startswith('[') else [json.loads(line) for line in raw.splitlines()]
@@ -212,28 +228,36 @@ class Runtime:
         return {'status': 'healthy', 'backend_sha': profile['backend_sha'],
                 'infra_sha': profile['infra_sha'], 'telephony_enabled': False}
 
-    def stop_oneoff(self, suffix, service, *, expected_id=None):
+    def stop_oneoff(self, suffix, service, *, expected_id=None, timeout=None):
+        deadline = None if timeout is None else time.monotonic() + timeout
+        def bounded_command(argv, **kwargs):
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeFailure('phone_oneoff_cleanup_deadline')
+                kwargs['timeout'] = min(kwargs.get('timeout', 180), remaining)
+            return self.command(argv, **kwargs)
         name = self.project + '-' + suffix
         if expected_id is None:
-            result = self.command(['docker', 'ps', '--all', '--quiet', '--filter', f'name=^/{name}$',
+            result = bounded_command(['docker', 'ps', '--all', '--quiet', '--filter', f'name=^/{name}$',
                 '--filter', f'label=com.docker.compose.project={self.project}',
                 '--filter', 'label=com.docker.compose.service=' + service])
             if result.stdout.strip():
-                self.command(['docker', 'stop', '--time', '10', name], timeout=30)
-                self.command(['docker', 'rm', name], timeout=30)
+                bounded_command(['docker', 'stop', '--time', '10', name], timeout=30)
+                bounded_command(['docker', 'rm', name], timeout=30)
             return
         if not re.fullmatch(r'[0-9a-f]{64}', expected_id):
             raise RuntimeFailure('phone_oneoff_expected_identity_invalid')
         exact_id = ['docker', 'ps', '--all', '--quiet', '--no-trunc', '--filter', 'id=' + expected_id]
-        current = self.command(['docker', 'ps', '--all', '--quiet', '--no-trunc',
+        current = bounded_command(['docker', 'ps', '--all', '--quiet', '--no-trunc',
             '--filter', f'name=^/{name}$'], timeout=10).stdout.split()
         if not current:
-            if self.command(exact_id, timeout=10).stdout.strip():
+            if bounded_command(exact_id, timeout=10).stdout.strip():
                 raise RuntimeFailure('phone_oneoff_identity_changed')
             return
         if current != [expected_id]:
             raise RuntimeFailure('phone_oneoff_identity_changed')
-        value = json.loads(self.command(['docker', 'inspect', '--format',
+        value = json.loads(bounded_command(['docker', 'inspect', '--format',
             '[{{json .Id}},{{json .Name}},{{json .Config.Labels}}]', expected_id], timeout=10).stdout)
         if (not isinstance(value, list) or len(value) != 3
                 or value[0] != expected_id or value[1] != '/' + name
@@ -242,16 +266,16 @@ class Runtime:
                 or value[2].get('com.docker.compose.service') != service
                 or value[2].get('com.docker.compose.oneoff') != 'True'):
             raise RuntimeFailure('phone_oneoff_identity_changed')
-        self.command(['docker', 'stop', '--time', '10', expected_id], timeout=30)
-        self.command(['docker', 'rm', expected_id], timeout=30)
-        if self.command(exact_id, timeout=10).stdout.strip():
+        bounded_command(['docker', 'stop', '--time', '10', expected_id], timeout=30)
+        bounded_command(['docker', 'rm', expected_id], timeout=30)
+        if bounded_command(exact_id, timeout=10).stdout.strip():
             raise RuntimeFailure('phone_oneoff_cleanup_unconfirmed')
 
     def backup(self):
         # The existing shared producer takes the same guest lock. Run it
         # before acquiring that lock, then reobserve before any mutation.
         self.command(['python3', '/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py',
-                      '--scheduled-backup'], timeout=1200)
+                      '--scheduled-backup'], timeout=1500, termination_grace=260)
 
     def save(self, profile):
         self.state.mkdir(parents=True, mode=0o700, exist_ok=True)
