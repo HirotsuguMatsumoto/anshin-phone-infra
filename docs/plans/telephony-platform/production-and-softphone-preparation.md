@@ -13,6 +13,7 @@ status: draft
 risk_level: high
 source_doc_ids:
   - anshin.corporate.anshin-phone.foundation-development-instructions
+  - anshin.corporate.anshin-phone.notification-status
   - anshin.infrastructure.system-architecture
   - anshin.infrastructure.mac-codex-ms-a2-runtime-migration
   - anshin.runbook.system-architecture.ms-a2-server-access
@@ -21,9 +22,9 @@ source_doc_ids:
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: []
-contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml]
 test_paths: [scripts/build_check.sh]
-last_reviewed: "2026-10-17"
+last_reviewed: "2026-10-20"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -107,7 +108,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 
 費用が発生し得るVM追加資産、hardware、hosting、off-host保管、外部secret/provider/Push等は、実契約・resource・料金・期間を先に確認する。追加費用を確認できない操作は実行せず、目的・対象・見積り・未確定項目・単発/継続・期間を示してownerの具体的指示を得る。既存CIの通常利用はownerの確認不要例外を適用する。内部DB/password/HMAC/FAX keyを、外部provider資格4件や有料Secret Manager作成へ自動的に置換しない。
 
-実Cloco資格・接続/FAX/channel条件、届出・番号計画・契約の現在状態は事業側正本から照合する。資格台帳と許可済みprimary設定の確認前に再共有を要求しない。未確認の実回線・顧客開通・商用提供は、隔離基礎機能の成功と分ける。助成対象4機能は先行実装しない。
+電気通信事業届出は、2026-10-20に通知書原本から受理・当社A-08-24437（届出日10月2日、通知日10月16日）を確認済み。事業側正本 `anshin.corporate.anshin-phone.notification-status` を参照し、受理待ちへ戻さない。番号計画の当社への適用・必要手続、Cloco契約・実SIP/RTP/FAX/channel条件と資格は未確認として個別照合する。資格台帳と許可済みprimary設定の確認前に再共有を要求しない。基礎管理基盤の本番化、実回線、顧客開通及び商用提供を区別し、受理通知だけで実回線を有効化しない。助成対象4機能は先行実装しない。
 
 ## Softphoneの技術比較と次の検証
 

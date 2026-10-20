@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin-phone-infra.filing-acceptance-cloco-readiness.2026-10-20",
+  "title": "受理通知原本に基づく届出完了とCloco接続準備の同期",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "high",
+  "production_change": false,
+  "spec_ids": [
+    "anshin.phone.cloco-sip-trunk-interface",
+    "anshin.phone.production-and-softphone-preparation",
+    "anshin.corporate.anshin-phone.notification-status"
+  ],
+  "repositories": [
+    "anshin-corporate-strategy",
+    "anshin-phone-infra"
+  ],
+  "code_paths": [],
+  "contract_paths": [
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",
+    "anshin-phone-infra/docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml"
+  ],
+  "generated_artifacts": [],
+  "test_paths": [
+    "anshin-phone-infra/scripts/build_check.sh"
+  ],
+  "invariants": [
+    "受理通知は届出A-08-24437・届出日2026年10月2日・通知日10月16日の確認に限定する",
+    "当社番号とClocoのA-27-14344を区別し番号認定・契約・実接続を完了へ読み替えない",
+    "原本PDFと提出済み文書は変更せずGit外に保管し過去証跡を維持する",
+    "新規連絡・送信・契約・番号移行・電話有効化を実施しない",
+    "助成対象4機能を基礎本番化へ含めない"
+  ],
+  "acceptance_criteria": [
+    "現在の受理待ち記載を取得済みへ同期する",
+    "Clocoの番号計画・契約第2条/第18条・資格・SIP/RTP/FAX/channelの未確認を維持する",
+    "配置の提出準備時履歴とMS-A2-1実配備記録を区別する",
+    "repository-local documents-onlyとfixedSHA独立review後にguarded main統合する"
+  ],
+  "out_of_scope": [
+    "助成申請の提出内容変更",
+    "行政又はClocoへの外部送信",
+    "runtime/firewall/DNS変更",
+    "新たな法的適用判断"
+  ],
+  "rollout": {
+    "strategy": "documents-only-NOOP",
+    "steps": [
+      "原本全3ページ照合とGit外保管",
+      "現在状態とconsumer文書の同期",
+      "documents-only検査と独立review",
+      "最新main rebaseとguarded統合"
+    ],
+    "triggers": [
+      "2026-10-20 ownerの届出完了報告とCloco連携更新指示"
+    ]
+  },
+  "rollback": {
+    "strategy": "preserve-originals-correct-documents",
+    "steps": [
+      "原本と過去の確認証跡を保全し文書誤記を修正する"
+    ],
+    "triggers": [
+      "原本との不一致又は未確認の成功扱い"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "原本hashと届出年月日・番号",
+      "現在状態と履歴の区別"
+    ],
+    "observation_period": "Cloco接続準備の更新時"
+  },
+  "approvals": [],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "0fedf445579ebb3613ec916f1c99ec5b0704dfd6"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "e14d91ff74025efcd1c42f5e592bf48a1deaac74",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md": "5f93d64be9c2e75a352075b437e2c785a40e9804"
+    },
+    "integration_order": [
+      "anshin-corporate-strategy",
+      "anshin-phone-infra"
+    ]
+  }
+}

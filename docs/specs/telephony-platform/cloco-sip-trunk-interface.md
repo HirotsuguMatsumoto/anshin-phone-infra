@@ -10,12 +10,12 @@ owner: anshin-phone-infra
 authority: reference
 status: draft
 risk_level: high
-source_doc_ids: [anshin.corporate.anshin-phone.cloco-response-2026-09-30, anshin.infrastructure.system-architecture]
+source_doc_ids: [anshin.corporate.anshin-phone.cloco-response-2026-09-30, anshin.corporate.anshin-phone.notification-status, anshin.infrastructure.system-architecture]
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-corporate-strategy]
 code_paths: [compose.phase1.yaml, configs/carrier-intake.example.json]
-contract_paths: []
+contract_paths: [docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml]
 test_paths: [scripts/build_check.sh]
-last_reviewed: "2026-09-30"
+last_reviewed: "2026-10-20"
 review_interval_days: 30
 sensitivity: restricted
 ---
@@ -57,7 +57,7 @@ Cloco回答で確認できたのは、インターネット経由のSIPトラン
 | 接続境界 | SIPトランクと当社IP-PBXの間 | 具体的なアドレス・port・interface・障害対応の分担は未確定 |
 | 当社通信設備 | 図にはIP-PBXと端末を例示 | 当社計画はKamailio SBC、RTPengine、非公開Asterisk及びSIP端末 |
 | 当社管理系 | Cloco図には記載なし | 当社API・番号台帳・DBは音声の直列経路へ含めず、管理経路として扱う |
-| 物理配置 | Cloco図に記載なし | 届出準備時の東京都・MS-A2-2と全体インフラ正本の独立Phone専用server方針を照合する |
+| 物理配置 | Cloco図に記載なし | 技術正本の2026-10-17実配備記録はMS-A2-1の専用VM `anshin-phone/ms-a2-1-phone`。提出準備時のMS-A2-2は履歴として、実提出の構成との差を行政判断正本で照合する |
 
 ## 接続情報受領時の未確定項目
 
@@ -73,4 +73,15 @@ Cloco回答で確認できたのは、インターネット経由のSIPトラン
 
 ## 実接続前の状態
 
-e-Gov電気通信事業届出はowner報告で申請済みだが、受理・届出番号・番号使用計画認定・契約締結の完了証跡は未確認である。法令・契約の各Gateと詳細技術仕様を満たすまで、添付図の受領を実回線の接続許可として扱わない。本変更は資料反映であり、runtime、firewall、DNS又は実番号経路を変更しない。
+2026年10月20日にowner提示の通知書原本を確認し、電気通信事業届出の受理・当社届出番号A-08-24437を確認した。届出日は2026年10月2日、通知日は10月16日。証跡・Git外保管と提出内容の未照合範囲は `anshin.corporate.anshin-phone.notification-status` を参照する。予定卸元ClocoのA-27-14344を当社番号で上書きしない。
+
+| 接続準備 | 現在の確認結果・次の作業 |
+| --- | --- |
+| 当社の事業届出 | 受理通知・届出番号確認済み。取得待ちを再開しない |
+| 番号使用計画 | 標準計画の当社への適用確認・完成保存、独自設備・転送を含む必要手続は未確認。受理通知を番号認定証にしない |
+| Clocoへの提示・契約 | 受理通知は提示準備可能。実提示、契約第2条・第18条等の書面確定・契約締結は未確認 |
+| 実接続入力 | 既存資格台帳・許可済みprimary設定を先に照合し、当該Phone用SIP/RTP・認証・番号通知・FAX・チャネル条件を既存consumer検証へ通す。資格本文はGit・logへ出さない |
+| 実回線・番号移行 | 未確認。卸トランク資格を顧客端末へ配布せず、模擬carrier成功を実Cloco成功へ読み替えない |
+| 実施範囲 | 資料更新と既存の接続準備を進める。外部への連絡・送信、契約・発注・番号付替えは実行許可に広げない |
+
+実回線の法令・契約の各条件と詳細技術仕様を照合する。管理基盤の本番化と実回線開通は分ける。この資料更新自体はruntime、firewall、DNS又は実番号経路を変更しない。
