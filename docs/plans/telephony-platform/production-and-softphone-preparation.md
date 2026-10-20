@@ -164,7 +164,7 @@ FAX保護原本のoff-host backupは別projectionとし、`anshin-prod-phone-fax
 
 ## 既存PostgreSQL ownerへの専用入力
 
-`scripts/phone_postgresql_backup_adapter.py --scheduled-backup` はnative `runtime.json` と実Backend healthを照合し、実Postgres container ID・Backend source SHAを、既存 `backup_postgresql_to_s3.sh` へ渡す。専用bucket、`postgresql/phone` prefix、Phone writer role/profile、`/etc/anshin-phone/aws/config` と専用鍵pathだけを使い、他製品のAWS環境・KMS入力を継承しない。`/etc/anshin-phone/postgresql-backup-profile.json` はowner-onlyで、既存manifest検証鍵のSHA-256である `manifest_key_id` 一項目だけを持つ。秘密値は格納しない。
+`scripts/phone_postgresql_backup_adapter.py --scheduled-backup` はnative `runtime.json` と実Backend healthを照合し、実Postgres container ID・Backend source SHAを、既存 `backup_postgresql_to_s3.sh` へ渡す。専用bucket、`postgresql/phone` prefix、Phone writer role/profile、`/etc/anshin-phone/aws/config` と専用鍵pathだけを使い、他製品のAWS環境・KMS入力を継承しない。`/etc/anshin-phone/postgresql-backup-profile.json` はowner-onlyで、`manifest_key_id`、配備元の `governance_sha` / `infra_sha`、検証済み公開bindingの `public` を持つ。`public` にはPhone専用role/profile、共通anchorと資格の固定数値versionを記録し、秘密値は格納しない。
 
 共有producerがPhoneを許可し、同じMS1 guest lock取得後に `POSTGRES_BACKUP_EXPECTED_CONTAINER_ID` と実containerの一致及び固定retention actor不存在を検証してからinstallする。shared restoreにも保存操作前の同じ未解決actor除外を適用する。現行未対応の共有sourceへKMS値を偽装して接続しない。adapterのsource又は単体testだけで本番backup適合済みとは扱わない。共有ownerがage・SSE-S3・exact version readback及び既存receiptを所有し、adapterは別receipt/journalを作らない。
 
