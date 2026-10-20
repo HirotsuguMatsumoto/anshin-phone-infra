@@ -28,7 +28,8 @@
   "test_paths": [
     "anshin/tests/test_release_ms_a2_transport.py",
     "anshin/tests/test_postgresql_s3_backup.py",
-    "anshin-phone-infra/scripts/verify_phase1.sh"
+    "anshin-phone-infra/scripts/verify_phase1.sh",
+    "anshin-phone-infra/scripts/test_phase1_render_config.py"
   ],
   "invariants": [
     "Phone専用固定guest/role/credentialと既存lock/producer/manifest/receipt",
@@ -95,13 +96,15 @@
       "anshin-phone-infra/scripts/production_runtime.py",
       "anshin-phone-infra/deploy/postgresql-backup/anshin-phone-postgresql-backup.service",
       "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
-      "anshin-phone-infra/docs/specs/changes/2026-10-20-phone-production-backup-capture.change.yaml"
+      "anshin-phone-infra/docs/specs/changes/2026-10-20-phone-production-backup-capture.change.yaml",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py"
     ],
     "pre_edit_blob_ids": {
       "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py": "a7b84553e349df49222b73f75ab1a31f1ccc8c17",
       "anshin-phone-infra/scripts/production_runtime.py": "1db6a9b85f5b66ced00d6a53badd8de2e8e47e45",
       "anshin-phone-infra/deploy/postgresql-backup/anshin-phone-postgresql-backup.service": "5617e1ed9953b74cb9f2b8d254b7706b11848d5e",
-      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "caee61934fd1a43ddf46e242ce2ee53570a78f96"
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "caee61934fd1a43ddf46e242ce2ee53570a78f96",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py": "f0f85caf2d74d5a5cdf2f1c082760e2dd313288f"
     },
     "integration_order": [
       "anshin-phone-infra",

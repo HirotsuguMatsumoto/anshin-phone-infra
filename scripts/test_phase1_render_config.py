@@ -500,7 +500,15 @@ class PhoneBackupAdapterTest(unittest.TestCase):
                      'backend_image': 'ghcr.io/hirotsugumatsumoto/anshin-phone-backend@sha256:' + 'd' * 64}
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / 'profile.json'
-            config.write_text(json.dumps({'manifest_key_id': 'a' * 64})); config.chmod(0o600)
+            from phone_postgresql_backup_adapter import CREDENTIAL_IDS
+            public = {'trust_anchor_arn': 'arn:aws:rolesanywhere:ap-northeast-1:691862619128:trust-anchor/916219bc-2500-4f73-a7b2-82e0c94ec215',
+                      'manifest_key_id': 'a' * 64, 'credential_versions': {k: 1 for k in CREDENTIAL_IDS}}
+            for purpose, product in (('db', 'phone-postgresql'), ('fax', 'phone-fax')):
+                for role in ('writer', 'restore'):
+                    public[purpose+'_'+role+'_role_arn'] = 'arn:aws:iam::691862619128:role/anshin-prod-'+product+'-backup-'+role
+                    public[purpose+'_'+role+'_profile_arn'] = 'arn:aws:rolesanywhere:ap-northeast-1:691862619128:profile/12345678-1234-1234-1234-123456789abc'
+            config.write_text(json.dumps({'manifest_key_id': 'a' * 64, 'governance_sha': 'c' * 40,
+                                          'infra_sha': 'd' * 40, 'public': public})); config.chmod(0o600)
             runtime = Mock()
             runtime.project = 'anshin-phone-production'
             runtime.environment.return_value = {}
@@ -528,7 +536,8 @@ class PhoneBackupAdapterTest(unittest.TestCase):
         self.assertEqual(timer.count('OnCalendar='), 4)
         self.assertIn('Persistent=true', timer)
         self.assertIn('PrivateTmp=false', service)
-        self.assertIn('TimeoutStartSec=20min', service)
+        self.assertIn('TimeoutStartSec=25min', service)
+        self.assertIn('TimeoutStopSec=5min', service)
         self.assertIn('/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --scheduled-backup', service)
 
     def retention_runtime(self):
