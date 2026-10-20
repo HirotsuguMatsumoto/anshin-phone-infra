@@ -529,6 +529,31 @@ class PhoneBackupAdapterTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeFailure, 'permissions'):
                 read_profile(config)
 
+    def test_restored_reader_preserves_unknown_children_and_cli_status(self):
+        import sys
+        import io
+        import contextlib
+        from unittest.mock import Mock
+        from production_runtime import RuntimeFailure
+        from phone_postgresql_backup_adapter import run_restored_reader, main
+        for reason, stops in [('phone_command_children_unknown', 0), ('phone_restore_reader_failed', 1)]:
+            runtime = Mock()
+            runtime.command.side_effect = RuntimeFailure(reason)
+            with self.assertRaisesRegex(RuntimeFailure, reason):
+                run_restored_reader(runtime, 'a' * 64)
+            self.assertEqual(runtime.stop_oneoff.call_count, stops)
+        runtime = Mock()
+        runtime.command.side_effect = RuntimeFailure('known_failure')
+        runtime.stop_oneoff.side_effect = RuntimeFailure('phone_command_children_unknown')
+        with self.assertRaisesRegex(RuntimeFailure, 'reader_cleanup_unconfirmed'):
+            run_restored_reader(runtime, 'a' * 64)
+        for reason in ('phone_command_children_unknown', 'phone_capture_helper_creation_unknown',
+                       'phone_restore_reader_cleanup_unconfirmed', 'known_failure'):
+            with patch('phone_postgresql_backup_adapter.verify_restored_fax', side_effect=RuntimeFailure(reason)), \
+                    patch.object(sys, 'argv', ['owner', '--verify-restored-fax', 'manifest', 'work', 'pg']), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(main(), 1 if reason == 'known_failure' else 76)
+
     def test_backup_unit_preserves_shared_lock_and_four_daily_catchup(self):
         root = REPOSITORY_DIR / 'deploy/postgresql-backup'
         timer = (root / 'anshin-phone-postgresql-backup.timer').read_text()

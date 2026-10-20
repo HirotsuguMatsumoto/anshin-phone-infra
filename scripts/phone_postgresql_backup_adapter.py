@@ -605,6 +605,11 @@ def verify_restored_fax(manifest, work, pg, *, runtime=None):
             'ANSHIN_PHONE_DB_NAME': 'anshin_restore_drill'}.items():
         args.extend(('--env', name + '=' + value))
     identifier = helper_create(runtime, None, 'reader', generation['backend_image'], args, ('/reader/reader.py',))
+    return run_restored_reader(runtime, identifier)
+
+
+def run_restored_reader(runtime, identifier):
+    unknown = False
     try:
         result = runtime.command(['docker', 'start', '--attach', identifier], timeout=180, termination_grace=120)
         if runtime.command(['docker', 'wait', identifier], timeout=10).stdout.strip() != '0':
@@ -612,8 +617,15 @@ def verify_restored_fax(manifest, work, pg, *, runtime=None):
         value = json.loads(result.stdout)
         if value.get('status') != 'ok' or not all(value.get(k) is True for k in ('recovered_key_probe', 'tenant_AAD', 'expired_410')):
             raise RuntimeFailure('phone_restore_reader_result_invalid')
+    except RuntimeFailure as error:
+        unknown = str(error) == 'phone_command_children_unknown'
+        raise
     finally:
-        runtime.stop_oneoff('backup-reader', 'backup-reader', expected_id=identifier, timeout=30)
+        if not unknown:
+            try:
+                runtime.stop_oneoff('backup-reader', 'backup-reader', expected_id=identifier, timeout=30)
+            except BaseException:
+                raise RuntimeFailure('phone_restore_reader_cleanup_unconfirmed') from None
     return value
 
 
@@ -765,6 +777,10 @@ def main():
     except (RuntimeFailure, OSError, ValueError, KeyError, KeyboardInterrupt) as error:
         print(json.dumps({'status': 'failed', 'reason': str(error) if isinstance(error, RuntimeFailure)
                           else 'phone_backup_input_or_state_invalid'}))
+        if arguments.verify_restored_fax and isinstance(error, RuntimeFailure) and str(error) in {
+                'phone_command_children_unknown', 'phone_capture_helper_creation_unknown',
+                'phone_restore_reader_cleanup_unconfirmed'}:
+            return 76  # Existing shared cleanup preserves actors/work and writes its attention marker.
         return 1
 
 
