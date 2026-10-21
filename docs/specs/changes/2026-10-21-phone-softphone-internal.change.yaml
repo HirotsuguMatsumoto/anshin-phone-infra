@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin.phone.softphone-internal.2026-10-21",
+  "title": "固定PJSIP社内評価SDKとPhone専用Flutter consumer",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "high",
+  "production_change": false,
+  "spec_ids": [
+    "anshin.phone.production-and-softphone-preparation",
+    "anshin.phone.backend.foundation-runtime-contract",
+    "anshin.phone.foundation-ui-plan"
+  ],
+  "repositories": [
+    "anshin-frontend-mobile",
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-frontend-mobile/packages/anshin_phone_softphone",
+    "anshin-frontend-mobile/packages/anshin_phone_api",
+    "anshin-frontend-mobile/scripts/openapi_pull.sh",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+    "anshin-phone-infra/scripts/softphone_sip_fixture.py",
+    "anshin-phone-infra/tests/mock-sip/softphone"
+  ],
+  "contract_paths": [
+    "anshin-frontend-mobile/spec/openapi.phone.json",
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml"
+  ],
+  "generated_artifacts": [
+    "anshin-frontend-mobile/packages/anshin_phone_api"
+  ],
+  "test_paths": [
+    "anshin-frontend-mobile/packages/anshin_phone_softphone/test",
+    "anshin-frontend-mobile/packages/anshin_phone_softphone/example/integration_test/plugin_integration_test.dart",
+    "anshin-frontend-mobile/scripts/test_phone_openapi_profile.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py"
+  ],
+  "invariants": [
+    "sole MAC writer, no foreign runtime/DB/simulator/dirty changes",
+    "no employee routes/bundle/root dependencies or Core opaque session reuse",
+    "pinned PJSIP 2.17 5a457451fa2712ba18e12b01738e8ff3af2b26fd, internal/null-audio/UDP/arm64 only",
+    "same existing fixture owner/project cleanup, actual SIP/RTP and tone decoding",
+    "stale engine/account/call cannot control new call; native destruction joins owner thread"
+  ],
+  "acceptance_criteria": [
+    "generated 2GET preserve tenant/Bearer and reject bad source before client replacement",
+    "state/UI regressions and canonical gate pass",
+    "Android/iOS build and owned iOS Simulator MethodChannel lifecycle pass",
+    "real pinned SDK REGISTER, inbound/outbound decoded tones, reconnect, suspend/revoke and stale call denial",
+    "fixed SHA independent Sol/high review and latest-main integration; owner UI acceptance reported separately"
+  ],
+  "out_of_scope": [
+    "commercial license finalization/purchase/Store release",
+    "real Cloco/number activation/contact/order",
+    "production mobile Auth/Push binding and real device/microphone",
+    "subsidy four features"
+  ],
+  "rollout": {
+    "strategy": "independent-internal-package",
+    "steps": [
+      "canonical/fixed review/main integration",
+      "owner same-Mac local Docker UI final review",
+      "separate concrete commercial/Auth/Push/device acceptance scope"
+    ]
+  },
+  "rollback": {
+    "strategy": "stop-independent-package-adoption",
+    "steps": [
+      "normal Git revert within scope; no production/employee runtime mutation"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-frontend-mobile",
+    "signals": [
+      "canonical results",
+      "native integration and existing SIP fixture result"
+    ],
+    "observation_period": "internal qualification"
+  },
+  "approvals": [
+    "2026-10-21 owner UI section4 preapproval",
+    "2026-10-21 owner six-item internal implementation scope approval"
+  ],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-frontend-mobile": "task/phone-softphone-20261021",
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin-frontend-mobile": "1a0d16123bb413d08991e0334d737ee8c4a6abe4",
+      "anshin-phone-infra": "ce74847d0627e26309ceb150996ac9abc3616f88"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
+      "anshin-phone-infra/scripts/softphone_sip_fixture.py",
+      "anshin-phone-infra/tests/mock-sip/Dockerfile",
+      "anshin-phone-infra/tests/mock-sip/softphone",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml",
+      "anshin-frontend-mobile/packages/anshin_phone_softphone",
+      "anshin-frontend-mobile/packages/anshin_phone_api",
+      "anshin-frontend-mobile/scripts/openapi_pull.sh"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra:scripts/test_phase1_sip_e2e.py": "03b6fa370f27b9e9e82b70381abc7962ccdfd07d",
+      "anshin-phone-infra:scripts/test_phase1_sip_e2e_cleanup.py": "622e05bcf8510cf482c2f84b1ac1b23401c41da7",
+      "anshin-phone-infra:scripts/softphone_sip_fixture.py": null,
+      "anshin-phone-infra:tests/mock-sip/Dockerfile": "f69996e8ec44413c1fda3a82fccd67f6fc9451ca",
+      "anshin-phone-infra:tests/mock-sip/softphone": null,
+      "anshin-phone-infra:docs/plans/telephony-platform/production-and-softphone-preparation.md": "e4392fce868d9a79a2ac71f7c67676428cdba4c8",
+      "anshin-phone-infra:docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml": null
+    },
+    "integration_order": [
+      "anshin-frontend-mobile",
+      "anshin-phone-infra"
+    ]
+  }
+}

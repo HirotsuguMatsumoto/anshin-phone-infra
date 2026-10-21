@@ -22,7 +22,7 @@ source_doc_ids:
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: [scripts/phone_postgresql_backup_adapter.py, scripts/production_runtime.py]
-contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml, docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml]
 test_paths: [scripts/build_check.sh]
 last_reviewed: "2026-10-21"
 review_interval_days: 30
@@ -57,7 +57,7 @@ ownerの本番反映依頼と基礎開発指示に対する準備計画である
 | 管理画面 | 説明iconのclick/Escape、必要状態・エラー・FAX制限表示。対象画面の自動試験・右サイド実browser確認。ownerの「画面問題ない。本番反映お願い」により当該画面の本人確認受領済み。公式 https://phone.anshin.care で本番Google loginと管理6画面を確認 | h-test3の再登録完了を本番管理画面で読取済み。別Chromeでの再ログイン・MFA通過はowner報告により完了 |
 | source | Backend `7770e877b2901d1b99c09cf32606f8abdc55178d`のruntime変更、Infraの既存runtime変更、Frontend `ba6bcbdb97cc4d80c0f45cb0c4aebb2e3d301c57`の説明・文書整備をmainへ統合 | source統合を本番提供と扱わない |
 | 本番adapter | MS-A2-1専用VM・管理API/DB・公式公開・本番Google認証・実S34世代・同世代DB/FAX隔離復旧と両timer有効化を2026-10-20に受入 | 中央generic経路の完成は専用operationの受入から推定せず、中央runnerの実装・検査・release結果で判定。定期実発火と証明書更新切替の実施結果を別記 |
-| 無料Softphone | 既存employee/customer mobileはFlutter。公式SDK条件を比較 | Phone SDK実装、Android/iPhone実機、Push、背景着信・音声品質、採用方式・費用・UI/UX詳細設計 |
+| 無料Softphone | 10/21、画面・操作設計とPJSIP 2.17社内評価の独立package実装scopeを本人承認。既存職員アプリを変更せず実装・隔離検査中 | 商用配布license・本番mobile認証/Push binding・Android/iPhone実機・背景着信・通信切替・音声品質・本人実UI最終確認 |
 
 runtime codeが変わっていない文書commitを、新しい実通信成功SHAへ読み替えない。正式な詳細結果はinstruction originの既存Git外証跡で管理し、秘密、一時path、原本又はraw観測結果を本書へコピーしない。
 
@@ -112,7 +112,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 
 ## Softphoneの技術比較と次の検証
 
-2026-10-12に公式sourceを確認した。SDK採用versionとcomponent条件は未固定であり、無償のclosed-source商用licenseを推測しない。vendorへ連絡・契約・購入・account作成はしていない。
+2026-10-12の候補調査を経て、10/21に公式release・license・FAQを再確認し、社内評価用SDKをPJSIP 2.17、公式commit `5a457451fa2712ba18e12b01738e8ff3af2b26fd`へ固定した。無償のclosed-source商用licenseや配布条件への適合を推測しない。vendorへ連絡・契約・購入・account作成はしていない。
 
 | 候補 | 公式情報と適用確認 | 既存資産との関係・未確認 |
 | --- | --- | --- |
@@ -125,7 +125,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 
 隔離の実SDK driverで登録・発着信・双方向音声・再接続・失効を確認し、その成功条件を既存suite/fixture/ownerへ固定する。背景/スリープ、OS終了、通知/マイク権限拒否、Wi-Fi/モバイル切替、重複着信、応答競合は両OSの実機と実Push consumerまで確認する。模擬SIP試験をAndroid/iPhone SDK・Push成功へ読み替えない。卸トランク資格を顧客端末へ配布しない。
 
-2026-10-21に同じMacの既存toolchainを読取り、Flutter 3.44.2/Dart 3.12.2、Xcode 26.6/iPhoneOS SDK 26.5、Android API 34/35/36・adb 36.0.2の所在を確認した。install/build、署名qualification、接続実機、Phone Push資格、SDK実装の成功ではない。Git外の既存案件設計書へSDK条件・Push・実機計画と新UI詳細を整理し、同日の本人回答で画面・操作設計§4の事前承認を受領した。SDK採用・購入・実装scopeと実装後の本人実UI確認は別である。他製品資格を転用せず、native未確認を完成した基礎管理経路の追加品質gateへ変更しない。
+2026-10-21に同じMacの既存toolchainを読取り、Flutter 3.44.2/Dart 3.12.2、Xcode 26.6/iPhoneOS SDK 26.5、Android API 34/35/36・adb 36.0.2の所在を確認した。install/build、署名qualification、接続実機、Phone Push資格、SDK実装の成功ではない。Git外の既存案件設計書へSDK条件・Push・実機計画と新UI詳細を整理し、同日の本人回答で画面・操作設計§4の事前承認を受領した。続いて本人からPJSIP 2.17の社内評価用独立package・Phone専用API consumer・最小native bridge・既存隔離PBX fixtureの追加実装scopeを承認済み。商用license確定・購入・Store公開・実Cloco開通・本番mobile client/Push binding・実機/マイクは含めず、実装後の本人実UI最終確認も未受領。他製品資格を転用せず、native未確認を完成した基礎管理経路の追加品質gateへ変更しない。
 
 
 ## Macでの再開と管理用配備定義（2026-10-16）
@@ -210,3 +210,14 @@ Gov `d2b980cb3cefcd138553c8868529f8c1bf55ddb4` / Infra `e2b53ffafcbc3a44837a2dbc
 このexact世代を`release-1c4210cf08aca66b30956ad4`で隔離restoreし、11 table/head `20261012_0002`・`public.phone_numbers` 0件・application read-only smoke・cleanupを確認した。final statusも同じlatest世代とbackup service成功、backup/retention両timerのactive/enabledを示した。今回の手動unit実行を定刻発火の追加実績へ読み替えず、翌予定のbackup UTC09:30（18:30 JST）、retention UTC15:00（翌日00:00 JST）は予定として記録する。実FAX原本0件のため、非空の実原本の本番restore、実Cloco・実番号・商用容量・Softphone実機は未確認のまま維持する。
 
 FAX一時TIFFはInfra `a00b0a4c3bb7631ac646e78b2ee55e4803d82860`でclaim別原本・実ACK後回収・旧受信event互換・指定DLQ一件の通知再送を修正し、既存HTTP回帰、隔離の実G.711送受信、canonical及びfixed-SHA独立reviewを通してmainへ統合した。[FAX運用契約](../../runbooks/telephony-platform/fax-and-number-provisioning.md)を参照する。管理専用productionへPBXを追加しておらず、実回線での適用・受入成功とは扱わない。
+
+
+### 2026-10-21 社内評価用Softphone実装
+
+sourceは`anshin-frontend-mobile/packages/anshin_phone_softphone`、generated APIは同repoの`packages/anshin_phone_api`と`spec/openapi.phone.json`。職員アプリのroute・bundle・root dependencyは変更しない。既存Phoneの組織一覧と端末設定GETだけを使い、tenant/roleとBearerを維持する。Core opaque session、管理用全tenant履歴、卸SIP資格を流用しない。
+
+共通PJSUA C coreを専用threadで実行し、Android JNI／iOS SPM経由のFlutter Method/EventChannelへ接続する。登録はengine/account世代、callはprocess単調IDへ束縛する。通話中切替・logoutを止め、停止は既通話を保って新規登録・発信を止める。SDK callbackからFlutterへ直接入らず、SDK destroyとthread joinを完了してprocess所有を解放する。
+
+評価構成はarm64・UDP・G.711・null audioで、マイク・speakerを開かない。TLS/SRTP・商用インターネット経路の完成を示さない。Android APKのlink、iOS Simulator app buildと案件専用Simulatorの実MethodChannel初期化・二重初期化拒否・destroy/reinitを確認した。既存隔離PBXのSoftphone分岐では同じ固定SDK/native coreでREGISTER、発着信、PCMU送受信packet、復号した非無音のcarrier 440Hz受信、transport再接続、停止資格の拒否、active復帰、revoke・旧call拒否を確認。これらは作業中検査であり、fixed SHAのcanonical・独立review・main統合の完了とは別に記録する。
+
+Web exampleは明示的な架空データで共有Flutter画面を確認する。native通話・Google認証・Pushの成功へ読み替えない。本人用履歴API、Phone mobile Auth client/redirect、secure storage正式binding、OS標準着信・Push、実機と背景/通信切替の受入は残件。商用配布のlicense/第三者条件・保守と配布方式を確定してから当該scopeを具体化する。基礎管理画面の本番公開を停止しない。

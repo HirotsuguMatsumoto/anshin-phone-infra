@@ -601,6 +601,9 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             }
         )
         base = compose_args(project)
+        if fixture_only == "softphone":
+            from softphone_sip_fixture import prepare_softphone_override
+            base += ["--file", str(prepare_softphone_override(ROOT, secret_path, env, run))]
         run(base + ["config", "--quiet"], env=env)
         if preflight_only:
             print("phase=diagnostic-preflight state=ready process-start=0 quality=not-run", flush=True)
@@ -687,6 +690,11 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             else:
                 raise RuntimeError("phase=endpoint-provisioning state=timeout")
             print("PASS: backend active endpoint -> actual PBX configuration")
+
+            if fixture_only == "softphone":
+                from softphone_sip_fixture import run_softphone_flow
+                run_softphone_flow(base, env, endpoint, configuration, backend_request, run, exec_background, finish)
+                return 0
 
             if fixture_only == "fax":
                 run_fax_flow(base, env, fax_number, secret_path,with_load=False)
@@ -1289,7 +1297,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
-    modes.add_argument("--fixture", choices=("database", "management", "voice", "fax", "production"), help="diagnose a minimal real runtime")
+    modes.add_argument("--fixture", choices=("database", "management", "voice", "fax", "production", "softphone"), help="diagnose a minimal real runtime")
     parser.add_argument('--backend-image', help='immutable published image for production fixture')
     parser.add_argument('--backend-sha', help='published Backend source for production fixture')
     args = parser.parse_args(argv)

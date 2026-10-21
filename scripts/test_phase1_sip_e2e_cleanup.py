@@ -12,6 +12,30 @@ import test_phase1_sip_e2e
 
 
 class Phase1SipE2ECleanupTest(unittest.TestCase):
+    @mock.patch('test_phase1_sip_e2e.docker_test_lease')
+    @mock.patch('test_phase1_sip_e2e.run_isolated_e2e', return_value=0)
+    def test_softphone_uses_existing_fixture_owner_and_lease(self, fixture, lease):
+        self.assertEqual(test_phase1_sip_e2e.main(['--fixture','softphone']),0)
+        fixture.assert_called_once_with(fixture_only='softphone')
+        lease.assert_called_once_with()
+
+    def test_softphone_missing_or_dirty_inputs_stop_before_archive_or_runtime(self):
+        import softphone_sip_fixture as sdk
+        import tempfile
+        with tempfile.TemporaryDirectory() as raw:
+            root=Path(raw)
+            with mock.patch.object(sdk.subprocess,'run') as process:
+                with self.assertRaisesRegex(RuntimeError,'explicit Softphone'):
+                    sdk.prepare_softphone_override(root,root,{},mock.Mock())
+                process.assert_not_called()
+            source=root/'mobile/ios/anshin_phone_softphone/Sources/PhoneNative'
+            source.mkdir(parents=True);(source/'phone_sip.cpp').write_text('fixture')
+            run=mock.Mock(side_effect=[mock.Mock(stdout=sdk.PIN+'\n'),mock.Mock(stdout='dirty')])
+            with mock.patch.object(sdk.subprocess,'run') as process:
+                with self.assertRaisesRegex(RuntimeError,'pin or cleanliness'):
+                    sdk.prepare_softphone_override(root,root,{'PHONE_SOFTPHONE_ROOT':str(root/'mobile'),'PHONE_PJSIP_SOURCE':str(root/'sdk')},run)
+                process.assert_not_called()
+
     @mock.patch("test_phase1_sip_e2e.run")
     @mock.patch("test_phase1_sip_e2e.ensure_mock_networks_available")
     @mock.patch("test_phase1_sip_e2e.resolve_backend")
