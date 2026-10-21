@@ -98,7 +98,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 | 作業 | 対象・既存資産 | 完了に使う結果 |
 | --- | --- | --- |
 | 配置と資源 | 既存host observer、Phone専用VM。Core/AuthのVM・DB・volume・credentialは分離 | 実targetと必要資源・保存・復旧経路の事実。未測定値や旧案のPASSではない |
-| 配備adapter | InfraのCompose・既存backup/restore、中央release registry/matrix、既設admin alias。中央matrixの`phone-backend`はstandalone配置へ同期済み | 選定targetへ固定する薄いtransportと既存release owner。中央runnerのPhone固定配備sourceは実装済みだが、本番管理配備と公開・復旧の適用/受入は未完了 |
+| 配備adapter | InfraのCompose・既存backup/restore、中央release registry/matrix、既設admin alias。中央matrixの`phone-backend`はstandalone配置へ同期済み | 中央正規経路による管理専用の本番配備・公式公開・同世代隔離復旧を受入済み。2026-10-21の記録を参照。実carrier・商用容量とは別 |
 | 実入力確認 | Backend Settings、DB migration、Auth `anshin-phone` client、issuer/JWKS/audience、frontend API origin | 今回の実env/configを各consumerが受理する軽い確認後、対象の実業務integration。local Auth成功を本番Auth確認にしない |
 | UI配備 | 現行frontend、既存hosting/release owner | Phoneの実project/公開経路・domain・権限・費用条件。Phone projectと既存release bindingの未確認を登録済みと扱わない |
 | 保管・復旧 | 既存保護FAX・DB backup/隔離restore・rollback実装 | Phone専用の実保存先、保持期間、暗号化入力、隔離restore、既存ownerによる結果確認。新trust/journal/署名/gateを追加しない |
@@ -125,7 +125,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 
 隔離の実SDK driverで登録・発着信・双方向音声・再接続・失効を確認し、その成功条件を既存suite/fixture/ownerへ固定する。背景/スリープ、OS終了、通知/マイク権限拒否、Wi-Fi/モバイル切替、重複着信、応答競合は両OSの実機と実Push consumerまで確認する。模擬SIP試験をAndroid/iPhone SDK・Push成功へ読み替えない。卸トランク資格を顧客端末へ配布しない。
 
-現在のinstruction-origin PATHと確認した既存候補pathにはFlutter/adb実行環境が見つからず、iOS toolchain・接続実機・Phone Push資格も未確認である。他製品の契約・資格の不在とは一般化せず、共有済みの対象資格・実機・toolchainの所在を調べ、不足と費用を具体化する。native未確認を、完成している基礎管理経路の追加品質gateへ変更しない。
+2026-10-21に同じMacの既存toolchainを読取り、Flutter 3.44.2/Dart 3.12.2、Xcode 26.6/iPhoneOS SDK 26.5、Android API 34/35/36・adb 36.0.2の所在を確認した。install/build、署名qualification、接続実機、Phone Push資格、SDK実装の成功ではない。Git外の既存案件設計書へSDK条件・Push・実機計画と新UI詳細を整理し、同日の本人回答で画面・操作設計§4の事前承認を受領した。SDK採用・購入・実装scopeと実装後の本人実UI確認は別である。他製品資格を転用せず、native未確認を完成した基礎管理経路の追加品質gateへ変更しない。
 
 
 ## Macでの再開と管理用配備定義（2026-10-16）
@@ -134,7 +134,7 @@ Macのcurrent integrated sourceの既存host observerからCore/Worker両hostを
 
 Postgres・Backend・migrationのsource定義は`compose.management.yaml`が所有し、既存Phase 1と`compose.production.yaml`がextendsする。production管理定義は実carrier入力・SIP/RTP公開・source buildを含まず、Backend/migrationの同じfixed digest image、owner指定の本番FAX月単位policy及び既存secret-file入力を要求する。BackendだけにAuth/JWKS取得用egressを接続し、DBはinternalのまま維持する。
 
-管理定義は`ANSHIN_PHONE_TELEPHONY_ENABLED=false`であり、既存Backendの管理・履歴は使えるが、端末資格・PBX・FAX送信/dispatchは503となる。既存のqueued/sending行を変更しない。実機資源、API ingress、Phone hosting binding、独立key復旧・定期backup/隔離restoreが未受入のままadapterをsupportedへ変更しない。この定義のrender成功又はsource統合を本番反映・本番Auth・実回線の成功と扱わない。
+管理定義は`ANSHIN_PHONE_TELEPHONY_ENABLED=false`であり、既存Backendの管理・履歴は使えるが、端末資格・PBX・FAX送信/dispatchは503となる。既存のqueued/sending行を変更しない。実機資源、API ingress、Phone hosting binding、独立key復旧・backup/隔離restoreの実受入を経て管理専用adapterを中央正規経路で配備済みである。sourceのrender成功と、本番Auth・実回線・商用通話容量の受入を区別し、以下の実結果と未確認事項を参照する。
 
 
 ## FAX保護原本の月単位保持（2026-10-16 owner回答）
@@ -200,3 +200,13 @@ native ownerはPhone timerと管理serviceだけを有限時間で停止し、�
 `capture_pair()`は既存guest lock内で完全なruntime観測を取得し、既知Backend IDの`StartedAt`だけが変わる停止・再開、再開後health、profile・container ID/image/RestartCount・他container・volume/backingの不変を確認する。許容判定はこのcapture ownerだけが所有し、既存`status=captured`の公開JSONに`runtime_transition.before/after`とsource SHAを返す。
 
 共有S3 producerの同じ呼出しが保存・既存receipt commitを完了してexit 0となった後、`scheduled_backup()`がstdout中の唯一のtyped capture結果を既存completed結果へ渡す。wrapperで呼出し前後を観測して差分を正当化せず、欠落・重複・不正結果を拒否する。`Runtime.backup()`を経た`Runtime.deploy()`は、最初の観測とcapture-before、lock再取得後とcapture-after、profileをそれぞれ完全一致で照合する。全containerの開始時刻を比較から除外せず、producer完了後の追加restart等はpull/migration前に止める。新しいreceipt、journal又はauthorityを作らない。
+
+### 2026-10-21の正規配備・systemd consumer・同世代復旧
+
+Gov `d2b980cb3cefcd138553c8868529f8c1bf55ddb4` / Infra `e2b53ffafcbc3a44837a2dbc8b78c7fc41867536`へbackup sourceを更新した後、中央正規release `prod-20261021-548edead1f81`（transport `release-579683fa370c758ea0adf4c0`）で管理専用runtimeを配備した。固定Backend source `11946f334bbc2c2d1c970ceef14cb896a6421e27`、既存tenant/phone-owner、telephony無効を確認し、同じ配備前backup世代を`release-c977b954e747530270a6066b`で隔離復旧した。公式管理画面`https://phone.anshin.care/dashboard`のowner tenant表示・最新状態取得を確認済み。MFA復旧後のh-test3再ログイン・MFA通過は本人の別Chromeでの完了報告を受入済みであり、再初期化しない。
+
+10:30 JSTの旧source service失敗は、backup source更新の停止処理と時刻が重なる履歴として保存した。新sourceの欠陥又は停止が原因と断定せず、Gov `4d8077f93b03a0e686132d9e1092008468196b70`の既存`backup-run`から固定systemd unitを実行した。新operation・producer・unit・外側lock・名前によるstopは追加しない。同一Invocation `d7b1153ffd7a4db8b59e47932bfc21f6`の開始から終了、`Result=success / ExecMainCode=1 / ExecMainStatus=0`（UTC 02:27:51〜02:28:25）、fresh DB artifact/manifest両VersionIDを照合した。captureは`release-da58b4feaf10d85191f0b65b`、DB artifact SHA-256は`54adb4275ddb3268a98e4ef25e81018046edd14170c4fb21726929710a654e7f`、作成UTC 02:27:52・保護期限11月21日02:27:52、SSE-S3 AES256である。
+
+このexact世代を`release-1c4210cf08aca66b30956ad4`で隔離restoreし、11 table/head `20261012_0002`・`public.phone_numbers` 0件・application read-only smoke・cleanupを確認した。final statusも同じlatest世代とbackup service成功、backup/retention両timerのactive/enabledを示した。今回の手動unit実行を定刻発火の追加実績へ読み替えず、翌予定のbackup UTC09:30（18:30 JST）、retention UTC15:00（翌日00:00 JST）は予定として記録する。実FAX原本0件のため、非空の実原本の本番restore、実Cloco・実番号・商用容量・Softphone実機は未確認のまま維持する。
+
+FAX一時TIFFはInfra `a00b0a4c3bb7631ac646e78b2ee55e4803d82860`でclaim別原本・実ACK後回収・旧受信event互換・指定DLQ一件の通知再送を修正し、既存HTTP回帰、隔離の実G.711送受信、canonical及びfixed-SHA独立reviewを通してmainへ統合した。[FAX運用契約](../../runbooks/telephony-platform/fax-and-number-provisioning.md)を参照する。管理専用productionへPBXを追加しておらず、実回線での適用・受入成功とは扱わない。
