@@ -383,6 +383,30 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
         text=True, stdout=carrier_output, stderr=subprocess.STDOUT)
     load_smartphone = None
     completed = False
+    forwarder_paused = False
+    def pending_source(kind, job_id=None):
+        code = ("import json;from pathlib import Path;root=Path('/var/spool/asterisk/anshin-events/pending');"
+            "events=[json.loads(p.read_text()) for p in root.glob('*.json')];"
+            "events=[e for e in events if e.get('kind')==" + repr(kind)
+            + (" and e['payload'].get('job_id')==" + repr(job_id) if job_id else '') + "];"
+            "assert len(events)==1;local=events[0]['fax_local'];"
+            "assert local['cleanup'] is True;assert (Path('/var/spool/asterisk/fax')/local['basename']).is_file();"
+            "print(local['basename'])")
+        deadline = time.monotonic() + 90
+        while time.monotonic() < deadline:
+            result = run(base + ['exec', '-T', 'asterisk', 'python3', '-c', code], env=env, check=False)
+            if result.returncode == 0:
+                return result.stdout.strip()
+            time.sleep(1)
+        raise RuntimeError('phase=fax-ack state=pending-source-not-confirmed')
+    def removed_source(name):
+        code = "from pathlib import Path;assert not (Path('/var/spool/asterisk/fax')/" + repr(name) + ").exists()"
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            if run(base + ['exec', '-T', 'asterisk', 'python3', '-c', code], env=env, check=False).returncode == 0:
+                return
+            time.sleep(0.5)
+        raise RuntimeError('phase=fax-ack state=accepted-source-not-reclaimed')
     try:
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
@@ -402,9 +426,14 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
             load_smartphone = start_concurrent_voice(base,env)
         # Real SendFAX -> Kamailio/RTPengine -> real ReceiveFAX -> encrypted
         # backend original and history. The carrier is synthetic and isolated.
+        run(base + ['pause', 'pbx-event-forwarder'], env=env)
+        forwarder_paused = True
         run(base + ["exec", "-T", "mock-carrier", "asterisk", "-rx", "channel originate PJSIP/0300000002@carrier-sbc application SendFAX /tmp/mock-send.tif,F"], env=env)
         if with_load:
             observe_concurrent_resources(base,env,secret_path)
+        received_source = pending_source('faxes')
+        run(base + ['unpause', 'pbx-event-forwarder'], env=env)
+        forwarder_paused = False
         deadline = time.monotonic() + 90
         records = []
         while time.monotonic() < deadline:
@@ -416,6 +445,7 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
             carrier_output.flush()
             print("\n".join(carrier_log.read_text().splitlines()[-40:]), flush=True)
             raise RuntimeError("phase=fax-receive state=failed expected=successful-encrypted-original")
+        removed_source(received_source)
         if with_load:
             finish(load_smartphone,"concurrent synthetic voice")
         load_smartphone = None
@@ -432,10 +462,15 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
         # key; no manually reconstructed protected reference or driver.
         code = "import base64;from app.core.fax_storage import encrypt;print('encrypted:'+base64.b64encode(encrypt(b'0300000000','anshin-phase1')).decode())"
         protected_destination = run(base + ["exec", "-T", "backend", "python", "-c", code], env=env).stdout.strip()
+        run(base + ['pause', 'pbx-event-forwarder'], env=env)
+        forwarder_paused = True
         job = backend_request(base, env, "POST", "/api/v1/fax-jobs", {
             "tenant_id": "anshin-phase1", "phone_number_id": fax_number["id"],
             "idempotency_key": "isolated-real-fax-send", "destination_masked": "030****0000",
             "destination_reference": protected_destination, "pdf_storage_reference": "fax-document:" + document["id"] + ".pdf"})
+        sent_source = pending_source('fax-attempts', job['id'])
+        run(base + ['unpause', 'pbx-event-forwarder'], env=env)
+        forwarder_paused = False
         deadline = time.monotonic() + 90
         completed = None
         while time.monotonic() < deadline:
@@ -451,13 +486,17 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
         observed = run(base + ["exec", "-T", "mock-carrier", "cat", "/tmp/mock-fax-status"], env=env).stdout.strip()
         if observed != "SUCCESS":
             raise RuntimeError("phase=fax-send state=failed consumer=mock-carrier")
+        removed_source(sent_source)
         print("PASS: queued PDF -> actual SendFAX -> mock carrier ReceiveFAX -> completion/history", flush=True)
+        print('PASS: received and sent TIFF preserved while consumer paused; exact originals reclaimed only after typed Backend ACK', flush=True)
         if env.get("PHONE_TEST_FRONTEND_DIR"):
             run_management_browser_flow(base, env, secret_path)
         completed = True
         return carrier.pid if env.get("PHONE_PREVIEW_DIR") else None
 
     finally:
+        if forwarder_paused:
+            run(base + ['unpause', 'pbx-event-forwarder'], env=env, check=False)
         if load_smartphone is not None and load_smartphone.poll() is None:
             load_smartphone.terminate()
             load_smartphone.communicate(timeout=5)

@@ -86,7 +86,7 @@ exten => s,1,NoOp(Phase1 call ended uniqueid=${UNIQUEID} disposition=${DIALSTATU
 [fax-dispatch]
 exten => _[0-9a-f].,1,NoOp(Anshin Phone isolated FAX job)
  same => n,Set(TIMEOUT(absolute)=180)
- same => n,AGI(pbx_fax_worker.py,prepare,${EXTEN})
+ same => n,AGI(pbx_fax_worker.py,prepare,${EXTEN},${FAX_QUEUED_CLAIM_ID})
  same => n,GotoIf($["${FAX_JOB_READY}"!="1"]?denied)
  same => n,Set(CHANNEL(hangup_handler_push)=fax-job-hangup,s,1)
  same => n,Set(CALLERID(num)=${FAX_SOURCE})

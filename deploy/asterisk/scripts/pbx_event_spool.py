@@ -4,15 +4,42 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import uuid
 
 
 SPOOL_DIR = Path(os.getenv("PBX_EVENT_SPOOL_DIR", "/var/spool/asterisk/anshin-events"))
+FAX_ROOT = Path('/var/spool/asterisk/fax')
+
+
+def fax_local_source(name: str, tenant_id: str, *, cleanup: bool, job_id=None, claim_id=None) -> dict:
+    """Bind only the local source bytes; this metadata never enters the API."""
+    if not re.fullmatch(r'[A-Za-z0-9._-]{1,128}\.tif', name):
+        raise ValueError('invalid local FAX basename')
+    directory = os.open(FAX_ROOT, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+        with os.fdopen(descriptor, 'rb') as source:
+            before = os.fstat(source.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size > 10 * 1024 * 1024:
+                raise ValueError('invalid local FAX source')
+            digest = hashlib.file_digest(source, 'sha256').hexdigest()
+            after = os.fstat(source.fileno())
+            if (before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+                raise ValueError('local FAX source changed')
+    finally:
+        os.close(directory)
+    result = {'basename': name, 'byte_count': before.st_size, 'sha256': digest,
+              'tenant_id': tenant_id, 'cleanup': cleanup}
+    if job_id is not None:
+        result.update(job_id=job_id, claim_id=claim_id)
+    return result
 
 
 def masked_number(value: str) -> str:
@@ -64,7 +91,7 @@ def build_event(arguments: list[str]) -> dict[str, object]:
         reference = None
         if file_path != "-" and status == "SUCCESS":
             reference = f"fax-spool://{Path(file_path).name}"
-        return {
+        event = {
             "kind": "faxes",
             "payload": {
                 "tenant_id": tenant_id,
@@ -77,6 +104,12 @@ def build_event(arguments: list[str]) -> dict[str, object]:
                 "occurred_at": normalized_timestamp(occurred),
             },
         }
+        if reference is not None:
+            try:
+                event['fax_local'] = fax_local_source(Path(file_path).name, tenant_id, cleanup=True)
+            except (OSError, ValueError):
+                print('FAX source preserved: local binding unavailable', file=sys.stderr)
+        return event
     raise ValueError("unsupported PBX event arguments")
 
 

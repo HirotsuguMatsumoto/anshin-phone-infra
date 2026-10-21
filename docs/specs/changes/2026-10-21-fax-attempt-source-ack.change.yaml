@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin.phone.fax-attempt-source-ack.2026-10-21",
+  "title": "FAX結果ACK後のclaim別一時原本回収と指定DLQ再送",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "high",
+  "production_change": false,
+  "spec_ids": [
+    "anshin.phone.fax-and-number-provisioning"
+  ],
+  "repositories": [
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/deploy/asterisk/scripts/pbx_fax_worker.py",
+    "anshin-phone-infra/deploy/asterisk/scripts/pbx_event_spool.py",
+    "anshin-phone-infra/deploy/pbx-event-forwarder/forwarder.py",
+    "anshin-phone-infra/deploy/asterisk/config/extensions.conf.template"
+  ],
+  "contract_paths": [
+    "anshin-phone-infra/docs/runbooks/telephony-platform/fax-and-number-provisioning.md",
+    "anshin-phone-infra/docs/specs/changes/2026-10-21-fax-attempt-source-ack.change.yaml"
+  ],
+  "generated_artifacts": [],
+  "test_paths": [
+    "anshin-phone-infra/scripts/test_pbx_event_pipeline.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py"
+  ],
+  "invariants": [
+    "Backend API/DBとwire payloadを変更しない",
+    "job/claim別原本と既存result検査で旧attemptのACKが新attemptを回収しない",
+    "送信結果通知と回収metadataを分離しunknown/不整合/DLQ/孤児原本を保全",
+    "同じeventのsent移動を先行し同じ通常fileだけ回収",
+    "指定DLQ一件の通知再送のみ。物理FAX再送/日数自動削除/新frameworkなし"
+  ],
+  "acceptance_criteria": [
+    "既存HTTP pipeline回帰で失敗/遅延/不整合/差替え/移動失敗/replayを確認",
+    "既存隔離FAX fixtureで実Asterisk送受信、consumer停止中の原本保全、ACK後回収を確認",
+    "repository canonicalとfixed SHA別session review後にmain統合",
+    "実carrier未接続を維持し助成4機能と本番管理公開を混ぜない"
+  ],
+  "out_of_scope": [
+    "実carrier/実番号/商用通信有効化",
+    "助成4機能",
+    "Softphone",
+    "API/DB追加",
+    "日数による原本自動削除"
+  ],
+  "rollout": {
+    "strategy": "source-only-telephony-disabled",
+    "steps": [
+      "focused/fax fixture/canonical/fixed review",
+      "main統合。通信有効化は既存carrier受入の範囲"
+    ],
+    "triggers": [
+      "owner追加FAX修正承認"
+    ]
+  },
+  "rollback": {
+    "strategy": "preserve-source-and-event",
+    "steps": [
+      "qualified旧sourceへ切戻し可能。原本/eventは削除しない"
+    ],
+    "triggers": [
+      "回収/配送の不整合"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "既存pending/sent/DLQ/healthとsource-preserved結果"
+    ],
+    "observation_period": "隔離実FAX fixtureと既存日常点検"
+  },
+  "approvals": [],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "e2b53ffafcbc3a44837a2dbc8b78c7fc41867536"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/deploy/asterisk/scripts/pbx_fax_worker.py",
+      "anshin-phone-infra/deploy/asterisk/scripts/pbx_event_spool.py",
+      "anshin-phone-infra/deploy/pbx-event-forwarder/forwarder.py",
+      "anshin-phone-infra/deploy/asterisk/config/extensions.conf.template",
+      "anshin-phone-infra/scripts/test_pbx_event_pipeline.py",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/fax-and-number-provisioning.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-21-fax-attempt-source-ack.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra:deploy/asterisk/scripts/pbx_fax_worker.py": "92f792fbe44bb9f9e6514dd30daad2fb5b4f8368",
+      "anshin-phone-infra:deploy/asterisk/scripts/pbx_event_spool.py": "6c7b56ce175f1085b7cc26919ef19b1162485a12",
+      "anshin-phone-infra:deploy/pbx-event-forwarder/forwarder.py": "16b5fe79f7763c814ec3a263147ef686db3a2917",
+      "anshin-phone-infra:deploy/asterisk/config/extensions.conf.template": "efe64c2b5daf19afce4dea689e63f3762ba4d2cb",
+      "anshin-phone-infra:scripts/test_pbx_event_pipeline.py": "864f56965f621c77936ef07d8f108b9eb55a37be",
+      "anshin-phone-infra:scripts/test_phase1_sip_e2e.py": "872836ec011485c86ef811499d755529cc41b6c2",
+      "anshin-phone-infra:docs/runbooks/telephony-platform/fax-and-number-provisioning.md": "2ab42a899b878fff308e743397f8f34c36ff2e8a",
+      "anshin-phone-infra:docs/specs/changes/2026-10-21-fax-attempt-source-ack.change.yaml": null
+    },
+    "integration_order": [
+      "anshin-phone-infra"
+    ]
+  }
+}

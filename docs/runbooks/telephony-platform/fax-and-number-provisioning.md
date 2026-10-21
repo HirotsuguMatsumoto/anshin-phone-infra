@@ -12,10 +12,10 @@ status: inventory
 risk_level: high
 source_doc_ids: []
 consumers: [anshin-phone-infra, anshin-phone-backend]
-code_paths: [anshin-phone-backend/app/api/routes.py, anshin-phone-backend/app/models/telephony.py]
-contract_paths: [anshin-phone-backend/app/api/schemas.py]
-test_paths: [anshin-phone-backend/tests/test_phase1_api.py]
-last_reviewed: "2026-08-21"
+code_paths: [anshin-phone-backend/app/api/routes.py, anshin-phone-backend/app/models/telephony.py, deploy/asterisk/scripts/pbx_fax_worker.py, deploy/asterisk/scripts/pbx_event_spool.py, deploy/pbx-event-forwarder/forwarder.py, deploy/asterisk/config/extensions.conf.template]
+contract_paths: [anshin-phone-backend/app/api/schemas.py, docs/specs/changes/2026-10-21-fax-attempt-source-ack.change.yaml]
+test_paths: [anshin-phone-backend/tests/test_phase1_api.py, scripts/test_pbx_event_pipeline.py, scripts/test_phase1_sip_e2e.py]
+last_reviewed: "2026-10-21"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -36,6 +36,8 @@ sensitivity: internal
 | backend | Backend | server側でAPI、業務処理及びdata管理等を担うsoftware領域 |
 | PDF | Portable Document Format | 表示・印刷レイアウトを保持する文書ファイル形式 |
 | DB | Database | 業務データを永続的に保存・検索するデータベース |
+| ACK | Acknowledgement | Backendが対象結果・保護原本・履歴の受理を応答すること |
+| DLQ | Dead Letter Queue | 自動配送できなかったeventを保全する既存directory |
 
 ## 番号
 
@@ -49,7 +51,11 @@ sensitivity: internal
 
 ローカル基礎経路は、管理画面のPDF受付、tenant AADを使用した暗号化原本と宛先、既存queue、GhostscriptによるTIFF変換及び実Asterisk SendFAX/ReceiveFAXへ接続する。10 MiB・20ページを上限とし、local fixtureの原本期限は24時間である。本番の保持期間をこの値で確定しない。保管用keyは外部secret fileで与え、backupと別に維持する。
 
-workerはPostgreSQLのrow lockとskip-lockedでjobを取得し、同じsending jobを取得しない。called channelが送信結果を一度だけ報告し、既存event spoolが再送する。受信の一時TIFFはBackendの保管及び履歴確定後だけ削除する。期限切れsendingはDELIVERY_UNCONFIRMEDを表示し、自動再送しない。後から届いた同じattemptの確定成功はsentへ整合させる。旧opaque storage referenceに対応する実adapterがなければINPUT_UNAVAILABLEとして停止し、送れる状態と表現しない。
+workerはPostgreSQLのrow lockとskip-lockedでjobを取得し、同じsending jobを取得しない。callfileからprepareへclaimを引き継ぎ、currentのclaim不一致なら発信しない。PDF/TIFFはjobとclaimの組で分離する。called channelが送信結果を報告し、既存event spoolが再送する。metadata検査の失敗は結果通知を止めず、回収だけを抑止する。期限切れsendingはDELIVERY_UNCONFIRMEDを表示し、自動再送しない。後から届いた同じattemptの確定成功はsentへ整合させる。旧opaque storage referenceに対応する実adapterがなければINPUT_UNAVAILABLEとして停止し、送れる状態と表現しない。
+
+送受信の一時TIFFは、local eventに固定basename・size・SHA-256・tenantと送信claimを保持し、wire payloadへ混入しない。forwarderは同じfileを開いたまま、送信では既存result APIのjob/status/failure_code/tenant、受信ではuploadのdocument ID/type/sizeと履歴のtenant/PBX ID/direction/status/storage参照を照合する。2xxだけでは回収しない。同じACK対象eventをsentへ移した後、読取時と同じ通常fileだけを回収する。HTTP中のevent又は原本の差替え、移動・unlink失敗、結果不明、409、不整合ACK、DLQでは原本を保全する。旧受信eventは同じ保護原本consumerへ配送できるが、事前bindingがない原本は自動回収しない。
+
+DLQの原因修正後は既存forwarderの`python /app/forwarder.py --replay-dead-letter '<basename>.json' --expected-sha256 '<event-file-sha256>'`で指定一件だけをpendingへ戻せる。固定spool内の通常file、hashとevent schemaを照合し、pending同名があれば上書きしない。再送するのは同一ID・claimの結果通知だけで、claim取得・callfile作成・物理FAX再送はしない。unknown・DLQ・孤児原本に日数による自動削除を追加しない。本番原本の月単位保持とS3の31日保護は別の既存ownerが扱う。
 
 `FAX_MEDIA_MODE=audio`は実G.711、`t38`はT.38交渉とaudio fallbackを選ぶ。実Cloco・T.38の適合、malware scanの商用連携及び本番提供は未確認である。今回の隔離模擬キャリアによる実FAX通信を実回線成功へ読み替えない。
 

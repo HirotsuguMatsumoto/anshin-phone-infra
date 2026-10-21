@@ -14,7 +14,7 @@ import urllib.parse
 import urllib.request
 
 from pbx_management import request
-from pbx_event_spool import write_event
+from pbx_event_spool import write_event, fax_local_source
 
 FAX_ROOT = Path('/var/spool/asterisk/fax')
 CALL_ROOT = Path('/var/spool/asterisk')
@@ -28,13 +28,14 @@ def valid_id(value: str) -> str:
 
 def enqueue(job: dict) -> None:
     job_id = valid_id(job['id'])
-    valid_id(job['claim_id'])
+    claim_id = valid_id(job['claim_id'])
     outgoing = CALL_ROOT / 'outgoing'
     outgoing.mkdir(mode=0o750, exist_ok=True)
-    temporary = CALL_ROOT / (job_id + '.call.tmp')
-    temporary.write_text(f'Channel: Local/{job_id}@fax-dispatch/n\nMaxRetries: 0\nWaitTime: 180\nApplication: Wait\nData: 180\nArchive: no\n')
+    name = job_id + '-' + claim_id
+    temporary = CALL_ROOT / (name + '.call.tmp')
+    temporary.write_text(f'Channel: Local/{job_id}@fax-dispatch/n\nSetvar: __FAX_QUEUED_CLAIM_ID={claim_id}\nMaxRetries: 0\nWaitTime: 180\nApplication: Wait\nData: 180\nArchive: no\n')
     temporary.chmod(0o600)
-    temporary.replace(outgoing / (job_id + '.call'))
+    temporary.replace(outgoing / (name + '.call'))
 
 
 def poll() -> int:
@@ -66,10 +67,13 @@ def poll() -> int:
     return 0
 
 
-def result_event(job_id: str, claim_id: str, outcome: str, failure_code: str | None) -> None:
-    write_event({'kind': 'fax-attempts', 'payload': {'job_id': valid_id(job_id),
+def result_event(job_id: str, claim_id: str, outcome: str, failure_code: str | None, *, local=None) -> None:
+    event = {'kind': 'fax-attempts', 'payload': {'job_id': valid_id(job_id),
         'claim_id': valid_id(claim_id), 'outcome': outcome, 'failure_code': failure_code,
-        'pbx_unique_id': 'fax-attempt-' + claim_id}})
+        'pbx_unique_id': 'fax-attempt-' + claim_id}}
+    if local is not None:
+        event['fax_local'] = local
+    write_event(event)
 
 
 def set_variable(name: str, value: str) -> None:
@@ -80,19 +84,21 @@ def set_variable(name: str, value: str) -> None:
         raise RuntimeError('FAX AGI response was not accepted')
 
 
-def prepare(job_id: str) -> int:
+def prepare(job_id: str, queued_claim_id: str) -> int:
     job_id = valid_id(job_id)
+    queued_claim_id = valid_id(queued_claim_id)
     tenant = os.environ['ANSHIN_PHONE_TENANT_ID']
     params = urllib.parse.urlencode({'tenant_id': tenant})
     job = request(f'/api/v1/fax-worker/{job_id}/current?' + params)
-    if not job:
+    if not job or job.get('claim_id') != queued_claim_id:
         set_variable('FAX_JOB_READY', '0')
         return 0
     if job['id'] != job_id or job['tenant_id'] != tenant:
         raise ValueError('FAX worker identity mismatch')
     claim_id = valid_id(job['claim_id'])
-    temporary = FAX_ROOT / (job_id + '.pdf')
-    target = FAX_ROOT / (job_id + '.tif')
+    temporary = FAX_ROOT / (job_id + '-' + claim_id + '.pdf')
+    target = FAX_ROOT / (job_id + '-' + claim_id + '.tif')
+    owns_pdf = owns_tiff = False
     try:
         for name in ('destination', 'national_number'):
             if not re.fullmatch(r'0[0-9]{9,10}', job[name]):
@@ -110,8 +116,12 @@ def prepare(job_id: str) -> int:
             if response.headers.get_content_type() != 'application/pdf' or len(content) > 10 * 1024 * 1024:
                 raise ValueError('invalid FAX PDF response')
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        owns_pdf = True
         with os.fdopen(descriptor, 'wb') as handle:
             handle.write(content)
+        descriptor = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+        os.close(descriptor)
+        owns_tiff = True
         subprocess.run(['gs', '-q', '-dSAFER', '-dBATCH', '-dNOPAUSE', '-sDEVICE=tiffg4', '-r204x196',
             '-sPAPERSIZE=a4', '-dFIXEDMEDIA', '-dFitPage', '-dMaxBitmap=20000000',
             '-sOutputFile=' + str(target), str(temporary)], timeout=30, check=True,
@@ -125,10 +135,12 @@ def prepare(job_id: str) -> int:
     except Exception as exc:
         print(f'phase=fax-prepare state=failed error={type(exc).__name__} errno={exc.errno if isinstance(exc, OSError) else 0}', file=sys.stderr)
         result_event(job_id, claim_id, 'permanent_failure', 'INPUT_UNAVAILABLE')
-        target.unlink(missing_ok=True)
+        if owns_tiff:
+            target.unlink(missing_ok=True)
         set_variable('FAX_JOB_READY', '0')
     finally:
-        temporary.unlink(missing_ok=True)
+        if owns_pdf:
+            temporary.unlink(missing_ok=True)
     return 0
 
 
@@ -140,8 +152,18 @@ def complete(arguments: list[str]) -> int:
         outcome, code = 'retryable_failure', dial_status
     else:
         outcome, code = 'permanent_failure', 'FAX_TRANSMISSION_FAILED'
-    result_event(job_id, claim_id, outcome, code)
-    (FAX_ROOT / (valid_id(job_id) + '.tif')).unlink(missing_ok=True)
+    name = valid_id(job_id) + '-' + valid_id(claim_id) + '.tif'
+    local = None
+    try:
+        local = fax_local_source(name, os.environ['ANSHIN_PHONE_TENANT_ID'],
+            cleanup=fax_status in {'SUCCESS', 'FAILED'} or dial_status in {'BUSY', 'NOANSWER', 'CONGESTION', 'CHANUNAVAIL'},
+            job_id=job_id, claim_id=claim_id)
+    except (OSError, ValueError):
+        # Result delivery is required even when source inspection fails.
+        # No local binding means no consumer may delete this TIFF.
+        print('phase=fax-complete state=source-preserved', file=sys.stderr)
+    # Preserve the TIFF until the exact result is accepted by the Backend.
+    result_event(job_id, claim_id, outcome, code, local=local)
     return 0
 
 
@@ -151,7 +173,7 @@ if __name__ == '__main__':
     while sys.stdin.readline().strip():
         pass
     if sys.argv[1] == 'prepare':
-        raise SystemExit(prepare(sys.argv[2]))
+        raise SystemExit(prepare(sys.argv[2], sys.argv[3]))
     if sys.argv[1] == 'complete':
         raise SystemExit(complete(sys.argv[2:]))
     raise SystemExit(2)
