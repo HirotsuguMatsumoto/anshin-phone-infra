@@ -918,6 +918,83 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
     return 0
 
 
+def production_backup_transition_fixture(runtime, temporary, profile):
+    """Real capture/DB/FAX/stop-start; age and S3 are explicit fixture boundaries."""
+    from unittest.mock import patch
+    import errno
+    import phone_postgresql_backup_adapter as owner
+    from production_runtime import RuntimeFailure
+    state = temporary / 'capture-state'; state.mkdir(mode=0o700)
+    keys = temporary / 'capture-keys'; keys.mkdir(mode=0o700)
+    recipient = keys / 'phone-age-recipient.txt'; recipient.write_text('fixture-age-boundary'); recipient.chmod(0o600)
+    config = temporary / 'backup-profile.json'
+    public = {'trust_anchor_arn':'arn:aws:rolesanywhere:ap-northeast-1:691862619128:trust-anchor/916219bc-2500-4f73-a7b2-82e0c94ec215',
+              'manifest_key_id':'a'*64,'credential_versions':{key:1 for key in owner.CREDENTIAL_IDS}}
+    for purpose, product in (('db','phone-postgresql'),('fax','phone-fax')):
+        for role in ('writer','restore'):
+            public[purpose+'_'+role+'_role_arn']='arn:aws:iam::691862619128:role/anshin-prod-'+product+'-backup-'+role
+            public[purpose+'_'+role+'_profile_arn']='arn:aws:rolesanywhere:ap-northeast-1:691862619128:profile/12345678-1234-1234-1234-123456789abc'
+    config.write_text(json.dumps({'manifest_key_id':'a'*64,'governance_sha':'c'*40,'infra_sha':profile['infra_sha'],'public':public}))
+    config.chmod(0o600)
+    original_command, original_runner = runtime.command, runtime.runner
+    captures=[]; drift=[False]
+    def runner(argv, **kwargs):
+        if argv[:2]==['bash','-c'] and len(argv)==7 and argv[3]=='phone-dump':
+            # Store the native pg_dump bytes only in this private temporary
+            # fixture. This is not age/S3 acceptance and never reaches AWS.
+            with Path(argv[6]).open('xb') as output:
+                os.chmod(argv[6],0o600)
+                return original_runner(['docker','start','--attach',argv[4]],**{**kwargs,'stdout':output})
+        return original_runner(argv,**kwargs)
+    def command(argv, **kwargs):
+        if argv==['python3','/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py','--scheduled-backup']:
+            result=owner.scheduled_backup(runtime=runtime,config_path=config)
+            if drift[0]:
+                backend=runtime.compose(profile,'ps','--quiet','--no-trunc','backend').stdout.strip()
+                original_command(['docker','restart','--time','30',backend],timeout=45)
+                deadline=time.monotonic()+30
+                while True:
+                    try:runtime.health(profile);break
+                    except RuntimeFailure:
+                        if time.monotonic()>=deadline:raise
+                        time.sleep(1)
+            return subprocess.CompletedProcess(argv,0,json.dumps(result),'')
+        if argv==['bash','/opt/anshin-phone-backup/sh/backup_postgresql_to_s3.sh']:
+            try:os.fstat(9)
+            except OSError as error:
+                if error.errno!=errno.EBADF:raise
+            else:raise RuntimeError('fixture preserves an already open fd9')
+            work=Path(tempfile.mkdtemp(prefix='.capture-',dir=state));work.chmod(0o700)
+            with runtime.lock.open('a') as lock:
+                fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
+                duplicated=lock.fileno()!=9
+                if duplicated:os.dup2(lock.fileno(),9,inheritable=False)
+                try:
+                    with patch.dict(os.environ,kwargs['env']):
+                        result=owner.capture_pair(work,work/'fixture.dump.age',recipient,runtime=runtime)
+                finally:
+                    if duplicated:os.close(9)
+            captures.append(result)
+            return subprocess.CompletedProcess(argv,0,json.dumps(result)+'\n[fixture] S3 upload boundary completed\n','')
+        return original_command(argv,**kwargs)
+    with patch.object(owner,'STATE',state),patch.object(owner,'KEYS',keys), \
+         patch.object(runtime,'runner',side_effect=runner),patch.object(runtime,'command',side_effect=command):
+        result=runtime.deploy(profile['backend_image'],profile['backend_sha'],profile['infra_sha'])
+        if result['status']!='deployed' or len(captures)!=1:
+            raise RuntimeError('capture transition fixture did not deploy')
+        if captures[0]['runtime_transition']['before']==captures[0]['runtime_transition']['after']:
+            raise RuntimeError('capture fixture did not observe the real Backend restart')
+        saved=runtime.profile();drift[0]=True
+        try:runtime.deploy(profile['backend_image'],profile['backend_sha'],profile['infra_sha'])
+        except RuntimeFailure as error:
+            if str(error)!='phone_runtime_changed_during_backup':raise
+        else:raise RuntimeError('post-capture extra restart was accepted')
+        if runtime.profile()!=saved or len(captures)!=2:
+            raise RuntimeError('drift failure changed its profile')
+        runtime.health(saved)
+    print('PASS: deploy -> scheduled owner -> real native DB/FAX capture -> same Backend restart -> deploy; extra restart after producer rejected. age and S3 use fixture boundaries, not production acceptance.',flush=True)
+
+
 def run_production_management_fixture(image: str, backend_sha: str) -> int:
     """Exercise the packaged production image through its actual guest owner.
 
@@ -1077,6 +1154,7 @@ for path,headers,expected in [
 '''
             runtime.compose(profile, 'exec', '-T', 'backend', 'python', '-c', probe)
             print('PASS: immutable image -> actual settings/migration -> initial failure -> exact-resource forward repair -> readiness; DB data and volume identities retained; foreign identity/unauthenticated management denied and telephony disabled', flush=True)
+            production_backup_transition_fixture(runtime,temporary,profile)
             # Only this fixture's synthetic documents are involved. Use the
             # real encrypted writer and calendar policy, including a missed
             # monthly run, rather than changing expiry directly in SQL.

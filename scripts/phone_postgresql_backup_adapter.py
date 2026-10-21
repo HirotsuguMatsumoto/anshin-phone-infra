@@ -570,6 +570,30 @@ def helper_create(runtime, profile, kind, image, arguments, command=()):
     return identifier
 
 
+def capture_runtime_transition(before, after, backend):
+    """The capture owner permits only its known Backend stop/start."""
+    reason = 'phone_capture_runtime_changed_data_preserved'
+    if before['volumes'] != after['volumes'] or len(before['containers']) != len(after['containers']):
+        raise RuntimeFailure(reason)
+    matched = 0
+    for old, new in zip(before['containers'], after['containers']):
+        old, new = old.split(), new.split()
+        if len(old) != 4 or len(new) != 4:
+            raise RuntimeFailure(reason)
+        try:
+            identifier = json.loads(old[0])
+        except ValueError:
+            raise RuntimeFailure(reason) from None
+        if identifier == backend:
+            matched += 1
+            old[2] = new[2]
+        if old != new:
+            raise RuntimeFailure(reason)
+    if matched != 1:
+        raise RuntimeFailure(reason)
+    return {'before': before, 'after': after}
+
+
 def capture_pair(work, artifact, recipient, *, runtime=None):
     """The existing shared lock encloses a stopped-writer DB/FAX snapshot."""
     from business_file_backup import DigestReader, capture_archive, verify_archive, MAX_FILES, MAX_BYTES
@@ -593,7 +617,8 @@ def capture_pair(work, artifact, recipient, *, runtime=None):
     if (backend_row[1] != '/' + runtime.project + '-backend-1' or backend_row[2] != profile['backend_image']
             or backend_row[3].get('com.docker.compose.service') != 'backend' or not backend_row[4]):
         raise RuntimeFailure('phone_capture_backend_identity_changed')
-    before = runtime.observation()['volumes']
+    before_observation = runtime.observation()
+    before = before_observation['volumes']
     expected_volumes = {runtime.project + '_postgres-data', runtime.project + '_fax-protected-storage'}
     if {v['Name'] for v in before} != expected_volumes:
         raise RuntimeFailure('phone_capture_volume_identity_changed')
@@ -716,7 +741,12 @@ trap - EXIT
         finally:
             for number, handler in previous.items():
                 signal.signal(number, handler)
-    return {'status': 'captured', 'write_pause_seconds': round(time.monotonic() - started, 3)}
+    after_observation = runtime.observation()
+    if runtime.profile() != profile:
+        raise RuntimeFailure('phone_capture_runtime_changed_data_preserved')
+    transition = capture_runtime_transition(before_observation, after_observation, backend)
+    return {'status': 'captured', 'write_pause_seconds': round(time.monotonic() - started, 3),
+            'source_fixed_sha': profile['backend_sha'], 'runtime_transition': transition}
 
 
 def upload_fax(work, *, runtime=None):
@@ -931,12 +961,27 @@ def scheduled_backup(*, runtime=None, config_path=CONFIG, install=INSTALL):
     # This is the sole producer: it owns locking, age, AES256, exact-version
     # readback and the existing receipt. Phone support (including identity
     # binding under that lock) must be integrated before installation.
-    runtime.command(['bash', str(Path(install) / 'sh/backup_postgresql_to_s3.sh')],
-                    env=env, timeout=1100, termination_grace=240)
+    result = runtime.command(['bash', str(Path(install) / 'sh/backup_postgresql_to_s3.sh')],
+                             env=env, timeout=1100, termination_grace=240)
     if runtime.profile() != installed:
         raise RuntimeFailure('phone_backup_runtime_changed')
     runtime.health(installed)
-    return {'status': 'completed', 'source_fixed_sha': installed['backend_sha']}
+    captures = []
+    for line in result.stdout.splitlines():
+        try:
+            value = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(value, dict) and value.get('status') == 'captured':
+            captures.append(value)
+    if (len(captures) != 1
+            or set(captures[0]) != {'status', 'write_pause_seconds', 'source_fixed_sha', 'runtime_transition'}
+            or captures[0]['source_fixed_sha'] != installed['backend_sha']
+            or not isinstance(captures[0]['runtime_transition'], dict)
+            or set(captures[0]['runtime_transition']) != {'before', 'after'}):
+        raise RuntimeFailure('phone_capture_result_invalid')
+    return {'status': 'completed', 'source_fixed_sha': installed['backend_sha'],
+            'runtime_transition': captures[0]['runtime_transition']}
 
 
 def purge_expired(*, runtime=None):

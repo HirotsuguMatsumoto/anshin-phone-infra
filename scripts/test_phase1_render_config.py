@@ -155,7 +155,9 @@ class ProductionRuntimeTest(unittest.TestCase):
             calls.append((argv, kwargs['env']))
             output = ''
             code = 0
-            if argv[:3] == ['docker', 'image', 'inspect']:
+            if argv[:2] == ['python3', '/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py']:
+                output = json.dumps(self.backup_result(runtime))
+            elif argv[:3] == ['docker', 'image', 'inspect']:
                 output = 'b' * 40
             elif argv[:2] == ['docker', 'inspect']:
                 output = state['image']
@@ -191,6 +193,11 @@ class ProductionRuntimeTest(unittest.TestCase):
                           project='phone-unit', lock=root / 'release.lock', runner=runner,
                           compose_extra_files=compose_extra_files)
         return runtime, calls
+
+    def backup_result(self, runtime):
+        observed = runtime.observation()
+        return {'status': 'completed', 'source_fixed_sha': runtime.profile()['backend_sha'],
+                'runtime_transition': {'before': observed, 'after': observed}}
 
     def previous(self, runtime):
         profile = {'source_root': str(runtime.root.parent / 'old'),
@@ -311,6 +318,60 @@ class ProductionRuntimeTest(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeFailure, 'volume_identity_invalid'):
                 runtime.observation()
 
+    def test_deploy_rejects_malformed_backup_before_pull_or_migration(self):
+        import subprocess,json
+        from production_runtime import RuntimeFailure
+        for result in ('not-json',json.dumps({'status':'completed'})):
+            with self.subTest(result=result),tempfile.TemporaryDirectory() as directory:
+                runtime,calls=self.runtime(directory);self.previous(runtime)
+                command=runtime.command
+                def malformed(argv,**kwargs):
+                    if argv[:2]==['python3','/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py']:
+                        return subprocess.CompletedProcess(argv,0,result,'')
+                    return command(argv,**kwargs)
+                with patch.object(runtime,'command',side_effect=malformed):
+                    with self.assertRaisesRegex(RuntimeFailure,'backup_result_invalid'):self.deploy(runtime)
+                self.assertFalse(any('pull' in argv or 'backend-migrate' in argv for argv,_ in calls))
+
+    def test_deploy_rejects_backup_source_or_before_drift_before_mutation(self):
+        from production_runtime import RuntimeFailure
+        for field in ('source_fixed_sha', 'before'):
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                runtime, calls = self.runtime(directory)
+                self.previous(runtime)
+                result = self.backup_result(runtime)
+                if field == 'source_fixed_sha':
+                    result[field] = 'f' * 40
+                else:
+                    result['runtime_transition']['before'] = {'containers': ['foreign-before'], 'volumes': []}
+                with patch.object(runtime, 'backup', return_value=result):
+                    with self.assertRaisesRegex(RuntimeFailure, 'changed_during_backup'):
+                        self.deploy(runtime)
+                self.assertFalse(any('pull' in argv or 'backend-migrate' in argv for argv, _ in calls))
+
+    def test_capture_transition_allows_only_known_backend_started_at(self):
+        import json,copy
+        from phone_postgresql_backup_adapter import capture_runtime_transition
+        from production_runtime import RuntimeFailure
+        backend='a'*64
+        row=lambda identifier,image,started,count:' '.join(json.dumps(v) for v in (identifier,image,started,count))
+        before={'containers':[row(backend,'sha256:'+'b'*64,'before',0),row('c'*64,'sha256:'+'d'*64,'pg-before',0)],
+                'volumes':[{'Name':'fixture','backing':{'device':1,'inode':2}}]}
+        after=copy.deepcopy(before);after['containers'][0]=row(backend,'sha256:'+'b'*64,'after',0)
+        self.assertEqual(capture_runtime_transition(before,after,backend),{'before':before,'after':after})
+        changes=[row('e'*64,'sha256:'+'b'*64,'after',0),row(backend,'sha256:'+'e'*64,'after',0),row(backend,'sha256:'+'b'*64,'after',1)]
+        for changed in changes:
+            foreign=copy.deepcopy(after);foreign['containers'][0]=changed
+            with self.subTest(changed=changed),self.assertRaisesRegex(RuntimeFailure,'runtime_changed'):
+                capture_runtime_transition(before,foreign,backend)
+        for kind in ('postgres','volume','extra'):
+            foreign=copy.deepcopy(after)
+            if kind=='postgres':foreign['containers'][1]=row('c'*64,'sha256:'+'d'*64,'pg-after',0)
+            elif kind=='volume':foreign['volumes'][0]['backing']['inode']=3
+            else:foreign['containers'].append(row('f'*64,'sha256:'+'f'*64,'extra',0))
+            with self.subTest(kind=kind),self.assertRaisesRegex(RuntimeFailure,'runtime_changed'):
+                capture_runtime_transition(before,foreign,backend)
+
     def test_backup_uses_same_lock_without_recursive_acquisition_and_detects_drift(self):
         from production_runtime import RuntimeFailure
         with tempfile.TemporaryDirectory() as directory:
@@ -320,13 +381,14 @@ class ProductionRuntimeTest(unittest.TestCase):
             def backup():
                 with runtime.exclusive():
                     pass
+                return self.backup_result(runtime)
 
             with patch.object(runtime, 'backup', side_effect=backup) as backup_call:
                 self.assertEqual(self.deploy(runtime)['status'], 'deployed')
                 backup_call.assert_called_once()
             runtime, calls = self.runtime(Path(directory) / 'drift')
             self.previous(runtime)
-            with patch.object(runtime, 'backup'), patch.object(runtime, 'observation', side_effect=[{}, {'changed': True}]):
+            with patch.object(runtime, 'backup', return_value={'source_fixed_sha':'a'*40,'runtime_transition':{'before':{},'after':{}}}), patch.object(runtime, 'observation', side_effect=[{}, {'changed': True}]):
                 with self.assertRaisesRegex(RuntimeFailure, 'changed_during_backup'):
                     self.deploy(runtime)
             self.assertFalse(any('up' in argv or 'pull' in argv for argv, _ in calls))
@@ -335,7 +397,7 @@ class ProductionRuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runtime, calls = self.runtime(directory, migration_failure=True)
             previous = self.previous(runtime)
-            with patch.object(runtime, 'backup'):
+            with patch.object(runtime, 'backup', return_value=self.backup_result(runtime)):
                 result = self.deploy(runtime)
             self.assertEqual(result['status'], 'rolled_back')
             self.assertEqual(runtime.profile(), previous)
@@ -349,7 +411,7 @@ class ProductionRuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             runtime, calls = self.runtime(directory, migration_timeout=True, stop_failure=True)
             previous = self.previous(runtime)
-            with patch.object(runtime, 'backup'):
+            with patch.object(runtime, 'backup', return_value=self.backup_result(runtime)):
                 with self.assertRaises(RuntimeFailure):
                     self.deploy(runtime)
             self.assertEqual(runtime.profile(), previous)
@@ -362,7 +424,7 @@ class ProductionRuntimeTest(unittest.TestCase):
                 runtime, calls = self.runtime(directory, candidate_health_failure=True,
                                              rollback_health_failure=previous_unhealthy)
                 previous = self.previous(runtime)
-                with patch.object(runtime, 'backup'):
+                with patch.object(runtime, 'backup', return_value=self.backup_result(runtime)):
                     if previous_unhealthy:
                         with self.assertRaises(RuntimeFailure):
                             self.deploy(runtime)
@@ -404,7 +466,7 @@ class ProductionRuntimeTest(unittest.TestCase):
             with self.subTest(phase=phase), tempfile.TemporaryDirectory() as raw:
                 runtime, calls = self.runtime(raw, **{phase + '_unknown': True})
                 previous = self.previous(runtime)
-                with patch.object(runtime, 'backup'), patch.object(runtime, 'stop_oneoff', wraps=runtime.stop_oneoff) as cleanup:
+                with patch.object(runtime, 'backup', return_value=self.backup_result(runtime)), patch.object(runtime, 'stop_oneoff', wraps=runtime.stop_oneoff) as cleanup:
                     with self.assertRaisesRegex(RuntimeFailure, 'phone_command_children_unknown'):
                         self.deploy(runtime)
                 self.assertEqual(cleanup.call_args_list, [] if phase == 'settings' else [call('settings', 'backend')])
@@ -686,14 +748,26 @@ class PhoneBackupAdapterTest(unittest.TestCase):
             runtime.environment.return_value = {}
             runtime.profile.return_value = installed
             runtime.compose.return_value = subprocess.CompletedProcess([], 0, 'c' * 64, '')
-            runtime.command.return_value = subprocess.CompletedProcess([], 0, '/anshin-phone-production-postgres-1', '')
+            capture = {'status':'captured','write_pause_seconds':1.0,'source_fixed_sha':'b'*40,
+                       'runtime_transition':{'before':{'containers':[],'volumes':[]},'after':{'containers':[],'volumes':[]}}}
+            def command(argv, **kwargs):
+                output = ('/anshin-phone-production-postgres-1' if argv[:2]==['docker','inspect'] else json.dumps(capture))
+                return subprocess.CompletedProcess(argv,0,output,'')
+            runtime.command.side_effect = command
             self.assertEqual(scheduled_backup(runtime=runtime, config_path=config)['status'], 'completed')
             self.assertEqual(runtime.command.call_args.kwargs['timeout'], 1100)
             self.assertEqual(runtime.command.call_args.args[0], ['bash', '/opt/anshin-phone-backup/sh/backup_postgresql_to_s3.sh'])
+            for output in ('no capture result',json.dumps(capture)+'\n'+json.dumps(capture),
+                           json.dumps({**capture,'runtime_transition':None}),json.dumps({**capture,'source_fixed_sha':'f'*40})):
+                def malformed(argv, **kwargs):
+                    return subprocess.CompletedProcess(argv,0,'/anshin-phone-production-postgres-1' if argv[:2]==['docker','inspect'] else output,'')
+                runtime.command.side_effect=malformed
+                with self.subTest(output=output),self.assertRaisesRegex(RuntimeFailure,'capture_result_invalid'):
+                    scheduled_backup(runtime=runtime,config_path=config)
             runtime.command.side_effect = RuntimeFailure('producer_failed')
             with self.assertRaisesRegex(RuntimeFailure, 'producer_failed'):
                 scheduled_backup(runtime=runtime, config_path=config)
-            runtime.command.side_effect = None
+            runtime.command.side_effect = command
             runtime.profile.side_effect = [installed, {**installed, 'backend_sha': 'f' * 40}]
             with self.assertRaisesRegex(RuntimeFailure, 'runtime_changed'):
                 scheduled_backup(runtime=runtime, config_path=config)

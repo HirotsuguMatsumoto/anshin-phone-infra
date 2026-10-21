@@ -1,0 +1,113 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin.phone.backup-deploy-transition.2026-10-21",
+  "title": "Phone配備前S3 captureの既知停止再開を同じowner結果で引き継ぐ",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "critical",
+  "production_change": true,
+  "spec_ids": [
+    "anshin.phone.production-and-softphone-preparation",
+    "anshin.infrastructure.postgresql-s3-backup-recovery",
+    "anshin.security.external-credential-management"
+  ],
+  "repositories": [
+    "anshin",
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/scripts/production_runtime.py",
+    "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py"
+  ],
+  "contract_paths": [
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml"
+  ],
+  "generated_artifacts": [],
+  "test_paths": [
+    "anshin-phone-infra/scripts/test_phase1_render_config.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py"
+  ],
+  "invariants": [
+    "capture ownerだけが既知BackendのStartedAt変更を許容",
+    "container ID/image/RestartCount・他container・volume/backing・profileを維持",
+    "同一producer exit0と唯一のcapture stdoutを中継し外部restartを取り込まない",
+    "既存operation/lock/結果/receiptと31日保護を再利用し新authority/journal/KMSなし"
+  ],
+  "acceptance_criteria": [
+    "実captureとBackend停止再開を通す既存production fixtureで正常更新を確認",
+    "capture後追加restartを実Dockerで拒否、ID/image/RestartCount/別container/volume driftをunit行列へ固定",
+    "missing/duplicate/malformed captureは配備前に停止",
+    "canonical/fixed SHA独立review/main統合後、backup source更新と中央配備・同世代隔離復旧を実確認",
+    "実fixtureは固定qualified中央sourceのscripts/business_file_backup.pyを同interpreterのPYTHONPATHからimportし、起動前に実closureを確認する。ageとS3だけfixture境界とし、欠落依存をruntime障害と誤分類しない。"
+  ],
+  "out_of_scope": [
+    "実carrier",
+    "助成4機能",
+    "他製品保存先/資格",
+    "新SSH/authority/receipt/KMS"
+  ],
+  "rollout": {
+    "strategy": "existing-registered-phone-deploy-owner",
+    "steps": [
+      "I実fixture/重点/canonical/fixed review/main統合",
+      "旧backup preimageを観測し既存backup-installで新sourceへ更新",
+      "新I source/treeを中央既存typed inputへ固定して新release実行",
+      "配備後S3同世代隔離restore/health/公式管理画面確認"
+    ],
+    "triggers": [
+      "owner依頼の基礎Phone本番化"
+    ]
+  },
+  "rollback": {
+    "strategy": "existing-owner-preserve-backup",
+    "steps": [
+      "既知の変更file/profile/leafだけ元byteへ独立補償",
+      "guest lock解放後に元timer状態を復元",
+      "unknown consumer/preimageは資格/candidateを保全し標準失敗結果へ記録",
+      "S3世代・nonleaf鍵を削除しない"
+    ],
+    "triggers": [
+      "取得/復旧/health失敗"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "既存manifest/restore結果",
+      "backup/retention timer status",
+      "証明書/CRL期限と復旧PDCA"
+    ],
+    "observation_period": "初回受入と定期運用"
+  },
+  "approvals": [],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin": "d2b980cb3cefcd138553c8868529f8c1bf55ddb4",
+      "anshin-phone-infra": "e6627eb0caa9831612399240ec50f5fe898f2752"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/scripts/production_runtime.py",
+      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra:scripts/production_runtime.py": "6b6c8ce8341dc469ee14f7a54028fd3a91a5e09a",
+      "anshin-phone-infra:scripts/phone_postgresql_backup_adapter.py": "9355192ec367b538303b90524d7f8fa1fbc31d75",
+      "anshin-phone-infra:scripts/test_phase1_render_config.py": "486dd0b4963804b2536cb7321cb9830e48cfe46a",
+      "anshin-phone-infra:scripts/test_phase1_sip_e2e.py": "1859d56d63a8857b075b8d09ce3df67ef412686f",
+      "anshin-phone-infra:docs/plans/telephony-platform/production-and-softphone-preparation.md": "d06835b0887b10e2e590c3faa866d094f7699edd",
+      "anshin-phone-infra:docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml": null
+    },
+    "integration_order": [
+      "anshin-phone-infra"
+    ]
+  }
+}

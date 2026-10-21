@@ -22,7 +22,7 @@ source_doc_ids:
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: [scripts/phone_postgresql_backup_adapter.py, scripts/production_runtime.py]
-contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml]
 test_paths: [scripts/build_check.sh]
 last_reviewed: "2026-10-21"
 review_interval_days: 30
@@ -54,7 +54,7 @@ ownerの本番反映依頼と基礎開発指示に対する準備計画である
 | 対象 | 確認済み | 未確認・未実施 |
 | --- | --- | --- |
 | 基礎管理経路 | 実Docker、隔離Auth、Backend、実PBX、架空番号・模擬carrierを通す番号/端末管理・通話・G.711 FAX・監査・隔離復元 | 実Cloco、実番号、T.38、顧客通信、商用容量 |
-| 管理画面 | 説明iconのclick/Escape、必要状態・エラー・FAX制限表示。対象画面の自動試験・右サイド実browser確認。ownerの「画面問題ない。本番反映お願い」により当該画面の本人確認受領済み。公式 https://phone.anshin.care で本番Google loginと管理6画面を確認 | MFA復旧の本人操作・再登録後確認は別に未確認 |
+| 管理画面 | 説明iconのclick/Escape、必要状態・エラー・FAX制限表示。対象画面の自動試験・右サイド実browser確認。ownerの「画面問題ない。本番反映お願い」により当該画面の本人確認受領済み。公式 https://phone.anshin.care で本番Google loginと管理6画面を確認 | h-test3の再登録完了を本番管理画面で読取済み。別Chromeでの再ログイン・MFA通過はowner報告により完了 |
 | source | Backend `7770e877b2901d1b99c09cf32606f8abdc55178d`のruntime変更、Infraの既存runtime変更、Frontend `ba6bcbdb97cc4d80c0f45cb0c4aebb2e3d301c57`の説明・文書整備をmainへ統合 | source統合を本番提供と扱わない |
 | 本番adapter | MS-A2-1専用VM・管理API/DB・公式公開・本番Google認証・実S34世代・同世代DB/FAX隔離復旧と両timer有効化を2026-10-20に受入 | 中央generic経路の完成は専用operationの受入から推定せず、中央runnerの実装・検査・release結果で判定。定期実発火と証明書更新切替の実施結果を別記 |
 | 無料Softphone | 既存employee/customer mobileはFlutter。公式SDK条件を比較 | Phone SDK実装、Android/iPhone実機、Push、背景着信・音声品質、採用方式・費用・UI/UX詳細設計 |
@@ -192,3 +192,11 @@ backup/retention timerはenabled/activeを読取済み。4手動世代を4定期
 更新は同じ `backup-install` とoptional公開preimageを使う。originは旧Gov/InfraのGit blobから全sourceとunitのhashを再構成し、statusのsource closureと照合する。profile fingerprintは公開profile、AWS profile及び既設producer鍵のbyte hashを束ね、秘密値は返さない。候補codeは自己所有の一時directoryから読み込み、旧installed moduleと混在させず、旧sourceを先に書き換えて実行しない。
 
 native ownerはPhone timerと管理serviceだけを有限時間で停止し、既存guest lock下でpreimageを再確認する。非leaf鍵・既存S3世代・latest-successを保持し、固定4roleの新leafで証明書pair/CN/期限、実Roles Anywhere認証と保持中exact世代の読取を確認する。source/profile/leafは既知の旧byteに限りatomic置換し、失敗時は自分が変更したfileを独立に補償する。既存のenabled/active状態の復元はguest lock解放後に行い、Persistent timerの即時発火と競合させない。未知consumer・補償未確認では一時資格/candidateを保全し、標準FAILED結果へ記録する。初回installへこの更新入力を暗黙適用しない。
+
+2026-10-21にはGov `fa74ca3be56878ef2b566cc11aeeabf65ed21c59` / Infra `e6627eb0caa9831612399240ec50f5fe898f2752`で既設backupを更新し、4roleの新leaf数値version 2の認証と保持世代読取、新しいDB/FAXの同世代隔離復旧を確認した。capture `release-c4b23327629e361364c8d259`、restore `release-c7927c91715f631e40851058`、DB artifact SHA-256 `7ad12b2254038d89631695c4194a75e74c266c650c59a2245702243ab35d8218`である。11 table/head `20261012_0002`、原本0件と保護reader probe、cleanupまでの結果であり、実回線FAXの受入ではない。更新前にはtimerのUTC 2026-10-20 19:30:07の実発火、service exit 0、同じS3 VersionIdを照合し、定期1回の成功を手動世代と区別した。更新後の定期発火をこの手動取得から推定しない。
+
+### 配備前captureが行う停止・再開の責任境界
+
+`capture_pair()`は既存guest lock内で完全なruntime観測を取得し、既知Backend IDの`StartedAt`だけが変わる停止・再開、再開後health、profile・container ID/image/RestartCount・他container・volume/backingの不変を確認する。許容判定はこのcapture ownerだけが所有し、既存`status=captured`の公開JSONに`runtime_transition.before/after`とsource SHAを返す。
+
+共有S3 producerの同じ呼出しが保存・既存receipt commitを完了してexit 0となった後、`scheduled_backup()`がstdout中の唯一のtyped capture結果を既存completed結果へ渡す。wrapperで呼出し前後を観測して差分を正当化せず、欠落・重複・不正結果を拒否する。`Runtime.backup()`を経た`Runtime.deploy()`は、最初の観測とcapture-before、lock再取得後とcapture-after、profileをそれぞれ完全一致で照合する。全containerの開始時刻を比較から除外せず、producer完了後の追加restart等はpull/migration前に止める。新しいreceipt、journal又はauthorityを作らない。

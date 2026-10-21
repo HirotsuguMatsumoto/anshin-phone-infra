@@ -274,8 +274,17 @@ class Runtime:
     def backup(self):
         # The existing shared producer takes the same guest lock. Run it
         # before acquiring that lock, then reobserve before any mutation.
-        self.command(['python3', '/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py',
-                      '--scheduled-backup'], timeout=1500, termination_grace=260)
+        result = self.command(['python3', '/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py',
+                              '--scheduled-backup'], timeout=1500, termination_grace=260)
+        try:
+            value = json.loads(result.stdout)
+            if (not isinstance(value, dict) or set(value) != {'status', 'source_fixed_sha', 'runtime_transition'}
+                    or value['status'] != 'completed' or not isinstance(value['runtime_transition'], dict)
+                    or set(value['runtime_transition']) != {'before', 'after'}):
+                raise ValueError
+        except (ValueError, TypeError):
+            raise RuntimeFailure('phone_backup_result_invalid') from None
+        return value
 
     def save(self, profile):
         self.state.mkdir(parents=True, mode=0o700, exist_ok=True)
@@ -308,7 +317,11 @@ class Runtime:
                 raise RuntimeFailure('phone_initial_recovery_identity_changed')
         if previous:
             self.health(previous)
-            self.backup()
+            backup = self.backup()
+            if (backup['source_fixed_sha'] != previous['backend_sha']
+                    or backup['runtime_transition']['before'] != before):
+                raise RuntimeFailure('phone_runtime_changed_during_backup')
+            before = backup['runtime_transition']['after']
         elif (before['containers'] or before['volumes']) and initial_recovery is None:
             raise RuntimeFailure('phone_existing_data_without_profile')
         with self.exclusive():
