@@ -32,6 +32,7 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
                 with self.assertRaises(urllib.error.HTTPError) as error:
                     sdk.simulator_control_post(server.server_port,'config',{'fixture':'synthetic'})
                 self.assertEqual(error.exception.code,302)
+                error.exception.close()
         finally:server.shutdown();server.server_close();thread.join(timeout=2)
 
     def test_simulator_forward_response_loss_cleans_only_new_exact_tuple(self):
@@ -42,6 +43,26 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
         with mock.patch.object(sdk,'simulator_forwards',side_effect=[{old,new,foreign},{old,foreign}]),mock.patch.object(sdk.subprocess,'run') as run:
             sdk.cleanup_simulator_forward('emulator-5558',10004,{old})
         self.assertEqual(run.call_args.args[0],['adb','-s','emulator-5558','forward','--remove','tcp:10003'])
+
+    def test_simulator_incomplete_forward_snapshot_preserves_existing_mappings(self):
+        import softphone_sip_fixture as sdk
+        with mock.patch.object(sdk.subprocess,'check_output',return_value='incomplete mapping\n'),mock.patch.object(sdk.subprocess,'run') as run:
+            with self.assertRaisesRegex(RuntimeError,'snapshot incomplete'):
+                sdk.simulator_forwards('emulator-5558')
+            run.assert_not_called()
+
+    def test_simulator_first_snapshot_failure_does_not_delete_forward(self):
+        import softphone_sip_fixture as sdk
+        import tempfile
+        with tempfile.TemporaryDirectory() as raw:
+            path=Path(raw)/'template';path.write_text('fixture')
+            env={'PHONE_SOFTPHONE_SIMULATOR':'android','PHONE_SOFTPHONE_DEVICE':'emulator-5558','PHONE_SIM_PORT':'24001',
+                 'PHONE_SIM_TEMPLATE':str(path),'PHONE_SIM_HOST':'10.0.2.2','PHONE_SOFTPHONE_ROOT':raw}
+            process=mock.Mock(stdout=io.StringIO('PHONE_SIM {"phase":"awaiting_input","port":25001}\n'))
+            with mock.patch.object(sdk,'observe_source',return_value='192.168.65.1'),mock.patch.object(sdk.time,'sleep'),mock.patch.object(sdk.subprocess,'Popen',return_value=process),mock.patch.object(sdk,'stop_simulator_process'),mock.patch.object(sdk,'simulator_forwards',side_effect=RuntimeError('snapshot unavailable')),mock.patch.object(sdk,'cleanup_simulator_forward') as cleanup,mock.patch.object(sdk.subprocess,'run',side_effect=[mock.Mock(returncode=0),mock.Mock(returncode=1,stdout=b'')]):
+                with self.assertRaisesRegex(RuntimeError,'snapshot unavailable'):
+                    sdk.run_simulator_flow([],env,{}, {},mock.Mock(return_value=mock.Mock(stdout='127.0.0.1:24001')),mock.Mock(),mock.Mock())
+                cleanup.assert_not_called()
 
     def test_simulator_compose_replaces_mock_port_reset_with_loopback_binding(self):
         import softphone_sip_fixture as sdk
@@ -76,7 +97,7 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
         self.assertIn('advertise 10.0.2.2:24001', rendered)
         self.assertIn('$Rp == 5070 && src_ip != 192.168.65.1/32', rendered)
         self.assertIn('Fixture Contact Alias Forbidden', rendered)
-        self.assertIn(';alias=192[.]168[.]65[.]1~[0-9]{1,5}~1$', rendered)
+        self.assertIn(';alias=192[.]168[.]65[.]1~[0-9]{1,5}~1(;ob)?$', rendered)
         self.assertIn('Fixture Alias Mismatch', rendered)
         self.assertIn('$fs = "udp:__SBC_EDGE_IP__:5060";', rendered)
         self.assertIn('route(FIXTURE_TARGET);', rendered)

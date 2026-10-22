@@ -71,7 +71,7 @@ alias=127.0.0.1:{port}''')
     target = '''route[FIXTURE_TARGET] {
     $fs = "udp:__SBC_EDGE_IP__:5060";
     if ($ru =~ ";alias=") {
-        if (!($ru =~ ";alias=SOURCE~[0-9]{1,5}~1$") || $ru =~ ";alias=.*;alias=") {
+        if (!($ru =~ ";alias=SOURCE~[0-9]{1,5}~1(;ob)?$") || $ru =~ ";alias=.*;alias=") {
             sl_send_reply("403", "Fixture Alias Mismatch"); exit;
         }
         $fs = "udp:10.254.252.40:5070";
@@ -163,7 +163,9 @@ def simulator_control_post(port,path,value):
 
 def simulator_forwards(device):
     output = subprocess.check_output(['adb','-s',device,'forward','--list'],text=True,timeout=10)
-    return {tuple(line.split()) for line in output.splitlines() if len(line.split()) == 3}
+    rows = [tuple(line.split()) for line in output.splitlines() if line.strip()]
+    if any(len(row) != 3 for row in rows):raise RuntimeError('adb forward snapshot incomplete')
+    return set(rows)
 
 
 def cleanup_simulator_forward(device,port,before):
@@ -200,7 +202,7 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
         lines.put(None)
     threading.Thread(target=read_lines,daemon=True).start()
     peers = []; passed = False; transcript = []; control_port = None
-    device_port = None; forward_before = set()
+    device_port = None; forward_before = set(); allocation_attempted = False
     try:
         deadline = time.monotonic()+300
         while time.monotonic()<deadline:
@@ -219,6 +221,7 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
                     forward_before = simulator_forwards(device)
                     if any(row[0] == device and row[2] == f'tcp:{device_port}' for row in forward_before):
                         raise RuntimeError('fixture remote port already forwarded')
+                    allocation_attempted = True
                     control_port = int(subprocess.check_output(['adb','-s',device,'forward','tcp:0',f'tcp:{device_port}'],text=True,timeout=10).strip())
                     forward = f'tcp:{control_port}'
                     if (device,forward,f'tcp:{device_port}') not in simulator_forwards(device):
@@ -248,7 +251,7 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
             try:
                 if peer.poll() is None:peer.terminate();peer.communicate(timeout=5)
             except Exception as exc:cleanup_errors.append(type(exc).__name__)
-        if platform == 'android' and device_port is not None:
+        if platform == 'android' and allocation_attempted:
             try:cleanup_simulator_forward(device,device_port,forward_before)
             except Exception as exc:cleanup_errors.append(type(exc).__name__)
         try:
