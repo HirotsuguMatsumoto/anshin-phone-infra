@@ -19,11 +19,12 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
             root=Path(raw)
             env={**os.environ,'PHONE_SOFTPHONE_SIMULATOR':'android','PHONE_SOFTPHONE_DEVICE':'emulator-5558',
                  'ANSHIN_PHONE_SECRET_DIR':raw,'ANSHIN_PHONE_BACKEND_DIR':raw,'PUBLIC_SIP_IP':'192.0.2.1',
-                 'PUBLIC_RTP_IP':'192.0.2.2','CARRIER_HOST':'mock-carrier','CARRIER_SOURCE_CIDRS':'10.254.250.10/32',
+                 'PUBLIC_RTP_IP':'192.0.2.2','CARRIER_AUTH_MODE':'ip','CARRIER_HOST':'mock-carrier','CARRIER_SOURCE_CIDRS':'10.254.250.10/32',
                  'SMARTPHONE_SOURCE_CIDRS':'10.254.250.30/32','CARRIER_SIP_USERNAME':'fixture','TEL_DID':'0300000001','FAX_DID':'0300000002'}
             with mock.patch.object(sdk.subprocess,'run',return_value=mock.Mock(stdout='phone-softphone-20261022\nOK\n')):
                 override=sdk.prepare_simulator(test_phase1_sip_e2e.ROOT,root,env,root)
-            result=subprocess.run(test_phase1_sip_e2e.compose_args('phone-config-unit')+['--file',str(override),'config','--format','json'],env=env,capture_output=True,text=True,check=True)
+            result=subprocess.run(test_phase1_sip_e2e.compose_args('phone-config-unit')+['--file',str(override),'config','--format','json'],env=env,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stderr)
             ports=json.loads(result.stdout)['services']['kamailio']['ports']
             self.assertEqual(len(ports),1)
             self.assertEqual((ports[0]['host_ip'],ports[0]['published'],ports[0]['target'],ports[0]['protocol']),('127.0.0.1',env['PHONE_SIM_PORT'],5070,'udp'))
