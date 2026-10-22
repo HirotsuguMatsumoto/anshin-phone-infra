@@ -22,9 +22,9 @@ source_doc_ids:
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: [scripts/phone_postgresql_backup_adapter.py, scripts/production_runtime.py]
-contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml, docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml, docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml, docs/specs/changes/2026-10-22-own-call-history.change.yaml]
 test_paths: [scripts/build_check.sh]
-last_reviewed: "2026-10-21"
+last_reviewed: "2026-10-22"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -214,13 +214,13 @@ FAX一時TIFFはInfra `a00b0a4c3bb7631ac646e78b2ee55e4803d82860`でclaim別原�
 
 ### 2026-10-21 社内評価用Softphone実装
 
-sourceは`anshin-frontend-mobile/packages/anshin_phone_softphone`、generated APIは同repoの`packages/anshin_phone_api`と`spec/openapi.phone.json`。職員アプリのroute・bundle・root dependencyは変更しない。既存Phoneの組織一覧と端末設定GETだけを使い、tenant/roleとBearerを維持する。Core opaque session、管理用全tenant履歴、卸SIP資格を流用しない。
+sourceは`anshin-frontend-mobile/packages/anshin_phone_softphone`、generated APIは同repoの`packages/anshin_phone_api`と`spec/openapi.phone.json`。職員アプリのroute・bundle・root dependencyは変更しない。初期評価は組織一覧・端末設定の2 GETで、2026-10-22の本人承認後に本人履歴GETを追加する。tenant/roleとBearerを維持し、Core opaque session、管理用組織全体履歴、卸SIP資格を流用しない。
 
 共通PJSUA C coreを専用threadで実行し、Android JNI／iOS SPM経由のFlutter Method/EventChannelへ接続する。登録はengine/account世代、callはprocess単調IDへ束縛する。通話中切替・logoutを止め、停止は既通話を保って新規登録・発信を止める。SDK callbackからFlutterへ直接入らず、SDK destroyとthread joinを完了してprocess所有を解放する。
 
 評価構成はarm64・UDP・G.711・null audioで、マイク・speakerを開かない。TLS/SRTP・商用インターネット経路の完成を示さない。Android APKのlink、iOS Simulator app buildと案件専用Simulatorの実MethodChannel初期化・二重初期化拒否・destroy/reinitを確認した。既存隔離PBXのSoftphone分岐では同じ固定SDK/native coreでREGISTER、発着信、PCMU送受信packet、復号した非無音のcarrier 440Hz受信、transport再接続、停止資格の拒否、active復帰、revoke・旧call拒否を確認。これらは作業中検査であり、fixed SHAのcanonical・独立review・main統合の完了とは別に記録する。
 
-Web exampleは明示的な架空データで共有Flutter画面を確認する。native通話・Google認証・Pushの成功へ読み替えない。本人用履歴API、Phone mobile Auth client/redirect、secure storage正式binding、OS標準着信・Push、実機と背景/通信切替の受入は残件。商用配布のlicense/第三者条件・保守と配布方式を確定してから当該scopeを具体化する。基礎管理画面の本番公開を停止しない。
+Web exampleは明示的な架空データで共有Flutter画面を確認する。native通話・Google認証・Pushの成功へ読み替えない。本人用履歴は次節の承認済み変更束として実装・検証する。Phone mobile Auth client/redirect、secure storage正式binding、OS標準着信・Push、実機と背景/通信切替の受入は別残件。商用配布のlicense/第三者条件・保守と配布方式を確定してから当該scopeを具体化する。基礎管理画面の本番公開を停止しない。
 
 
 ### 2026-10-22 Simulatorの実SIP consumer検証
@@ -232,3 +232,13 @@ Mobile `2569456ad0643c4409ab8fb523d23841b726e9eb`はAndroid shared STLのpackagi
 Flutter integration consumerで実REGISTER、着信表示、応答、SDK接続、相手BYE、発信と終話、再登録、revokeと旧call拒否を検証する。media-activeはSDKのmedia準備状態であり、このSimulator laneのRTP到達・復号音声・マイク・Push・背景着信の合格を示さない。既存Linux core音声結果とも区別する。各実行結果は既存Task記録へ固定SHA付きで記録し、試験追加だけで成功済みとは扱わない。
 
 検証専用SBCだけを第三bridge `10.254.252.0/24`へ追加し、`10.254.252.40:5070`をMac loopbackの一件へ公開する。Dockerのinternal-only networkでは実公開bindingが成立しないためであり、carrier5060・PBX・DBの非公開境界を拡張しない。既存ownerのsubnet競合検査とproject cleanupにこのbridgeも含める。端末Contactの標準 `;ob` は一度だけ許可し、観測IP以外・不正port・重複aliasは拒否する。
+
+## 本人履歴の承認済み追加範囲（2026-10-22）
+
+ownerは、既存Mobile/Infra/Backendの専用worktreeで、通話時の本人帰属・追加migration・本人専用GET・generated consumerと履歴画面を実装する六項目を承認した。Macを唯一のwriterとし、政策支援4機能・本番Auth client・Push資格・実回線の開通を含めない。従来の社内評価UI確認を新しい履歴画面の受入へ流用しない。
+
+実PBXは音声routeを内部token付きPOSTで取得し、unique IDと同じauthorized endpoint行から本人帰属をDBへ固定してからDialする。FAXの既存route GETは維持する。着信のanswer hookだけで実応答endpointをCDRへ追加し、発信のcarrier endpointを本人内線として報告しない。spool/forwarderは既存経路を使い、APIの受理前にeventを破棄しない。
+
+Backendの2table追加は旧CDRを保持し、再割当・遅延・再送で帰属を変えない。Mobileは本人専用GETの結果だけを表示し、masked相手から再発信しない。履歴取得中も通話状態を維持し、組織切替・失効・logoutではcacheと旧応答を捨てる。管理向けの組織全体一覧は変更しない。
+
+既存SIP fixtureの発着信後、同じ実PostgreSQLのmigration head、PBX snapshot、CDRとproduction本人queryを検証する。これはnative認証を通したHTTP受入ではなく、認可wireの拒否条件はBackend既存suiteで別に検証する。実行・fixed SHA review・本人履歴UI確認・main統合・必要なDEPLOYを分けて記録し、sourceだけで本番反映済みとは扱わない。

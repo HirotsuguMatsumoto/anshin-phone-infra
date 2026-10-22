@@ -1,0 +1,128 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin-phone-infra.own-call-history.2026-10-22",
+  "title": "通話時点の本人帰属とSoftphone本人履歴",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "high",
+  "production_change": true,
+  "spec_ids": [
+    "anshin.governance.ai-driven-development",
+    "anshin.phone.backend.foundation-runtime-contract",
+    "anshin.phone.production-and-softphone-preparation"
+  ],
+  "repositories": [
+    "anshin-phone-backend",
+    "anshin-phone-infra",
+    "anshin-frontend-mobile"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/deploy/asterisk/config/extensions.conf.template",
+    "anshin-phone-infra/deploy/asterisk/scripts/pbx_event_spool.py",
+    "anshin-phone-infra/deploy/asterisk/scripts/pbx_management.py"
+  ],
+  "contract_paths": [
+    "anshin-phone-infra/docs/specs/changes/2026-10-22-own-call-history.change.yaml"
+  ],
+  "generated_artifacts": [],
+  "test_paths": [
+    "anshin-phone-infra/scripts/test_pbx_event_pipeline.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+    "anshin-phone-infra/scripts/build_check.sh"
+  ],
+  "invariants": [
+    "MAC instruction-origin only writer; own worktrees/DB/runtime; foreign assets untouched",
+    "No subsidy4, production native Auth/Push credentials, carrier activation/contact/order or new authority/KMS",
+    "Routing-time owner snapshot from same authorized endpoint rows, never current assignment or delayed event owner lookup",
+    "Context/participants and CDR/answer each atomic; retries preserve winner; legacy unknown audience excluded",
+    "Own API enforces active tenant+subject for every page, no admin all-history substitution; masked display only",
+    "Inbound called endpoint only; outbound carrier endpoint is never a personal answered extension",
+    "Existing admin history/fax route and employee root/bundle unchanged"
+  ],
+  "acceptance_criteria": [
+    "Existing Backend/Infra/Mobile canonical checks and fixed-SHA independent Sol/high review",
+    "Routing to actual SIP to durable event/CDR to production own-history query on actual migrated PostgreSQL",
+    "Reassignment/delayed or duplicate CDR/unknown owner/legacy/cursor and tenant-role boundary regressions",
+    "Generated3GET consumer binds header/Bearer/cursor; UI empty/error/retry/page and stale cache handling",
+    "Same-Mac local Docker actual UI, AI checks then owner final own-history UI confirmation before applicable integration/release"
+  ],
+  "out_of_scope": [
+    "Subsidy four business-workflow functions",
+    "Native production Auth client/session, provider Push credentials/resources and background receiving implementation",
+    "Real Cloco calls/order/contracts/email or Store/commercial SDK license decisions",
+    "Unrelated toolchain/dependency version changes, foreign runtime/DB/Simulator mutation"
+  ],
+  "rollout": {
+    "strategy": "additive-history",
+    "steps": [
+      "Qualify B/I routing/event and additive migration; synchronize OpenAPI and Mobile",
+      "Canonical and independent fixed review; owner affected UI acceptance",
+      "Rebase latest main, guarded nonforce integration, existing release classification and required DEPLOY"
+    ],
+    "triggers": [
+      "Owner six-item approval call_0b76a8829026483480874213a0cef9a7"
+    ]
+  },
+  "rollback": {
+    "strategy": "preserve-history-revert-consumer",
+    "steps": [
+      "Use previous consumer/backend via existing release rollback; retain additive tables and historical records",
+      "Do not drop CDR/snapshots as part of code rollback; do not alter existing Web Auth or other products"
+    ],
+    "triggers": [
+      "History authorization/privacy regression or failed release health"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "Existing test/release health results",
+      "History HTTP authorization/errors and missing event outcomes in existing diagnostics"
+    ],
+    "observation_period": "implementation and normal release acceptance"
+  },
+  "approvals": [
+    {
+      "role": "owner",
+      "approved_by": "松本 裕次",
+      "approved_at": "2026-10-22",
+      "approval_ref": "Mac chat01a13caf-c919-7f80-9fcf-a2093e1717e0, call_0b76a8829026483480874213a0cef9a7: この追加範囲で本人履歴を実装する"
+    }
+  ],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-backend": "task/phone-production-20261016",
+      "anshin-phone-infra": "task/phone-production-20261016",
+      "anshin-frontend-mobile": "task/phone-softphone-20261021"
+    },
+    "base_commits": {
+      "anshin-phone-backend": "b090368413e82b3f0477a7a60138ce4451fbf07a",
+      "anshin-phone-infra": "40bfcbee75ab73c60e14bf523a9cbc2240fc527f",
+      "anshin-frontend-mobile": "fddbdadb975c28232fd65faa47b144be0bb2c577"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/deploy/asterisk/config/extensions.conf.template",
+      "anshin-phone-infra/deploy/asterisk/scripts/pbx_event_spool.py",
+      "anshin-phone-infra/deploy/asterisk/scripts/pbx_management.py",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-22-own-call-history.change.yaml",
+      "anshin-phone-infra/scripts/test_pbx_event_pipeline.py",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra:deploy/asterisk/config/extensions.conf.template": "1af46054bc42248a10d7ea2decea341f7a91b277",
+      "anshin-phone-infra:deploy/asterisk/scripts/pbx_event_spool.py": "c0016e0e3e2b01d57e6b4b41638114a78a19e3f9",
+      "anshin-phone-infra:deploy/asterisk/scripts/pbx_management.py": "b5f6919aabc14ad2e60a1a783b4c7aff2120665e",
+      "anshin-phone-infra:docs/plans/telephony-platform/production-and-softphone-preparation.md": "9c0359b7bf8aaf89114fd2d4768f1c7bb06457cf",
+      "anshin-phone-infra:docs/specs/changes/2026-10-22-own-call-history.change.yaml": null,
+      "anshin-phone-infra:scripts/test_pbx_event_pipeline.py": "0c9b89e78ac8cb56ec33247255ae6d76eafd773c",
+      "anshin-phone-infra:scripts/test_phase1_sip_e2e.py": "98bd000aa5efd5ed32fdd35334fe4c82f88556aa"
+    },
+    "integration_order": [
+      "Backend/Infra event and DB contract, OpenAPI/generated consumer synchronized",
+      "Fixed checks/review and affected UI acceptance",
+      "Backend then Infra then Mobile guarded main integration; existing production release owner"
+    ]
+  }
+}

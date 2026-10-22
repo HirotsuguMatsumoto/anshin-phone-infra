@@ -594,6 +594,39 @@ def run_backup_restore(base: list[str], env: dict[str,str], directory: Path) -> 
         run(base + ["exec","-T","backend","rm","-rf",restore_root],env=env)
 
 
+def verify_personal_call_history(base, env):
+    # Read the actual migrated PostgreSQL/CDR through the production list
+    # function. Native Google authentication is a separate acceptance scope.
+    code = """
+from fastapi import Response
+from sqlalchemy import text
+from app.core.database import SessionLocal
+from app.api.dependencies import AuthenticatedUser, ManagementContext
+from app.api.management_routes import list_own_call_records
+with SessionLocal() as db:
+    assert db.scalar(text('SELECT version_num FROM alembic_version')) == '20261022_0003'
+    def own(subject):
+        return list_own_call_records(Response(), limit=50, cursor=None,
+            context=ManagementContext(AuthenticatedUser(subject,None,None),'anshin-phase1','phone-operator'),db=db)
+    page = own('phase1-phone-owner')
+    assert {'inbound','outbound'} <= {v.direction for v in page.items}
+    assert all('*' in v.remote_number_masked for v in page.items)
+    assert any(v.direction == 'inbound' and v.participation == 'answered' for v in page.items)
+    assert any(v.direction == 'outbound' and v.participation == 'outbound' for v in page.items)
+    assert own('another-subject').items == []
+print('PASS: actual PBX snapshots and PostgreSQL migration -> own-history query; unrelated subject denied; Auth not qualified')
+"""
+    deadline = time.monotonic() + 15
+    while True:
+        result = run(base + ["exec", "-T", "backend", "python", "-c", code], env=env, check=False)
+        if result.returncode == 0:
+            print(result.stdout, end="", flush=True)
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError("phase=personal-history state=failed expected=migrated-PBX-CDR-attribution\n" + result.stdout[-1800:])
+        time.sleep(.5)
+
+
 def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None = None) -> int:
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required")
@@ -731,7 +764,8 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 number = next(n for n in records if n["national_number"] == national_number)
                 backend_request(base, env, "PATCH", f"/api/v1/phone-numbers/{number['id']}", {"status": "testing"})
             endpoint = backend_request(base, env, "POST", "/api/v1/sip-endpoints", {
-                "tenant_id": "anshin-phase1", "extension": "2001", "display_name": "Isolated smartphone"})
+                "tenant_id": "anshin-phase1", "extension": "2001", "display_name": "Isolated smartphone",
+                "owner_subject": "phase1-phone-owner"})
             backend_request(base, env, "PATCH", f"/api/v1/sip-endpoints/{endpoint['id']}", {"status": "active"})
             assignment = backend_request(base, env, "POST", "/api/v1/phone-number-assignments", {
                 "tenant_id": "anshin-phase1", "phone_number_id": tel_number["id"], "sip_endpoint_id": endpoint["id"]})
@@ -752,9 +786,11 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 if env.get('PHONE_SOFTPHONE_SIMULATOR'):
                     from softphone_sip_fixture import run_simulator_flow
                     run_simulator_flow(base, env, endpoint, configuration, run, exec_background, finish)
+                    verify_personal_call_history(base, env)
                     return 0
                 from softphone_sip_fixture import run_softphone_flow
                 run_softphone_flow(base, env, endpoint, configuration, backend_request, run, exec_background, finish)
+                verify_personal_call_history(base, env)
                 return 0
 
             if fixture_only == "fax":
@@ -929,6 +965,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             if not all("*" in str(record["remote_number_masked"]) for record in call_records):
                 raise RuntimeError("unmasked call record reached the backend")
             print("PASS: Asterisk call events -> durable spool -> Backend")
+            verify_personal_call_history(base, env)
             observed = run(base + ["logs","--no-color","asterisk"],env=env).stdout
             media = re.findall(r"phase=voice-media direction=(inbound|outbound) rx=([0-9]+) tx=([0-9]+)",observed)
             if not all(any(d == direction and int(rx)>=20 and int(tx)>=20 for d,rx,tx in media) for direction in ("inbound","outbound")):

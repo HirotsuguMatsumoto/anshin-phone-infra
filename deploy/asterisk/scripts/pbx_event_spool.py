@@ -70,9 +70,9 @@ def build_event(arguments: list[str]) -> dict[str, object]:
     if not arguments:
         raise ValueError("event kind is required")
     kind = arguments[0]
-    if kind == "call" and len(arguments) == 10:
-        _, tenant_id, national_number, unique_id, direction, remote, disposition, started, answered, ended = arguments
-        return {
+    if kind == "call" and len(arguments) in {10, 11}:
+        _, tenant_id, national_number, unique_id, direction, remote, disposition, started, answered, ended = arguments[:10]
+        event = {
             "kind": "calls",
             "payload": {
                 "tenant_id": tenant_id,
@@ -86,6 +86,11 @@ def build_event(arguments: list[str]) -> dict[str, object]:
                 "ended_at": normalized_timestamp(ended),
             },
         }
+        if len(arguments) == 11 and arguments[10] != "-":
+            if direction != "inbound" or not re.fullmatch(r"[0-9]{3,8}", arguments[10]):
+                raise ValueError("answer endpoint must be an inbound extension")
+            event["payload"]["answered_extension"] = arguments[10]
+        return event
     if kind == "fax" and len(arguments) == 9:
         _, tenant_id, national_number, unique_id, direction, remote, status, occurred, file_path = arguments
         reference = None

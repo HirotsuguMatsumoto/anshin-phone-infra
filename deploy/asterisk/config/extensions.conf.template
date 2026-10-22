@@ -16,7 +16,7 @@ exten => __TEL_DID__,1,NoOp(Anshin Phone inbound TEL)
  same => n,Set(PHASE1_REMOTE_MASKED=${CALLERID(num):0:3}****${CALLERID(num):-4})
  same => n,Set(PHASE1_STARTED_AT=${STRFTIME(${EPOCH},,%Y-%m-%dT%H:%M:%SZ)})
  same => n,Set(CHANNEL(hangup_handler_push)=phase1-hangup,s,1)
- same => n,AGI(pbx_management.py,inbound,${EXTEN})
+ same => n,AGI(pbx_management.py,inbound,${EXTEN},${UNIQUEID})
  same => n,GotoIf($["${PHONE_ROUTE_ALLOWED}"!="1"]?denied)
  same => n,Dial(${PHONE_ROUTE_TARGETS},30,U(phase1-answer))
  same => n(denied),Hangup(21)
@@ -58,7 +58,7 @@ exten => _X.,1,NoOp(Reject unsupported outbound destination)
 
 [outbound-carrier]
 exten => s,1,NoOp(Anshin Phone outbound TEL)
- same => n,AGI(pbx_management.py,outbound,${CHANNEL(endpoint)})
+ same => n,AGI(pbx_management.py,outbound,${CHANNEL(endpoint)},${UNIQUEID})
  same => n,GotoIf($["${PHONE_ROUTE_ALLOWED}"!="1"]?denied)
  same => n,Set(PHASE1_DIRECTION=outbound)
  same => n,Set(PHASE1_DID=${PHONE_ROUTE_DID})
@@ -73,6 +73,7 @@ exten => s,1,NoOp(Anshin Phone outbound TEL)
 
 [phase1-answer]
 exten => s,1,Set(MASTER_CHANNEL(PHASE1_ANSWERED_AT)=${STRFTIME(${EPOCH},,%Y-%m-%dT%H:%M:%SZ)})
+ same => n,ExecIf($["${MASTER_CHANNEL(PHASE1_DIRECTION)}"="inbound"]?Set(MASTER_CHANNEL(PHASE1_ANSWERED_EXTENSION)=${CHANNEL(endpoint)}))
  same => n,Return()
 
 [phase1-hangup]
@@ -80,7 +81,7 @@ exten => s,1,NoOp(Phase1 call ended uniqueid=${UNIQUEID} disposition=${DIALSTATU
  same => n,NoOp(phase=voice-media direction=${PHASE1_DIRECTION} rx=${CHANNEL(rtcp,rxcount,audio)} tx=${CHANNEL(rtcp,txcount,audio)})
  same => n,Set(PHASE1_DISPOSITION=${IF($["${DIALSTATUS}"=""]?UNKNOWN:${DIALSTATUS})})
  same => n,Set(PHASE1_ENDED_AT=${STRFTIME(${EPOCH},,%Y-%m-%dT%H:%M:%SZ)})
- same => n,AGI(pbx_event_spool.py,call,${TENANT_ID},${PHASE1_DID},${UNIQUEID},${PHASE1_DIRECTION},${PHASE1_REMOTE_MASKED},${PHASE1_DISPOSITION},${PHASE1_STARTED_AT},${IF($["${PHASE1_ANSWERED_AT}"=""]?-:${PHASE1_ANSWERED_AT})},${PHASE1_ENDED_AT})
+ same => n,AGI(pbx_event_spool.py,call,${TENANT_ID},${PHASE1_DID},${UNIQUEID},${PHASE1_DIRECTION},${PHASE1_REMOTE_MASKED},${PHASE1_DISPOSITION},${PHASE1_STARTED_AT},${IF($["${PHASE1_ANSWERED_AT}"=""]?-:${PHASE1_ANSWERED_AT})},${PHASE1_ENDED_AT},${IF($["${PHASE1_ANSWERED_EXTENSION}"=""]?-:${PHASE1_ANSWERED_EXTENSION})})
  same => n,Return()
 
 [fax-dispatch]

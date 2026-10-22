@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
+import io
+from contextlib import redirect_stdout
 import hashlib
 import json
 import os
@@ -70,6 +72,50 @@ class EventHandler(BaseHTTPRequestHandler):
 
 
 class PbxEventPipelineTest(unittest.TestCase):
+    def test_voice_route_captures_identity_before_dial_and_fax_stays_read_only(self):
+        for mode, identity, extra in [("inbound", "0300000001", ["pbx-1"]),
+                                      ("outbound", "2001", ["pbx-2"]),
+                                      ("fax", "0300000002", [])]:
+            with patch.dict(os.environ, {"ANSHIN_PHONE_TENANT_ID": "tenant"}), \
+                    patch.object(sys, "stdin", io.StringIO("\n" + "200 result=1\n" * 3)), \
+                    patch.object(management, "request", return_value={
+                        "tenant_id": "tenant", "allowed": True,
+                        "national_number": identity if mode != "outbound" else "0300000001",
+                        "extensions": [] if mode == "fax" else ["2001"],
+                    }) as request, redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(management.authorize([mode, identity, *extra]), 0)
+                self.assertIn('PHONE_ROUTE_ALLOWED "1"', output.getvalue())
+                if mode == "fax":
+                    self.assertTrue(request.call_args.args[0].startswith("/api/v1/pbx-route?"))
+                    self.assertEqual(len(request.call_args.args), 1)
+                else:
+                    self.assertEqual(request.call_args.args[0], "/api/v1/pbx-route")
+                    self.assertEqual(request.call_args.args[1]["pbx_unique_id"], extra[0])
+
+    def test_voice_route_without_snapshot_or_backend_failure_never_dials(self):
+        for arguments in [["outbound", "2001"], ["inbound", "0300000001", "bad/id"],
+                          ["inbound", "0300000001", "pbx-1"]]:
+            with patch.dict(os.environ, {"ANSHIN_PHONE_TENANT_ID": "tenant"}), \
+                    patch.object(sys, "stdin", io.StringIO("\n" + "200 result=1\n" * 3)), \
+                    patch.object(management, "request", side_effect=OSError("synthetic")) as request, \
+                    redirect_stdout(io.StringIO()) as output:
+                management.authorize(arguments)
+                self.assertIn('PHONE_ROUTE_ALLOWED "0"', output.getvalue())
+                if len(arguments) < 3 or "/" in arguments[2]:
+                    request.assert_not_called()
+
+    def test_answer_attribution_only_accepts_inbound_extensions(self):
+        args = ["call", "tenant", "0300000001", "pbx-1", "inbound",
+                "090****0000", "ANSWER", "2026-10-22T00:00:00Z",
+                "2026-10-22T00:00:10Z", "2026-10-22T00:01:00Z"]
+        self.assertEqual(spool.build_event(args + ["2001"])["payload"]["answered_extension"], "2001")
+        self.assertNotIn("answered_extension", spool.build_event(args + ["-"])["payload"])
+        args[4] = "outbound"
+        self.assertNotIn("answered_extension", spool.build_event(args + ["-"])["payload"])
+        for extension in ["2001", "carrier-endpoint"]:
+            with self.assertRaises(ValueError):
+                spool.build_event(args + [extension])
+
     def setUp(self) -> None:
         EventHandler.received.clear()
         EventHandler.response_hook = None
@@ -104,6 +150,7 @@ class PbxEventPipelineTest(unittest.TestCase):
                 "2026-08-21T00:00:00Z",
                 "-",
                 "2026-08-21T00:01:00Z",
+                "2001",
             ]
         )
         with tempfile.TemporaryDirectory(prefix="anshin-phone-event-test-") as temp_dir:
@@ -132,6 +179,7 @@ class PbxEventPipelineTest(unittest.TestCase):
             self.assertTrue((root / "sent" / path.name).exists())
             self.assertEqual(EventHandler.received[0]["path"], "/api/v1/pbx-events/calls")
             self.assertEqual(EventHandler.received[0]["token"], "test-internal-token")
+            self.assertEqual(EventHandler.received[0]["body"]["answered_extension"], "2001")
 
     def test_fax_reference_contains_only_spool_basename(self) -> None:
         event = spool.build_event(

@@ -154,14 +154,21 @@ def authorize(arguments: list[str]) -> int:
         pass
     allowed, did, targets = "0", "", ""
     try:
-        mode, identity = arguments
+        mode, identity = arguments[:2]
         if mode not in {"inbound", "outbound", "fax"} or not re.fullmatch(r"[0-9]{3,11}", identity):
             raise ValueError("invalid route identity")
         tenant = os.environ["ANSHIN_PHONE_TENANT_ID"]
         params = {"tenant_id": tenant, "extension" if mode == "outbound" else "national_number": identity}
         if mode == "fax":
+            if len(arguments) != 2:
+                raise ValueError("invalid fax route arguments")
             params["fax"] = "true"
-        value = request("/api/v1/pbx-route?" + urllib.parse.urlencode(params))
+            value = request("/api/v1/pbx-route?" + urllib.parse.urlencode(params))
+        else:
+            if len(arguments) != 3 or not re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", arguments[2]):
+                raise ValueError("PBX call identity is required")
+            params["pbx_unique_id"] = arguments[2]
+            value = request("/api/v1/pbx-route", params)
         if value.get("tenant_id") != tenant or not isinstance(value.get("allowed"), bool):
             raise ValueError("PBX route response mismatch")
         if value["allowed"]:
