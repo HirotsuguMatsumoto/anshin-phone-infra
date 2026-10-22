@@ -12,6 +12,37 @@ import test_phase1_sip_e2e
 
 
 class Phase1SipE2ECleanupTest(unittest.TestCase):
+    def test_simulator_control_ignores_proxy_and_rejects_redirect(self):
+        import softphone_sip_fixture as sdk
+        import http.server,threading,os,urllib.error
+        class Handler(http.server.BaseHTTPRequestHandler):
+            redirect=False
+            def do_POST(self):
+                self.rfile.read(int(self.headers['Content-Length']))
+                self.send_response(302 if self.redirect else 200)
+                if self.redirect:self.send_header('Location','http://127.0.0.1:1/external')
+                self.end_headers()
+            def log_message(self,*args):pass
+        server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler)
+        thread=threading.Thread(target=server.serve_forever,daemon=True);thread.start()
+        try:
+            with mock.patch.dict(os.environ,{'http_proxy':'http://127.0.0.1:1','HTTP_PROXY':'http://127.0.0.1:1','no_proxy':'','NO_PROXY':''}):
+                sdk.simulator_control_post(server.server_port,'config',{'fixture':'synthetic'})
+                Handler.redirect=True
+                with self.assertRaises(urllib.error.HTTPError) as error:
+                    sdk.simulator_control_post(server.server_port,'config',{'fixture':'synthetic'})
+                self.assertEqual(error.exception.code,302)
+        finally:server.shutdown();server.server_close();thread.join(timeout=2)
+
+    def test_simulator_forward_response_loss_cleans_only_new_exact_tuple(self):
+        import softphone_sip_fixture as sdk
+        old=('emulator-5558','tcp:10001','tcp:10002')
+        new=('emulator-5558','tcp:10003','tcp:10004')
+        foreign=('emulator-5556','tcp:10005','tcp:10004')
+        with mock.patch.object(sdk,'simulator_forwards',side_effect=[{old,new,foreign},{old,foreign}]),mock.patch.object(sdk.subprocess,'run') as run:
+            sdk.cleanup_simulator_forward('emulator-5558',10004,{old})
+        self.assertEqual(run.call_args.args[0],['adb','-s','emulator-5558','forward','--remove','tcp:10003'])
+
     def test_simulator_compose_replaces_mock_port_reset_with_loopback_binding(self):
         import softphone_sip_fixture as sdk
         import tempfile,os,json

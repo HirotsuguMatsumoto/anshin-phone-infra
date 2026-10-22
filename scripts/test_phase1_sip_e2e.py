@@ -96,7 +96,7 @@ def ensure_mock_networks_available(env: dict[str, str]) -> None:
     if not identifiers:
         return
     existing = json.loads(run(["docker", "network", "inspect", *identifiers], env=env).stdout)
-    wanted = [ipaddress.ip_network(subnet) for subnet in MOCK_SUBNETS]
+    wanted = [ipaddress.ip_network(subnet) for subnet in MOCK_SUBNETS + (('10.254.252.0/24',) if env.get('PHONE_SOFTPHONE_SIMULATOR') else ())]
     for network in existing:
         for entry in network.get("IPAM", {}).get("Config") or []:
             if not entry.get("Subnet"):

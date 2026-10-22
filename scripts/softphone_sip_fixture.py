@@ -48,7 +48,7 @@ def simulator_template(root, host, port, source):
     }
     if (is_method("CANCEL"))'''.replace('SOURCE/32', source+'/32'))
     template = template.replace('alias=kamailio:5060', f'''alias=kamailio:5060
-listen=udp:__SBC_EDGE_IP__:5070 advertise {host}:{port}
+listen=udp:10.254.252.40:5070 advertise {host}:{port}
 alias={host}:{port}
 alias=127.0.0.1:{port}''')
     template = template.replace('    if (!(src_ip __TRUSTED_SOURCE_CONDITION__))', '''    if ($Rp == 5070 && src_ip == SOURCE/32) {
@@ -74,7 +74,7 @@ alias=127.0.0.1:{port}''')
         if (!($ru =~ ";alias=SOURCE~[0-9]{1,5}~1$") || $ru =~ ";alias=.*;alias=") {
             sl_send_reply("403", "Fixture Alias Mismatch"); exit;
         }
-        $fs = "udp:__SBC_EDGE_IP__:5070";
+        $fs = "udp:10.254.252.40:5070";
         handle_ruri_alias();
         if ($dp < 1 || $dp > 65535) { sl_send_reply("400", "Fixture Port Invalid"); exit; }
     }
@@ -113,7 +113,7 @@ def prepare_simulator(root, directory, env, mobile):
     env['PHONE_SIM_PORT'] = str(port)
     env['PHONE_SIM_HOST'] = host
     override = directory/'softphone-compose.yaml'
-    override.write_text('services:\n  kamailio:\n    ports: !override\n      - '+json.dumps(f'127.0.0.1:{port}:5070/udp')+'\n    volumes:\n      - '+json.dumps(f'{path}:/opt/anshin-phone/templates/kamailio.cfg.template:ro')+'\n')
+    override.write_text('services:\n  kamailio:\n    ports: !override\n      - '+json.dumps(f'127.0.0.1:{port}:5070/udp')+'\n    volumes:\n      - '+json.dumps(f'{path}:/opt/anshin-phone/templates/kamailio.cfg.template:ro')+'\n    networks:\n      simulator-loopback:\n        ipv4_address: 10.254.252.40\nnetworks:\n  simulator-loopback:\n    driver: bridge\n    ipam:\n      config:\n        - subnet: 10.254.252.0/24\n')
     return override
 
 
@@ -149,12 +149,38 @@ def stop_simulator_process(process):
     process.wait(timeout=5)
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def simulator_control_post(port,path,value):
+    request = urllib.request.Request(f'http://127.0.0.1:{port}/{path}',data=json.dumps(value).encode(),headers={'Content-Type':'application/json'},method='POST')
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}),_NoRedirect())
+    with opener.open(request,timeout=5) as response:
+        if response.status != 200:raise RuntimeError('fixture control rejected')
+
+
+def simulator_forwards(device):
+    output = subprocess.check_output(['adb','-s',device,'forward','--list'],text=True,timeout=10)
+    return {tuple(line.split()) for line in output.splitlines() if len(line.split()) == 3}
+
+
+def cleanup_simulator_forward(device,port,before):
+    # The remote port belongs to this one test listener. Snapshot comparison
+    # also recovers a successful allocation whose adb response was lost.
+    created = {row for row in simulator_forwards(device)-before if row[0] == device and row[2] == f'tcp:{port}'}
+    for _,local,_ in created:
+        subprocess.run(['adb','-s',device,'forward','--remove',local],capture_output=True,check=True,timeout=10)
+    if created & simulator_forwards(device):raise RuntimeError('owned adb forward remains')
+
+
 def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finish):
     platform, device = env['PHONE_SOFTPHONE_SIMULATOR'], env['PHONE_SOFTPHONE_DEVICE']
     port = int(env['PHONE_SIM_PORT'])
     binding = run(base+['port','--protocol','udp','kamailio','5070'],env=env).stdout.strip()
     if binding != f'127.0.0.1:{port}':
-        raise RuntimeError('fixture actual binding disagrees with advertised port')
+        raise RuntimeError(f'fixture binding mismatch: actual={binding!r} expected=127.0.0.1:{port}')
     source = observe_source(port)
     template = Path(env['PHONE_SIM_TEMPLATE'])
     template.chmod(0o600)
@@ -173,11 +199,8 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
         for line in process.stdout:lines.put(line)
         lines.put(None)
     threading.Thread(target=read_lines,daemon=True).start()
-    peers = []; passed = False; transcript = []; control_port = None; forward = None
-    def control(path, value):
-        request = urllib.request.Request(f'http://127.0.0.1:{control_port}/{path}',data=json.dumps(value).encode(),headers={'Content-Type':'application/json'},method='POST')
-        with urllib.request.urlopen(request,timeout=5) as response:
-            if response.status != 200:raise RuntimeError('fixture control rejected')
+    peers = []; passed = False; transcript = []; control_port = None
+    device_port = None; forward_before = set()
     try:
         deadline = time.monotonic()+300
         while time.monotonic()<deadline:
@@ -193,19 +216,21 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
                 if not isinstance(device_port,int) or not 1024 <= device_port <= 65535:
                     raise RuntimeError('fixture control port invalid')
                 if platform == 'android':
+                    forward_before = simulator_forwards(device)
+                    if any(row[0] == device and row[2] == f'tcp:{device_port}' for row in forward_before):
+                        raise RuntimeError('fixture remote port already forwarded')
                     control_port = int(subprocess.check_output(['adb','-s',device,'forward','tcp:0',f'tcp:{device_port}'],text=True,timeout=10).strip())
                     forward = f'tcp:{control_port}'
-                    mappings = subprocess.check_output(['adb','-s',device,'forward','--list'],text=True,timeout=10)
-                    if f'{device} {forward} tcp:{device_port}' not in mappings:
+                    if (device,forward,f'tcp:{device_port}') not in simulator_forwards(device):
                         raise RuntimeError('owned loopback forward mismatch')
                 else:control_port = device_port
-                control('config',{'endpoint_id':endpoint['id'],'server':f"{env['PHONE_SIM_HOST']}:{port}",'username':'2001','password':configuration['endpoints'][0]['password']})
+                simulator_control_post(control_port,'config',{'endpoint_id':endpoint['id'],'server':f"{env['PHONE_SIM_HOST']}:{port}",'username':'2001','password':configuration['endpoints'][0]['password']})
             elif phase == 'registered':
                 peers.append(exec_background(base,'mock-carrier',['sipp','-nostdin','10.254.250.40:5060','-sf','/scenarios/carrier_inbound_uac.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','35s'],env))
             elif phase == 'outbound_ready':
                 finish(peers[-1],'Simulator inbound carrier')
                 peers.append(exec_background(base,'mock-carrier',['sipp','-nostdin','-sf','/scenarios/carrier_outbound_uas.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','35s'],env))
-                time.sleep(.5); control('go',{})
+                time.sleep(.5); simulator_control_post(control_port,'go',{})
             elif phase == 'passed':passed = True
         process.wait(timeout=15)
         if not passed or process.returncode:
@@ -223,8 +248,8 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
             try:
                 if peer.poll() is None:peer.terminate();peer.communicate(timeout=5)
             except Exception as exc:cleanup_errors.append(type(exc).__name__)
-        if forward:
-            try:subprocess.run(['adb','-s',device,'forward','--remove',forward],capture_output=True,check=True,timeout=10)
+        if platform == 'android' and device_port is not None:
+            try:cleanup_simulator_forward(device,device_port,forward_before)
             except Exception as exc:cleanup_errors.append(type(exc).__name__)
         try:
             if platform == 'android':
