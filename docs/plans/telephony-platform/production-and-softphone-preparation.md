@@ -230,3 +230,5 @@ Mobile `2569456ad0643c4409ab8fb523d23841b726e9eb`はAndroid shared STLのpackagi
 次の入力は既存 `scripts/test_phase1_sip_e2e.py --fixture softphone`へ `PHONE_SOFTPHONE_SIMULATOR=android|ios` と当該Task専用 `PHONE_SOFTPHONE_DEVICE` を渡す。既存lease・一意Compose project・Backend fixture・SIPp carrier・cleanupを再利用する。Mac loopbackだけの5070/UDP公開bindingを実観測値と照合し、無資格OPTIONSで観測したNAT一件だけをfixture側で許可する。Digest認証はPBXが所有し、資格は試験中だけの端末loopback HTTPへmemory上で渡し、argv・log・端末fileへ保存しない。Androidは当該serialへ割り当てた一時ADB forwardだけを使い、終了時に回収する。production template・carrier5060・DB・他Simulatorは変更しない。
 
 Flutter integration consumerで実REGISTER、着信表示、応答、SDK接続、相手BYE、発信と終話、再登録、revokeと旧call拒否を検証する。media-activeはSDKのmedia準備状態であり、このSimulator laneのRTP到達・復号音声・マイク・Push・背景着信の合格を示さない。既存Linux core音声結果とも区別する。各実行結果は既存Task記録へ固定SHA付きで記録し、試験追加だけで成功済みとは扱わない。
+
+検証専用SBCだけを第三bridge `10.254.252.0/24`へ追加し、`10.254.252.40:5070`をMac loopbackの一件へ公開する。Dockerのinternal-only networkでは実公開bindingが成立しないためであり、carrier5060・PBX・DBの非公開境界を拡張しない。既存ownerのsubnet競合検査とproject cleanupにこのbridgeも含める。端末Contactの標準 `;ob` は一度だけ許可し、観測IP以外・不正port・重複aliasは拒否する。

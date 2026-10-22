@@ -37,7 +37,8 @@
     "anshin-frontend-mobile/scripts/test_phone_openapi_profile.py",
     "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
     "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
-    "anshin-frontend-mobile/packages/anshin_phone_softphone/example/integration_test/sip_simulator_test.dart"
+    "anshin-frontend-mobile/packages/anshin_phone_softphone/example/integration_test/sip_simulator_test.dart",
+    "anshin-phone-infra/scripts/test_kamailio_render_config.py"
   ],
   "invariants": [
     "sole MAC writer, no foreign runtime/DB/simulator/dirty changes",
@@ -108,7 +109,8 @@
       "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml",
       "anshin-frontend-mobile/packages/anshin_phone_softphone",
       "anshin-frontend-mobile/packages/anshin_phone_api",
-      "anshin-frontend-mobile/scripts/openapi_pull.sh"
+      "anshin-frontend-mobile/scripts/openapi_pull.sh",
+      "anshin-phone-infra/scripts/test_kamailio_render_config.py"
     ],
     "pre_edit_blob_ids": {
       "anshin-phone-infra:scripts/test_phase1_sip_e2e.py": "03b6fa370f27b9e9e82b70381abc7962ccdfd07d",
@@ -117,7 +119,8 @@
       "anshin-phone-infra:tests/mock-sip/Dockerfile": "f69996e8ec44413c1fda3a82fccd67f6fc9451ca",
       "anshin-phone-infra:tests/mock-sip/softphone": null,
       "anshin-phone-infra:docs/plans/telephony-platform/production-and-softphone-preparation.md": "e4392fce868d9a79a2ac71f7c67676428cdba4c8",
-      "anshin-phone-infra:docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml": null
+      "anshin-phone-infra:docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml": null,
+      "anshin-phone-infra:scripts/test_kamailio_render_config.py": "763ca01125b70023238657869602a93f4e8cc86e"
     },
     "integration_order": [
       "anshin-frontend-mobile",
