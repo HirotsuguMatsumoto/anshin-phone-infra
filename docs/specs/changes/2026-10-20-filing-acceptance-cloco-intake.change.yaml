@@ -15,7 +15,9 @@
     "anshin-corporate-strategy",
     "anshin-phone-infra"
   ],
-  "code_paths": [],
+  "code_paths": [
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md"
+  ],
   "contract_paths": [
     "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
     "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",

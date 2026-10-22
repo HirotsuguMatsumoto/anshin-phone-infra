@@ -28,6 +28,7 @@ invariants:
   - FAX履歴・監査・job行と既存S3標準31日を変更しない
   - local fixtureの秒数設定は本番へ流用しない
   - 通信停止中も期限切れ原本の削除は実行できる
+  - concurrencyは2026-10-22の既存記録のschema同期範囲を示す。過去の実行環境や未記録の承認・再検証を遡って証明しない
 acceptance_criteria:
   - 同じ生成時刻から翌月5日00時JSTをUTC保存する
   - 年越し・閏年・JST月境界・期限直前直後を既存suiteで確認する
@@ -62,3 +63,15 @@ monitoring:
     - maintenanceの成功状態と削除件数のみ。原本・資格を出力しない
   observation_period: 本番定期実行と復旧確認まで
 approvals: []
+concurrency:
+  strategy: isolated-worktree
+  branches:
+    anshin-phone-infra: task/phone-production-20261016
+  base_commits:
+    anshin-phone-infra: a1b522993861a0d0edab5baed2a5b45c87cc9524
+  integration_order:
+  - anshin-phone-infra
+  owned_paths:
+  - anshin-phone-infra/docs/specs/changes/2026-10-16-fax-calendar-retention.change.yaml
+  pre_edit_blob_ids:
+    anshin-phone-infra/docs/specs/changes/2026-10-16-fax-calendar-retention.change.yaml: 075fc85af63f6fd4891aabd67003e7937e4cecb0

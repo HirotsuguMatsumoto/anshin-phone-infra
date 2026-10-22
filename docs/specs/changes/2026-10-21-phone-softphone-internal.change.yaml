@@ -67,12 +67,18 @@
       "canonical/fixed review/main integration",
       "owner same-Mac local Docker UI final review",
       "separate concrete commercial/Auth/Push/device acceptance scope"
+    ],
+    "triggers": [
+      "既存社内評価scopeの本人承認。商用配布・本番Auth・Pushの許可ではない"
     ]
   },
   "rollback": {
     "strategy": "stop-independent-package-adoption",
     "steps": [
       "normal Git revert within scope; no production/employee runtime mutation"
+    ],
+    "triggers": [
+      "社内評価package又は隔離fixtureの受入不成立"
     ]
   },
   "monitoring": {
@@ -84,10 +90,30 @@
     "observation_period": "internal qualification"
   },
   "approvals": [
-    "2026-10-21 owner UI section4 preapproval",
-    "2026-10-21 owner six-item internal implementation scope approval",
-    "2026-10-22 owner requires local Simulators and native incoming qualification",
-    "2026-10-22 owner actual UI acceptance: display and operation have no issue"
+    {
+      "role": "owner",
+      "approved_by": "松本 裕次",
+      "approved_at": "2026-10-21",
+      "approval_ref": "Owner reply call_094710df4bee4b9680258494f4e3eaf8: この画面・操作設計を承認する"
+    },
+    {
+      "role": "owner",
+      "approved_by": "松本 裕次",
+      "approved_at": "2026-10-21",
+      "approval_ref": "Owner reply call_af2005a35685471d89b510f44ebb7696: この追加実装範囲で進める"
+    },
+    {
+      "role": "owner",
+      "approved_by": "松本 裕次",
+      "approved_at": "2026-10-22",
+      "approval_ref": "Owner reply call_e21acdb0268442e1bf338dcf176556f9: android/iphone は ローカルのシミュレーターを利用する必要がある"
+    },
+    {
+      "role": "owner",
+      "approved_by": "松本 裕次",
+      "approved_at": "2026-10-22",
+      "approval_ref": "Owner reply call_0091dc725ed24a279324da4271392c80: 表示・操作に問題なし"
+    }
   ],
   "concurrency": {
     "strategy": "isolated-worktree",

@@ -76,6 +76,8 @@ monitoring:
   observation_period: 本番定期処理・復旧受入まで
 approvals: []
 concurrency:
+  integration_order:
+    - anshin-phone-infra
   strategy: isolated-worktree
   branches:
     anshin-phone-infra: task/phone-production-20261016

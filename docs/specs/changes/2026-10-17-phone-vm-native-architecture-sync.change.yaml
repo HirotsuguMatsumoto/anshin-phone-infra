@@ -14,7 +14,9 @@
   "repositories": [
     "anshin-phone-infra"
   ],
-  "code_paths": [],
+  "code_paths": [
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md"
+  ],
   "contract_paths": [
     "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
     "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml"
@@ -79,6 +81,9 @@
     ],
     "pre_edit_blob_ids": {
       "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "df6ad3c0d995941f6207e4155d03f76b91e10c17"
-    }
+    },
+    "integration_order": [
+      "anshin-phone-infra"
+    ]
   }
 }

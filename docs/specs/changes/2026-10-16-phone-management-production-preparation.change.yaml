@@ -34,6 +34,7 @@ invariants:
   - 本番FAX保持期間をlocalの24時間defaultから確定しない
   - 通信停止中は既存FAX jobを保持し新規送信とdispatchを拒否する
   - production adapterのblockedを維持し未実施を成功扱いしない
+  - concurrencyは2026-10-22の既存記録のschema同期範囲を示す。過去の実行環境や未記録の承認・再検証を遡って証明しない
 acceptance_criteria:
   - 既存render suiteで並列build contextと明示override及びproduction build不在を確認できる
   - 既存suiteでcarrier入力なしのproduction Composeをrenderできる
@@ -64,3 +65,15 @@ monitoring:
     - 既存APIとComposeのcanonical結果
   observation_period: 本番adapterの受入まで
 approvals: []
+concurrency:
+  strategy: isolated-worktree
+  branches:
+    anshin-phone-infra: task/phone-production-20261016
+  base_commits:
+    anshin-phone-infra: a1b522993861a0d0edab5baed2a5b45c87cc9524
+  integration_order:
+  - anshin-phone-infra
+  owned_paths:
+  - anshin-phone-infra/docs/specs/changes/2026-10-16-phone-management-production-preparation.change.yaml
+  pre_edit_blob_ids:
+    anshin-phone-infra/docs/specs/changes/2026-10-16-phone-management-production-preparation.change.yaml: f089a568cfa5da4af71e65112454216a9fe4c990

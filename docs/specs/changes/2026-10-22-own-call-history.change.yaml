@@ -22,7 +22,15 @@
     "anshin-phone-infra/deploy/asterisk/scripts/pbx_management.py"
   ],
   "contract_paths": [
-    "anshin-phone-infra/docs/specs/changes/2026-10-22-own-call-history.change.yaml"
+    "anshin-phone-infra/docs/specs/changes/2026-10-22-own-call-history.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-private-runtime.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-fax-retention-ms1.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/2026-10-16-phone-management-production-preparation.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/2026-10-16-fax-calendar-retention.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/2026-10-16-phone-production-runtime.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml"
   ],
   "generated_artifacts": [],
   "test_paths": [
@@ -37,7 +45,8 @@
     "Context/participants and CDR/answer each atomic; retries preserve winner; legacy unknown audience excluded",
     "Own API enforces active tenant+subject for every page, no admin all-history substitution; masked display only",
     "Inbound called endpoint only; outbound carrier endpoint is never a personal answered extension",
-    "Existing admin history/fax route and employee root/bundle unchanged"
+    "Existing admin history/fax route and employee root/bundle unchanged",
+    "既存Phone change contractのschema同期はmetadata限定。旧承認の意味・runtime実績を変更せず、当時未確認だった状態を再検証済みへ変更しない"
   ],
   "acceptance_criteria": [
     "Existing Backend/Infra/Mobile canonical checks and fixed-SHA independent Sol/high review",
@@ -108,7 +117,15 @@
       "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
       "anshin-phone-infra/docs/specs/changes/2026-10-22-own-call-history.change.yaml",
       "anshin-phone-infra/scripts/test_pbx_event_pipeline.py",
-      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py"
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+      "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-private-runtime.change.yaml",
+      "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml",
+      "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml",
+      "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-fax-retention-ms1.change.yaml",
+      "anshin-phone-infra/docs/specs/changes/2026-10-16-phone-management-production-preparation.change.yaml",
+      "anshin-phone-infra/docs/specs/changes/2026-10-16-fax-calendar-retention.change.yaml",
+      "anshin-phone-infra/docs/specs/changes/2026-10-16-phone-production-runtime.change.yaml",
+      "anshin-phone-infra/docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml"
     ],
     "pre_edit_blob_ids": {
       "anshin-phone-infra:deploy/asterisk/config/extensions.conf.template": "1af46054bc42248a10d7ea2decea341f7a91b277",
@@ -117,7 +134,15 @@
       "anshin-phone-infra:docs/plans/telephony-platform/production-and-softphone-preparation.md": "9c0359b7bf8aaf89114fd2d4768f1c7bb06457cf",
       "anshin-phone-infra:docs/specs/changes/2026-10-22-own-call-history.change.yaml": null,
       "anshin-phone-infra:scripts/test_pbx_event_pipeline.py": "0c9b89e78ac8cb56ec33247255ae6d76eafd773c",
-      "anshin-phone-infra:scripts/test_phase1_sip_e2e.py": "98bd000aa5efd5ed32fdd35334fe4c82f88556aa"
+      "anshin-phone-infra:scripts/test_phase1_sip_e2e.py": "98bd000aa5efd5ed32fdd35334fe4c82f88556aa",
+      "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-private-runtime.change.yaml": "f8470152e345de573d0fbd4a37a88ef8d9d359b3",
+      "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml": "a9d250d55eb5dcbed032c5cf0c527fa489c48cc3",
+      "anshin-phone-infra/docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml": "1165642b320f4dce64a3cf75193ca20a181afb43",
+      "anshin-phone-infra/docs/specs/changes/2026-10-17-phone-fax-retention-ms1.change.yaml": "76208c1dd35505a598126617fa98fe3e558905ea",
+      "anshin-phone-infra/docs/specs/changes/2026-10-16-phone-management-production-preparation.change.yaml": "f089a568cfa5da4af71e65112454216a9fe4c990",
+      "anshin-phone-infra/docs/specs/changes/2026-10-16-fax-calendar-retention.change.yaml": "075fc85af63f6fd4891aabd67003e7937e4cecb0",
+      "anshin-phone-infra/docs/specs/changes/2026-10-16-phone-production-runtime.change.yaml": "a3ec2aa8cc6c3d7a3f074ee46e45a7976baf0114",
+      "anshin-phone-infra/docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml": "3cba41f069a1d798060e82dc1f272218fb3610de"
     },
     "integration_order": [
       "Backend/Infra event and DB contract, OpenAPI/generated consumer synchronized",

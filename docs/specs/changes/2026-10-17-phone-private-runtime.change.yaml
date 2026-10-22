@@ -51,6 +51,8 @@ monitoring:
   observation_period: source qualification及び後続native配備まで
 approvals: []
 concurrency:
+  integration_order:
+    - anshin-phone-infra
   strategy: isolated-worktree
   branches: {anshin-phone-infra: task/phone-production-20261016}
   base_commits: {anshin-phone-infra: 6dcd78fa7d91763ea1acac57c6866312480589a1}

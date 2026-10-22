@@ -33,6 +33,7 @@ invariants:
   - DB backup単独をFAX backup・鍵別保管・隔離restoreの受入へ読み替えない
   - 実installとtimer enable前に共有SSE-S3 producerのPhone許可と実consumer受入を確認する
   - rollbackでDB・FAX・volumeを削除せず初回失敗でも保全する
+  - concurrencyは2026-10-22の既存記録のschema同期範囲を示す。過去の実行環境や未記録の承認・再検証を遡って証明しない
 acceptance_criteria:
   - migrationは一回、成功後だけBackendを起動しhealthと実Settingsを確認する
   - failure後は直前imageとComposeへ戻し初回はBackendだけを停止する
@@ -57,3 +58,15 @@ monitoring:
   signals: [実Settingsのenum, health, OOMKilledとrestart, 既存中央receipt]
   observation_period: 本番公開と復旧受入まで
 approvals: []
+concurrency:
+  strategy: isolated-worktree
+  branches:
+    anshin-phone-infra: task/phone-production-20261016
+  base_commits:
+    anshin-phone-infra: a1b522993861a0d0edab5baed2a5b45c87cc9524
+  integration_order:
+  - anshin-phone-infra
+  owned_paths:
+  - anshin-phone-infra/docs/specs/changes/2026-10-16-phone-production-runtime.change.yaml
+  pre_edit_blob_ids:
+    anshin-phone-infra/docs/specs/changes/2026-10-16-phone-production-runtime.change.yaml: a3ec2aa8cc6c3d7a3f074ee46e45a7976baf0114
