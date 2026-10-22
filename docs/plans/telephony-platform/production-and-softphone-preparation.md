@@ -221,3 +221,12 @@ sourceは`anshin-frontend-mobile/packages/anshin_phone_softphone`、generated AP
 評価構成はarm64・UDP・G.711・null audioで、マイク・speakerを開かない。TLS/SRTP・商用インターネット経路の完成を示さない。Android APKのlink、iOS Simulator app buildと案件専用Simulatorの実MethodChannel初期化・二重初期化拒否・destroy/reinitを確認した。既存隔離PBXのSoftphone分岐では同じ固定SDK/native coreでREGISTER、発着信、PCMU送受信packet、復号した非無音のcarrier 440Hz受信、transport再接続、停止資格の拒否、active復帰、revoke・旧call拒否を確認。これらは作業中検査であり、fixed SHAのcanonical・独立review・main統合の完了とは別に記録する。
 
 Web exampleは明示的な架空データで共有Flutter画面を確認する。native通話・Google認証・Pushの成功へ読み替えない。本人用履歴API、Phone mobile Auth client/redirect、secure storage正式binding、OS標準着信・Push、実機と背景/通信切替の受入は残件。商用配布のlicense/第三者条件・保守と配布方式を確定してから当該scopeを具体化する。基礎管理画面の本番公開を停止しない。
+
+
+### 2026-10-22 Simulatorの実SIP consumer検証
+
+Mobile `2569456ad0643c4409ab8fb523d23841b726e9eb`はAndroid shared STLのpackagingを正規CMake modelへ一致させ、APK内の両SO・専用Emulator上のnative lifecycle・canonical・独立reviewを確認してmainへ統合した。Infra `48ec330b23729acdca87b0764f7a8e5743867ebb`もmain統合済み。本人の実UI最終確認は「表示・操作に問題なし」。職員app bundle及びPhone本番runtimeに変更がなく、release分類はNOOP、本番操作0件。
+
+次の入力は既存 `scripts/test_phase1_sip_e2e.py --fixture softphone`へ `PHONE_SOFTPHONE_SIMULATOR=android|ios` と当該Task専用 `PHONE_SOFTPHONE_DEVICE` を渡す。既存lease・一意Compose project・Backend fixture・SIPp carrier・cleanupを再利用する。Mac loopbackだけの5070/UDP公開bindingを実観測値と照合し、無資格OPTIONSで観測したNAT一件だけをfixture側で許可する。Digest認証はPBXが所有し、資格は端末app-private一時fileへstdinで渡して読取後と失敗時に回収する。production template・carrier5060・DB・他Simulatorは変更しない。
+
+Flutter integration consumerで実REGISTER、着信表示、応答、SDK接続、相手BYE、発信と終話、再登録、revokeと旧call拒否を検証する。media-activeはSDKのmedia準備状態であり、このSimulator laneのRTP到達・復号音声・マイク・Push・背景着信の合格を示さない。既存Linux core音声結果とも区別する。各実行結果は既存Task記録へ固定SHA付きで記録し、試験追加だけで成功済みとは扱わない。

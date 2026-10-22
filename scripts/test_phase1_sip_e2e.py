@@ -692,6 +692,10 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             print("PASS: backend active endpoint -> actual PBX configuration")
 
             if fixture_only == "softphone":
+                if env.get('PHONE_SOFTPHONE_SIMULATOR'):
+                    from softphone_sip_fixture import run_simulator_flow
+                    run_simulator_flow(base, env, endpoint, configuration, run, exec_background, finish)
+                    return 0
                 from softphone_sip_fixture import run_softphone_flow
                 run_softphone_flow(base, env, endpoint, configuration, backend_request, run, exec_background, finish)
                 return 0

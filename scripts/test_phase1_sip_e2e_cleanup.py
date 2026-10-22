@@ -12,6 +12,20 @@ import test_phase1_sip_e2e
 
 
 class Phase1SipE2ECleanupTest(unittest.TestCase):
+    def test_simulator_template_keeps_production_carrier_isolated(self):
+        import softphone_sip_fixture as sdk
+        rendered = sdk.simulator_template(test_phase1_sip_e2e.ROOT, '10.0.2.2', 24001, '192.168.65.1')
+        self.assertIn('advertise 10.0.2.2:24001', rendered)
+        self.assertIn('$Rp == 5070 && src_ip != 192.168.65.1/32', rendered)
+        self.assertIn('Fixture Contact Alias Forbidden', rendered)
+        self.assertIn(';alias=192[.]168[.]65[.]1~[0-9]{1,5}~1$', rendered)
+        self.assertIn('Fixture Alias Mismatch', rendered)
+        self.assertIn('$fs = "udp:__SBC_EDGE_IP__:5060";', rendered)
+        self.assertIn('route(FIXTURE_TARGET);', rendered)
+        for source,port in [('0.0.0.0',24001),('8.8.8.8',24001),('192.168.65.1',70000)]:
+            with self.assertRaises((ValueError,RuntimeError)):
+                sdk.simulator_template(test_phase1_sip_e2e.ROOT,'10.0.2.2',port,source)
+
     @mock.patch('test_phase1_sip_e2e.docker_test_lease')
     @mock.patch('test_phase1_sip_e2e.run_isolated_e2e', return_value=0)
     def test_softphone_uses_existing_fixture_owner_and_lease(self, fixture, lease):

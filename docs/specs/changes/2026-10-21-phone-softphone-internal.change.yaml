@@ -36,7 +36,8 @@
     "anshin-frontend-mobile/packages/anshin_phone_softphone/example/integration_test/plugin_integration_test.dart",
     "anshin-frontend-mobile/scripts/test_phone_openapi_profile.py",
     "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
-    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py"
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+    "anshin-frontend-mobile/packages/anshin_phone_softphone/example/integration_test/sip_simulator_test.dart"
   ],
   "invariants": [
     "sole MAC writer, no foreign runtime/DB/simulator/dirty changes",
@@ -50,7 +51,8 @@
     "state/UI regressions and canonical gate pass",
     "Android/iOS build and owned iOS Simulator MethodChannel lifecycle pass",
     "real pinned SDK REGISTER, inbound/outbound decoded tones, reconnect, suspend/revoke and stale call denial",
-    "fixed SHA independent Sol/high review and latest-main integration; owner UI acceptance reported separately"
+    "fixed SHA independent Sol/high review and latest-main integration; owner UI acceptance reported separately",
+    "owned Android/iOS Simulator actual SIP incoming UI/answer/BYE and outbound through loopback-only existing fixture; media-active is not RTP/audio qualification"
   ],
   "out_of_scope": [
     "commercial license finalization/purchase/Store release",
@@ -82,7 +84,9 @@
   },
   "approvals": [
     "2026-10-21 owner UI section4 preapproval",
-    "2026-10-21 owner six-item internal implementation scope approval"
+    "2026-10-21 owner six-item internal implementation scope approval",
+    "2026-10-22 owner requires local Simulators and native incoming qualification",
+    "2026-10-22 owner actual UI acceptance: display and operation have no issue"
   ],
   "concurrency": {
     "strategy": "isolated-worktree",
