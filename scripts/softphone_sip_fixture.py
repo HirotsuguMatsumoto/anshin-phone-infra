@@ -9,10 +9,10 @@ import ipaddress
 import re
 import socket
 import uuid
-import shlex
 import signal
 import queue
 import threading
+import urllib.request
 
 PIN='5a457451fa2712ba18e12b01738e8ff3af2b26fd'
 def prepare_softphone_override(root, directory, env, run):
@@ -112,11 +112,8 @@ def prepare_simulator(root, directory, env, mobile):
     env['PHONE_SIM_TEMPLATE'] = str(path)
     env['PHONE_SIM_PORT'] = str(port)
     env['PHONE_SIM_HOST'] = host
-    override = directory/'softphone-compose.json'
-    override.write_text(json.dumps({'services':{'kamailio':{
-        'ports':[f'127.0.0.1:{port}:5070/udp'],
-        'volumes':[f'{path}:/opt/anshin-phone/templates/kamailio.cfg.template:ro']
-    }}}))
+    override = directory/'softphone-compose.yaml'
+    override.write_text('services:\n  kamailio:\n    ports: !override\n      - '+json.dumps(f'127.0.0.1:{port}:5070/udp')+'\n    volumes:\n      - '+json.dumps(f'{path}:/opt/anshin-phone/templates/kamailio.cfg.template:ro')+'\n')
     return override
 
 
@@ -176,23 +173,11 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
         for line in process.stdout:lines.put(line)
         lines.put(None)
     threading.Thread(target=read_lines,daemon=True).start()
-    peers = []; app_temp = None; passed = False; transcript = []; created = set()
-    def private_file(name, payload=None):
-        if app_temp is None: return
-        if platform == 'android':
-            # Exact package-private cache; no shared /sdcard fallback.
-            if payload is None and name not in created:return
-            action = f'set -C; umask 077; cat > cache/{name}' if payload is not None else f'rm -f cache/{name}'
-            subprocess.run(['adb','-s',device,'shell','run-as '+app+' sh -c '+shlex.quote(action)],input=payload,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True,timeout=10)
-            if payload is not None:created.add(name)
-        else:
-            path = app_temp/name
-            if payload is None:
-                if name in created:path.unlink(missing_ok=True)
-            else:
-                fd = os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-                created.add(name)
-                with os.fdopen(fd,'w') as file:file.write(payload)
+    peers = []; passed = False; transcript = []; control_port = None; forward = None
+    def control(path, value):
+        request = urllib.request.Request(f'http://127.0.0.1:{control_port}/{path}',data=json.dumps(value).encode(),headers={'Content-Type':'application/json'},method='POST')
+        with urllib.request.urlopen(request,timeout=5) as response:
+            if response.status != 200:raise RuntimeError('fixture control rejected')
     try:
         deadline = time.monotonic()+300
         while time.monotonic()<deadline:
@@ -204,21 +189,23 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
             data = json.loads(line.split('PHONE_SIM ',1)[1]); phase = data['phase']
             print('phase=simulator-'+platform+' state='+phase,flush=True)
             if phase == 'awaiting_input':
+                device_port = data['port']
+                if not isinstance(device_port,int) or not 1024 <= device_port <= 65535:
+                    raise RuntimeError('fixture control port invalid')
                 if platform == 'android':
-                    if data['temp'] != f'/data/user/0/{app}/cache':
-                        raise RuntimeError('fixture app-private cache mismatch')
-                    app_temp = Path(data['temp'])
-                else:
-                    container = Path(subprocess.check_output(['xcrun','simctl','get_app_container',device,app,'data'],text=True).strip()).resolve()
-                    app_temp = Path(data['temp']).resolve()
-                    if app_temp != container/'tmp':raise RuntimeError('fixture iOS app-private tmp mismatch')
-                private_file('phone-sip-input.json',json.dumps({'endpoint_id':endpoint['id'],'server':f"{env['PHONE_SIM_HOST']}:{port}",'username':'2001','password':configuration['endpoints'][0]['password']}))
+                    control_port = int(subprocess.check_output(['adb','-s',device,'forward','tcp:0',f'tcp:{device_port}'],text=True,timeout=10).strip())
+                    forward = f'tcp:{control_port}'
+                    mappings = subprocess.check_output(['adb','-s',device,'forward','--list'],text=True,timeout=10)
+                    if f'{device} {forward} tcp:{device_port}' not in mappings:
+                        raise RuntimeError('owned loopback forward mismatch')
+                else:control_port = device_port
+                control('config',{'endpoint_id':endpoint['id'],'server':f"{env['PHONE_SIM_HOST']}:{port}",'username':'2001','password':configuration['endpoints'][0]['password']})
             elif phase == 'registered':
                 peers.append(exec_background(base,'mock-carrier',['sipp','-nostdin','10.254.250.40:5060','-sf','/scenarios/carrier_inbound_uac.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','35s'],env))
             elif phase == 'outbound_ready':
                 finish(peers[-1],'Simulator inbound carrier')
                 peers.append(exec_background(base,'mock-carrier',['sipp','-nostdin','-sf','/scenarios/carrier_outbound_uas.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','35s'],env))
-                time.sleep(.5); private_file('phone-sip-go','ready')
+                time.sleep(.5); control('go',{})
             elif phase == 'passed':passed = True
         process.wait(timeout=15)
         if not passed or process.returncode:
@@ -236,8 +223,8 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
             try:
                 if peer.poll() is None:peer.terminate();peer.communicate(timeout=5)
             except Exception as exc:cleanup_errors.append(type(exc).__name__)
-        for name in created:
-            try:private_file(name)
+        if forward:
+            try:subprocess.run(['adb','-s',device,'forward','--remove',forward],capture_output=True,check=True,timeout=10)
             except Exception as exc:cleanup_errors.append(type(exc).__name__)
         try:
             if platform == 'android':

@@ -227,6 +227,6 @@ Web exampleは明示的な架空データで共有Flutter画面を確認する�
 
 Mobile `2569456ad0643c4409ab8fb523d23841b726e9eb`はAndroid shared STLのpackagingを正規CMake modelへ一致させ、APK内の両SO・専用Emulator上のnative lifecycle・canonical・独立reviewを確認してmainへ統合した。Infra `48ec330b23729acdca87b0764f7a8e5743867ebb`もmain統合済み。本人の実UI最終確認は「表示・操作に問題なし」。職員app bundle及びPhone本番runtimeに変更がなく、release分類はNOOP、本番操作0件。
 
-次の入力は既存 `scripts/test_phase1_sip_e2e.py --fixture softphone`へ `PHONE_SOFTPHONE_SIMULATOR=android|ios` と当該Task専用 `PHONE_SOFTPHONE_DEVICE` を渡す。既存lease・一意Compose project・Backend fixture・SIPp carrier・cleanupを再利用する。Mac loopbackだけの5070/UDP公開bindingを実観測値と照合し、無資格OPTIONSで観測したNAT一件だけをfixture側で許可する。Digest認証はPBXが所有し、資格は端末app-private一時fileへstdinで渡して読取後と失敗時に回収する。production template・carrier5060・DB・他Simulatorは変更しない。
+次の入力は既存 `scripts/test_phase1_sip_e2e.py --fixture softphone`へ `PHONE_SOFTPHONE_SIMULATOR=android|ios` と当該Task専用 `PHONE_SOFTPHONE_DEVICE` を渡す。既存lease・一意Compose project・Backend fixture・SIPp carrier・cleanupを再利用する。Mac loopbackだけの5070/UDP公開bindingを実観測値と照合し、無資格OPTIONSで観測したNAT一件だけをfixture側で許可する。Digest認証はPBXが所有し、資格は試験中だけの端末loopback HTTPへmemory上で渡し、argv・log・端末fileへ保存しない。Androidは当該serialへ割り当てた一時ADB forwardだけを使い、終了時に回収する。production template・carrier5060・DB・他Simulatorは変更しない。
 
 Flutter integration consumerで実REGISTER、着信表示、応答、SDK接続、相手BYE、発信と終話、再登録、revokeと旧call拒否を検証する。media-activeはSDKのmedia準備状態であり、このSimulator laneのRTP到達・復号音声・マイク・Push・背景着信の合格を示さない。既存Linux core音声結果とも区別する。各実行結果は既存Task記録へ固定SHA付きで記録し、試験追加だけで成功済みとは扱わない。
