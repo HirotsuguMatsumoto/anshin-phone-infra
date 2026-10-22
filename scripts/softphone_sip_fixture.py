@@ -140,6 +140,18 @@ def observe_source(port):
     return received[0]
 
 
+def stop_simulator_process(process):
+    # The Flutter process owns its session. A finished leader does not prove
+    # that xcodebuild/adb descendants have released the app/test resources.
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:os.killpg(process.pid,sig)
+        except ProcessLookupError:pass
+        if sig == signal.SIGTERM:
+            try:process.wait(timeout=5)
+            except subprocess.TimeoutExpired:pass
+    process.wait(timeout=5)
+
+
 def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finish):
     platform, device = env['PHONE_SOFTPHONE_SIMULATOR'], env['PHONE_SOFTPHONE_DEVICE']
     port = int(env['PHONE_SIM_PORT'])
@@ -218,10 +230,8 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
         print('PASS: '+platform+' native SIP incoming UI/answer/BYE, outbound, reconnect/revoke/stale call IDs; media-active only, RTP audio unqualified',flush=True)
     finally:
         cleanup_errors = []
-        if process.poll() is None:
-            os.killpg(process.pid,signal.SIGTERM)
-            try:process.wait(timeout=15)
-            except subprocess.TimeoutExpired:os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
+        try:stop_simulator_process(process)
+        except Exception as exc:cleanup_errors.append(type(exc).__name__)
         for peer in peers:
             try:
                 if peer.poll() is None:peer.terminate();peer.communicate(timeout=5)
@@ -232,8 +242,9 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
         try:
             if platform == 'android':
                 subprocess.run(['adb','-s',device,'shell','am','force-stop',app],capture_output=True,check=True,timeout=10)
-                if subprocess.run(['adb','-s',device,'shell','pidof',app],capture_output=True,timeout=10).stdout.strip():
-                    raise RuntimeError('owned native app still running')
+                result = subprocess.run(['adb','-s',device,'shell','pidof',app],capture_output=True,timeout=10)
+                if result.returncode != 1 or result.stdout.strip():
+                    raise RuntimeError('owned native app absence unconfirmed')
             else:
                 subprocess.run(['xcrun','simctl','terminate',device,app],capture_output=True,timeout=10)
                 if app in subprocess.check_output(['xcrun','simctl','spawn',device,'launchctl','list'],text=True,timeout=10):

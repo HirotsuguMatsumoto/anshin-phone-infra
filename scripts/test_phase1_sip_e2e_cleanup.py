@@ -12,6 +12,16 @@ import test_phase1_sip_e2e
 
 
 class Phase1SipE2ECleanupTest(unittest.TestCase):
+    def test_simulator_cleanup_stops_group_even_after_leader_exit(self):
+        import softphone_sip_fixture as sdk
+        import signal
+        process = mock.Mock(pid=123, returncode=0)
+        with mock.patch.object(sdk.os,'killpg') as kill:
+            sdk.stop_simulator_process(process)
+        self.assertEqual(kill.call_args_list,[mock.call(123,signal.SIGTERM),mock.call(123,signal.SIGKILL)])
+        with mock.patch.object(sdk.os,'killpg',side_effect=ProcessLookupError):
+            sdk.stop_simulator_process(process)
+
     def test_simulator_template_keeps_production_carrier_isolated(self):
         import softphone_sip_fixture as sdk
         rendered = sdk.simulator_template(test_phase1_sip_e2e.ROOT, '10.0.2.2', 24001, '192.168.65.1')
