@@ -10,6 +10,9 @@ import re
 import socket
 import uuid
 import shlex
+import signal
+import queue
+import threading
 
 PIN='5a457451fa2712ba18e12b01738e8ff3af2b26fd'
 def prepare_softphone_override(root, directory, env, run):
@@ -39,12 +42,11 @@ def simulator_template(root, host, port, source):
     if not ip.is_private or ip.is_unspecified or not 1024 <= port <= 65535:
         raise RuntimeError('invalid observed fixture source or binding')
     template = (root/'deploy/kamailio/config/kamailio.cfg.template').read_text()
-    template = template.replace('request_route {', '''request_route {
-    force_rport();
-    if ($Rp == 5070 && src_ip != SOURCE/32) {
+    template = template.replace('request_route {', 'request_route {\n    force_rport();')
+    template = template.replace('    if (is_method("CANCEL"))', '''    if ($Rp == 5070 && src_ip != SOURCE/32) {
         sl_send_reply("403", "Fixture Source Mismatch"); exit;
     }
-'''.replace('SOURCE', source))
+    if (is_method("CANCEL"))'''.replace('SOURCE/32', source+'/32'))
     template = template.replace('alias=kamailio:5060', f'''alias=kamailio:5060
 listen=udp:__SBC_EDGE_IP__:5070 advertise {host}:{port}
 alias={host}:{port}
@@ -53,11 +55,11 @@ alias=127.0.0.1:{port}''')
         if ($hdr(Contact) =~ ";alias=") {
             sl_send_reply("400", "Fixture Contact Alias Forbidden"); exit;
         }
-        if (is_method("REGISTER")) add_contact_alias();
+        if (is_present_hf("Contact")) add_contact_alias();
         route(TO_PBX); exit;
     }
 
-    if (!(src_ip __TRUSTED_SOURCE_CONDITION__))'''.replace('SOURCE', source))
+    if (!(src_ip __TRUSTED_SOURCE_CONDITION__))'''.replace('SOURCE/32', source+'/32'))
     template = template.replace('$fs = "udp:__SBC_EDGE_IP__:5060";\n                handle_ruri_alias();', 'route(FIXTURE_TARGET);')
     template = template.replace('$fs = "udp:__SBC_EDGE_IP__:5060";\n            handle_ruri_alias();', 'route(FIXTURE_TARGET);')
     template = template.replace('''    $fs = "udp:__SBC_EDGE_IP__:5060";
@@ -78,6 +80,11 @@ alias=127.0.0.1:{port}''')
     }
 }
 '''.replace('SOURCE', source.replace('.', '[.]'))
+    template = template.replace('onreply_route[MANAGE_REPLY] {', '''onreply_route[MANAGE_REPLY] {
+    if ($Rp == 5070 && src_ip == SOURCE/32 && is_present_hf("Contact")) {
+        if ($hdr(Contact) =~ ";alias=") drop;
+        add_contact_alias();
+    }'''.replace('SOURCE/32', source+'/32'))
     return template.replace('route[TO_PBX] {', target+'\nroute[TO_PBX] {')
 
 
@@ -151,29 +158,35 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
     print('PASS: loopback-only actual binding and observed exact NAT source; PBX owns SIP Digest',flush=True)
     example = Path(env['PHONE_SOFTPHONE_ROOT'])/'example'
     app = 'care.anshin.phone.anshin_phone_softphone_example' if platform == 'android' else 'care.anshin.phone.anshinPhoneSoftphoneExample'
-    process = subprocess.Popen(['flutter','test','--no-pub','integration_test/sip_simulator_test.dart','-d',device,'--reporter','expanded'],cwd=example,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)
-    peers = []; app_temp = None; passed = False; transcript = []
+    process = subprocess.Popen(['flutter','test','--no-pub','integration_test/sip_simulator_test.dart','-d',device,'--reporter','expanded'],cwd=example,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1,start_new_session=True)
+    lines = queue.Queue()
+    def read_lines():
+        for line in process.stdout:lines.put(line)
+        lines.put(None)
+    threading.Thread(target=read_lines,daemon=True).start()
+    peers = []; app_temp = None; passed = False; transcript = []; created = set()
     def private_file(name, payload=None):
         if app_temp is None: return
         if platform == 'android':
             # Exact package-private cache; no shared /sdcard fallback.
-            action = f'cat > cache/{name}' if payload is not None else f'rm -f cache/{name}'
-            if payload is not None: action = f'test ! -e cache/{name} && umask 077 && '+action
+            if payload is None and name not in created:return
+            action = f'set -C; umask 077; cat > cache/{name}' if payload is not None else f'rm -f cache/{name}'
             subprocess.run(['adb','-s',device,'shell','run-as '+app+' sh -c '+shlex.quote(action)],input=payload,text=True,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True,timeout=10)
+            if payload is not None:created.add(name)
         else:
             path = app_temp/name
-            if payload is None: path.unlink(missing_ok=True)
+            if payload is None:
+                if name in created:path.unlink(missing_ok=True)
             else:
                 fd = os.open(path,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+                created.add(name)
                 with os.fdopen(fd,'w') as file:file.write(payload)
     try:
         deadline = time.monotonic()+300
         while time.monotonic()<deadline:
-            if not select.select([process.stdout],[],[],1)[0]:
-                if process.poll() is not None:break
-                continue
-            line = process.stdout.readline()
-            if not line:break
+            try:line = lines.get(timeout=1)
+            except queue.Empty:continue
+            if line is None:break
             transcript.append(line)
             if 'PHONE_SIM ' not in line:continue
             data = json.loads(line.split('PHONE_SIM ',1)[1]); phase = data['phase']
@@ -204,13 +217,29 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
         for peer in peers:finish(peer,'Simulator mock carrier')
         print('PASS: '+platform+' native SIP incoming UI/answer/BYE, outbound, reconnect/revoke/stale call IDs; media-active only, RTP audio unqualified',flush=True)
     finally:
+        cleanup_errors = []
         if process.poll() is None:
-            process.terminate()
+            os.killpg(process.pid,signal.SIGTERM)
             try:process.wait(timeout=15)
-            except subprocess.TimeoutExpired:process.kill();process.wait(timeout=5)
+            except subprocess.TimeoutExpired:os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=5)
         for peer in peers:
-            if peer.poll() is None:peer.terminate();peer.communicate(timeout=5)
-        for name in ('phone-sip-input.json','phone-sip-go'):private_file(name)
+            try:
+                if peer.poll() is None:peer.terminate();peer.communicate(timeout=5)
+            except Exception as exc:cleanup_errors.append(type(exc).__name__)
+        for name in created:
+            try:private_file(name)
+            except Exception as exc:cleanup_errors.append(type(exc).__name__)
+        try:
+            if platform == 'android':
+                subprocess.run(['adb','-s',device,'shell','am','force-stop',app],capture_output=True,check=True,timeout=10)
+                if subprocess.run(['adb','-s',device,'shell','pidof',app],capture_output=True,timeout=10).stdout.strip():
+                    raise RuntimeError('owned native app still running')
+            else:
+                subprocess.run(['xcrun','simctl','terminate',device,app],capture_output=True,timeout=10)
+                if app in subprocess.check_output(['xcrun','simctl','spawn',device,'launchctl','list'],text=True,timeout=10):
+                    raise RuntimeError('owned native app still running')
+        except Exception as exc:cleanup_errors.append(type(exc).__name__)
+        if cleanup_errors:raise RuntimeError('Simulator cleanup incomplete: '+','.join(cleanup_errors))
 
 def run_softphone_flow(base,env,endpoint,configuration,backend_request,run,exec_background,finish):
     process=subprocess.Popen(base+['exec','-T','mock-smartphone','python3','-u','/softphone-driver.py'],env=env,stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True,bufsize=1)

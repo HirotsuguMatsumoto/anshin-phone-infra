@@ -24,7 +24,7 @@ def load_renderer():
 
 
 class KamailioRenderConfigTest(unittest.TestCase):
-    def render(self, overrides: dict[str, str] | None = None) -> str:
+    def render(self, overrides: dict[str, str] | None = None, *, fixture_template=None) -> str:
         module = load_renderer()
         environment = {
             "SBC_ADVERTISED_IP": "192.0.2.10",
@@ -41,10 +41,24 @@ class KamailioRenderConfigTest(unittest.TestCase):
             environment.update(overrides)
         with tempfile.TemporaryDirectory(prefix="anshin-phone-kamailio-") as temp_dir:
             module.TEMPLATE = TEMPLATE
+            if fixture_template is not None:
+                module.TEMPLATE = Path(temp_dir) / 'fixture.template'
+                module.TEMPLATE.write_text(fixture_template)
             module.OUTPUT = Path(temp_dir) / "kamailio.cfg"
             with patch.dict(os.environ, environment, clear=True):
                 module.main()
             return module.OUTPUT.read_text(encoding="utf-8")
+
+    def test_simulator_template_uses_real_renderer_before_runtime(self):
+        from softphone_sip_fixture import simulator_template
+        config = self.render(fixture_template=simulator_template(ROOT,'10.0.2.2',24001,'192.168.65.1'))
+        self.assertNotIn('__',config)
+        self.assertIn('advertise 10.0.2.2:24001',config)
+        self.assertLess(config.index('Keepalive'),config.index('Fixture Source Mismatch'))
+        self.assertIn('src_ip == 172.31.251.20/32',config)
+        reply = config.split('onreply_route[MANAGE_REPLY] {')[1]
+        self.assertIn('src_ip == 192.168.65.1/32',reply)
+        self.assertIn('add_contact_alias()',reply)
 
     def test_renders_source_boundaries_and_media_relay(self) -> None:
         config = self.render()
