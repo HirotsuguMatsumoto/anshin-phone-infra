@@ -20,8 +20,8 @@ import re
 
 
 @contextmanager
-def fixture_directory():
-    preview = os.environ.get("PHONE_PREVIEW_DIR")
+def fixture_directory(*, prefix="anshin-phone-test-secrets-", allow_preview=True):
+    preview = os.environ.get("PHONE_PREVIEW_DIR") if allow_preview else None
     state = {"retain": False}
     if preview:
         path = Path(preview)
@@ -29,7 +29,7 @@ def fixture_directory():
             raise RuntimeError("process-start=0: preview path must be absolute and outside source")
         path.mkdir(mode=0o700, parents=False, exist_ok=False)
     else:
-        path = Path(tempfile.mkdtemp(prefix="anshin-phone-test-secrets-"))
+        path = Path(tempfile.mkdtemp(prefix=prefix))
     try:
         yield path, state
     except BaseException:
@@ -1071,7 +1071,7 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
     transport = {key: env[key] for key in ('PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG') if key in env}
     if not transport.get('DOCKER_HOST'):
         transport['DOCKER_HOST'] = run(['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], env=env).stdout.strip()
-    with tempfile.TemporaryDirectory(prefix='phone-production-fixture-') as directory:
+    with fixture_directory(prefix='phone-production-fixture-', allow_preview=False) as (directory, _retention):
         temporary = Path(directory)
         network_override = temporary / 'production-fixture-networks.json'
         network_override.write_text(json.dumps({'networks': {
