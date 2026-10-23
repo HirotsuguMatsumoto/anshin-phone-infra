@@ -298,6 +298,33 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             test_phase1_sip_e2e.ensure_cleanup_succeeded(cleanup, ["image"], False)
 
+    def test_term_unwinds_fixture_cleanup_and_retains_inputs(self):
+        import os,signal,shutil
+        path=None;cleaned=[];previous=signal.getsignal(signal.SIGTERM)
+        try:
+            with mock.patch.dict(os.environ, {"PHONE_PREVIEW_DIR":""}):
+                with self.assertRaises(test_phase1_sip_e2e.FixtureInterrupted) as caught:
+                    with test_phase1_sip_e2e.fixture_signals(),test_phase1_sip_e2e.fixture_directory() as (path,_):
+                        (path/"source").write_text("retain")
+                        try:signal.raise_signal(signal.SIGTERM)
+                        finally:cleaned.append(True)
+            self.assertEqual(caught.exception.signum,signal.SIGTERM)
+            self.assertEqual(cleaned,[True]);self.assertTrue((path/"source").exists())
+            self.assertEqual(signal.getsignal(signal.SIGTERM),previous)
+        finally:
+            if path is not None:shutil.rmtree(path)
+
+    def test_fixture_ownership_labels_cover_builds_and_preserve_external_assets(self):
+        compiled={"services":{"backend":{"build":{"context":"fixture"}},"postgres":{"image":"postgres:16"}},
+                  "networks":{"owned":{},"shared":{"external":True}},"volumes":{"owned":{},"shared":{"external":True}}}
+        override=test_phase1_sip_e2e.fixture_ownership_override(compiled,"owned-fixture")
+        labels=test_phase1_sip_e2e.fixture_labels("owned-fixture",override["services"]["backend"]["labels"]["care.anshin.local.expires_at"])
+        self.assertEqual(override["services"]["backend"]["build"]["labels"],labels)
+        self.assertEqual(override["services"]["postgres"]["labels"],labels)
+        for kind in ("volumes","networks"):
+            self.assertEqual(override[kind],{"owned":{"labels":labels}})
+        self.assertEqual(set(labels),{"care.anshin.local."+key for key in ("owner","task_id","ephemeral","expires_at")})
+
     def test_fixture_sources_survive_failed_cleanup(self):
         import os,shutil
         path = None

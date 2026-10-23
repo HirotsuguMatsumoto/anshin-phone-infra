@@ -16,7 +16,46 @@ import time
 import uuid
 import json
 import stat
+import signal
+from datetime import datetime, timedelta, timezone
 import re
+
+
+class FixtureInterrupted(KeyboardInterrupt):
+    def __init__(self, signum):
+        self.signum = signum
+
+
+@contextmanager
+def fixture_signals():
+    previous = {kind: signal.getsignal(kind) for kind in (signal.SIGTERM, signal.SIGINT)}
+    def interrupted(signum, _frame):
+        for kind in previous:signal.signal(kind, signal.SIG_IGN)
+        raise FixtureInterrupted(signum)
+    try:
+        for kind in previous:signal.signal(kind, interrupted)
+        yield
+    finally:
+        for kind, handler in previous.items():signal.signal(kind, handler)
+
+
+def fixture_labels(project, expires_at=None):
+    return {"care.anshin.local.ephemeral":"true", "care.anshin.local.owner":"anshin-phone-infra",
+            "care.anshin.local.task_id":project,
+            "care.anshin.local.expires_at":expires_at or (datetime.now(timezone.utc)+timedelta(hours=24)).isoformat()}
+
+
+def fixture_ownership_override(compiled, project, expires_at=None):
+    labels=fixture_labels(project, expires_at)
+    services={}
+    for name, service in compiled["services"].items():
+        services[name]={"labels":labels}
+        if service.get("build"):services[name]["build"]={"labels":labels}
+    result={"services":services}
+    for kind in ("volumes","networks"):
+        result[kind]={name:{"labels":labels} for name, resource in compiled.get(kind,{}).items()
+                      if not resource.get("external")}
+    return result
 
 
 @contextmanager
@@ -312,6 +351,7 @@ def run_management_browser_flow(base: list[str], env: dict[str, str], secret_pat
     succeeded = False
     try:
         run(["docker", "run", "--detach", "--name", container, "--label", "anshin.task=phone-foundation-20261012",
+            *[argument for key,value in fixture_labels(project,env.get("PHONE_TEST_EXPIRES_AT")).items() for argument in ("--label",key+"="+value)],
             "--user", f"{os.getuid()}:{os.getgid()}", "--network", project + "_phone-data",
             "--publish", "127.0.0.1:3015:3015", "--volume", str(frontend) + ":/workspace",
             "--workdir", "/workspace/apps/anshin-phone", "--env", "PHONE_API_PROXY_TARGET=http://backend:8000",
@@ -613,6 +653,12 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
         if preflight_only:
             print("phase=diagnostic-preflight state=ready process-start=0 quality=not-run", flush=True)
             return 0
+        env["PHONE_TEST_EXPIRES_AT"] = fixture_labels(project)["care.anshin.local.expires_at"]
+        compiled=json.loads(run(base+["config","--format","json","--no-env-resolution"],env=env).stdout)
+        ownership=secret_path/"fixture-ownership.json"
+        ownership.write_text(json.dumps(fixture_ownership_override(compiled,project,env["PHONE_TEST_EXPIRES_AT"])))
+        ownership.chmod(0o600)
+        base += ["--file",str(ownership)]
         failed = False
         try:
             bootstrap_started = time.monotonic()
@@ -1142,6 +1188,11 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
                           backend_bind='127.0.0.1', compose_extra_files=(network_override,), volume_stat=volume_stat)
         infra_sha = run(['git', 'rev-parse', 'HEAD'], env=env).stdout.strip()
         profile = {'source_root': str(ROOT), 'backend_image': image, 'backend_sha': backend_sha, 'infra_sha': infra_sha}
+        compiled=json.loads(runtime.compose(profile,'config','--format','json','--no-env-resolution').stdout)
+        ownership=fixture_ownership_override(compiled,project)
+        for name, config in json.loads(network_override.read_text())["networks"].items():
+            ownership["networks"].setdefault(name,{}).update(config)
+        network_override.write_text(json.dumps(ownership))
         failed = True
         try:
             actual_health = runtime.health
@@ -1312,10 +1363,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.preflight:
         return run_isolated_e2e(preflight_only=True)
-    with docker_test_lease():
-        if args.fixture == 'production':
-            return run_production_management_fixture(args.backend_image, args.backend_sha)
-        return run_isolated_e2e(fixture_only=args.fixture)
+    try:
+        with fixture_signals(), docker_test_lease():
+            if args.fixture == 'production':
+                return run_production_management_fixture(args.backend_image, args.backend_sha)
+            return run_isolated_e2e(fixture_only=args.fixture)
+    except FixtureInterrupted as error:
+        return 128 + error.signum
 
 
 if __name__ == "__main__":
