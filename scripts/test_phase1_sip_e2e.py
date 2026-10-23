@@ -108,6 +108,12 @@ def docker_test_lease():
 
 
 def run(command: list[str], *, env: dict[str, str], check: bool = True, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    if input_text is None:
+        from production_runtime import run_owned_process
+        result = run_owned_process(command, cwd=ROOT, env=env, text=True,
+                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=None)
+        if check:result.check_returncode()
+        return result
     return subprocess.run(
         command,
         cwd=ROOT,
