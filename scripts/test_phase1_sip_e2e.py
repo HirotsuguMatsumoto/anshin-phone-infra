@@ -23,16 +23,19 @@ import re
 def fixture_directory():
     preview = os.environ.get("PHONE_PREVIEW_DIR")
     state = {"retain": False}
-    if not preview:
-        with tempfile.TemporaryDirectory(prefix="anshin-phone-test-secrets-") as path:
-            yield Path(path), state
-        return
-    path = Path(preview)
-    if not path.is_absolute() or path.resolve().is_relative_to(ROOT):
-        raise RuntimeError("process-start=0: preview path must be absolute and outside source")
-    path.mkdir(mode=0o700, parents=False, exist_ok=False)
+    if preview:
+        path = Path(preview)
+        if not path.is_absolute() or path.resolve().is_relative_to(ROOT):
+            raise RuntimeError("process-start=0: preview path must be absolute and outside source")
+        path.mkdir(mode=0o700, parents=False, exist_ok=False)
+    else:
+        path = Path(tempfile.mkdtemp(prefix="anshin-phone-test-secrets-"))
     try:
         yield path, state
+    except BaseException:
+        state["retain"] = True
+        print("SIP E2E inputs retained after failure: " + str(path))
+        raise
     finally:
         if not state["retain"]:
             shutil.rmtree(path)
@@ -147,11 +150,13 @@ def cleanup_residue(
 
 def ensure_cleanup_succeeded(cleanup: subprocess.CompletedProcess[str], residue: list[str], test_failed: bool) -> None:
     """Turn cleanup defects into a test failure without hiding an earlier failure."""
-    if not test_failed and (cleanup.returncode != 0 or residue):
-        raise RuntimeError(
-            "SIP E2E cleanup failed: "
-            f"exit={cleanup.returncode} residue={','.join(residue) or 'unknown'}"
-        )
+    if cleanup.returncode != 0 or residue:
+        message = ("SIP E2E cleanup failed: "
+                   f"exit={cleanup.returncode} residue={','.join(residue) or 'unknown'}")
+        if test_failed:
+            print(message)
+        else:
+            raise RuntimeError(message)
 
 
 def cleanup_owned_runtime(base: list[str], project: str, env: dict[str,str], failed: bool) -> None:

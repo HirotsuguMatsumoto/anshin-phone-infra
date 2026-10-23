@@ -298,6 +298,23 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             test_phase1_sip_e2e.ensure_cleanup_succeeded(cleanup, ["image"], False)
 
+    def test_fixture_sources_survive_failed_cleanup(self):
+        import os,shutil
+        path = None
+        try:
+            with mock.patch.dict(os.environ, {"PHONE_PREVIEW_DIR":""}):
+                with self.assertRaisesRegex(RuntimeError, "cleanup-unconfirmed"):
+                    with test_phase1_sip_e2e.fixture_directory() as (path, state):
+                        (path / "source").write_text("retain")
+                        raise RuntimeError("cleanup-unconfirmed")
+            self.assertTrue((path / "source").exists())
+        finally:
+            if path is not None:shutil.rmtree(path)
+        with mock.patch.dict(os.environ, {"PHONE_PREVIEW_DIR":""}):
+            with test_phase1_sip_e2e.fixture_directory() as (path, state):
+                (path / "source").write_text("fixture")
+        self.assertFalse(path.exists())
+
     def test_cleanup_defect_does_not_replace_an_earlier_test_failure(self) -> None:
         cleanup = subprocess.CompletedProcess([], 1, "cleanup failed")
         test_phase1_sip_e2e.ensure_cleanup_succeeded(cleanup, ["image"], True)
