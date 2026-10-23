@@ -1718,6 +1718,11 @@ def common_policy_agents_update(
         ),
     ):
         old_outside = old_outside.replace(old, new)
+    if old_outside == new_outside:
+        return True
+    old_outside = re.sub(
+        r"(?m)^## 専門用語一覧\n\n(?:\|[^\n]*\n)+\n?", "", old_outside, count=1
+    )
     return old_outside == new_outside
 
 
