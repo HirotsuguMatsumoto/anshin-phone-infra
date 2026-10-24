@@ -1629,19 +1629,9 @@ def distribution_agents_adapter(base: bytes) -> bytes:
         for line in base.splitlines(keepends=True)
     )
     migrated_text = migrate_active_agent_policy(fixed.decode("utf-8"))
-    misplaced = f"\n{WORKSPACE_ROOT_EXPLANATION}\n\n## 専門用語一覧\n"
-    if misplaced in migrated_text:
-        migrated_text = migrated_text.replace(misplaced, "\n## 専門用語一覧\n", 1)
-        glossary = re.search(r"(?s)(## 専門用語一覧\n\n(?:\|[^\n]*\n)+)", migrated_text)
-        if glossary is None:
-            raise ContractError("AGENTS glossary has no deterministic table boundary")
-        migrated_text = (
-            migrated_text[: glossary.end()]
-            + "\n"
-            + WORKSPACE_ROOT_EXPLANATION
-            + "\n"
-            + migrated_text[glossary.end() :]
-        )
+    migrated_text = re.sub(
+        r"(?m)^## 専門用語一覧\n\n(?:\|[^\n]*\n)+\n?", "", migrated_text, count=1
+    )
     existing_adapter = DISTRIBUTION_AGENTS_ADAPTER.strip() + "\n"
     migrated_text = migrated_text.replace(
         LEGACY_DISTRIBUTION_AGENTS_ADAPTER.strip() + "\n", ""
@@ -2525,7 +2515,7 @@ def write_distribution_check_result(
             "base_revision": base_revision,
             "tree": tree,
             "paths": plan["paths"],
-            "policy_revision": "AI-DD-20260920.1",
+            "policy_revision": "AI-DD-20261024.1",
             "plan_sha256": plan["plan_sha256"],
             "command_sha256": plan["command_sha256"],
             "dependency_sha256": plan["dependency_sha256"],
