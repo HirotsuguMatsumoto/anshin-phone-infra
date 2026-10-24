@@ -450,7 +450,9 @@ def _cleanup_owned_runtime(base: list[str], project: str, env: dict[str,str], fa
         try:action()
         except Exception as error:errors.append(error)
     if errors:
-        if failed: print('SIP E2E cleanup unconfirmed; original failure and inputs retained')
+        if failed:
+            try: print('SIP E2E cleanup unconfirmed; original failure and inputs retained')
+            except (OSError, ValueError): pass
         else: raise RuntimeError('SIP E2E cleanup unconfirmed; inputs retained') from errors[0]
 
 
@@ -461,7 +463,9 @@ def fixture_cleanup_action(action):
     except BaseException:
         if primary is None: raise
         if hasattr(primary,'add_note'): primary.add_note('Phone fixture secondary cleanup failed; retain inputs')
-        else: print('Phone fixture secondary cleanup failed; retain inputs',file=sys.stderr)
+        else:
+            try: print('Phone fixture secondary cleanup failed; retain inputs',file=sys.stderr)
+            except (OSError, ValueError): pass
 
 
 def fixture_cleanup_actions(*actions):

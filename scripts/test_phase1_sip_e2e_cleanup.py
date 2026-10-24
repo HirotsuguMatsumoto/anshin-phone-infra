@@ -747,6 +747,65 @@ raise SystemExit('stop was lost')
                 (path / "source").write_text("fixture")
         self.assertFalse(path.exists())
 
+    def test_cleanup_diagnostics_preserve_legacy_primary_and_all_actions(self):
+        import shutil,signal
+        owner=test_phase1_sip_e2e
+        # Exercise the supported Python 3.10 exception contract on newer Python,
+        # where BaseException would otherwise always expose add_note.
+        class LegacyException:
+            def __getattribute__(self,name):
+                if name=='add_note':raise AttributeError(name)
+                return super().__getattribute__(name)
+        class LegacyRuntimeError(LegacyException,RuntimeError):pass
+        class LegacyInterrupted(LegacyException,owner.FixtureInterrupted):pass
+        class ClosedDiagnostic(io.StringIO):
+            def __init__(self,error):
+                super().__init__();self.close();self.error=error;self.attempts=0
+            def write(self,text):
+                self.attempts+=1
+                if self.error is ValueError:return super().write(text)
+                raise self.error('diagnostic stream unavailable')
+        project='phone-closed-diagnostics'
+        env={'PHONE_TEST_EXPIRES_AT':'2026-10-25T00:00:00Z'}
+        config={'services':{'backend':{'build':'.','image':project+':owned'}},
+                'networks':{'private':{'name':project+'-network'}},
+                'volumes':{'data':{'name':project+'-data'}}}
+        for phase in ('runtime-diagnostic','cleanup-action-diagnostic'):
+            for primary_kind in (LegacyRuntimeError,LegacyInterrupted):
+                for diagnostic_error in (BrokenPipeError,OSError,ValueError):
+                    with self.subTest(phase=phase,primary=primary_kind.__name__,diagnostic=diagnostic_error.__name__):
+                        primary=primary_kind(signal.SIGTERM if primary_kind is LegacyInterrupted else 'original body failure')
+                        self.assertFalse(hasattr(primary,'add_note'))
+                        manager=mock.Mock();events=[];path=None
+                        stdout=ClosedDiagnostic(diagnostic_error);stderr=ClosedDiagnostic(diagnostic_error)
+                        def cleanup(containers,networks,labels,**options):
+                            events.append('ui' if containers==[project+'-management-ui'] else 'assets')
+                            raise RuntimeError('secondary native cleanup failure')
+                        manager.cleanup_named_fixture_assets.side_effect=cleanup
+                        manager.cleanup_fixture_images.side_effect=lambda *args,**options:events.append('images')
+                        manager.verify_fixture_project.side_effect=lambda *args,**options:events.append('absence')
+                        try:
+                            with mock.patch.object(owner,'fixture_manager',return_value=manager), \
+                                 mock.patch.object(owner,'run',side_effect=subprocess.TimeoutExpired('config',30)), \
+                                 mock.patch.object(sys,'stdout',stdout),mock.patch.object(sys,'stderr',stderr):
+                                with self.assertRaises(primary_kind) as caught:
+                                    with owner.fixture_signals(),owner.fixture_directory(allow_preview=False) as (path,_):
+                                        (path/'source').write_text('retain')
+                                        owner.remember_fixture_config(project,config)
+                                        try:raise primary
+                                        finally:
+                                            owner.fixture_cleanup_actions(
+                                                lambda:owner._cleanup_owned_runtime(['docker','compose'],project,env,phase=='runtime-diagnostic'),
+                                                lambda:events.append('last-cleanup'))
+                            self.assertIs(primary,caught.exception)
+                            if primary_kind is LegacyInterrupted:self.assertEqual(signal.SIGTERM,caught.exception.signum)
+                            self.assertEqual(['ui','assets','images','absence','last-cleanup'],events)
+                            self.assertEqual('retain',(path/'source').read_text())
+                            self.assertGreater(stdout.attempts,0)
+                            self.assertEqual(phase=='cleanup-action-diagnostic',stderr.attempts>0)
+                        finally:
+                            if path is not None:shutil.rmtree(path)
+
     def test_cleanup_defect_does_not_replace_an_earlier_test_failure(self) -> None:
         cleanup = subprocess.CompletedProcess([], 1, "cleanup failed")
         test_phase1_sip_e2e.ensure_cleanup_succeeded(cleanup, ["image"], True)
