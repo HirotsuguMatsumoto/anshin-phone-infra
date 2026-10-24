@@ -17,6 +17,7 @@ import uuid
 import json
 import stat
 import signal
+import sys
 from datetime import datetime, timedelta, timezone
 import re
 
@@ -26,17 +27,64 @@ class FixtureInterrupted(KeyboardInterrupt):
         self.signum = signum
 
 
+_fixture_signal_state = None
+
+
 @contextmanager
 def fixture_signals():
-    previous = {kind: signal.getsignal(kind) for kind in (signal.SIGTERM, signal.SIGINT)}
+    global _fixture_signal_state
+    previous = {kind: signal.getsignal(kind) for kind in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)}
+    outer = _fixture_signal_state
+    state = {"cleaning": False, "registering": False, "pending": None, "delivered": False, "manager": None, "backgrounds": [], "attempted": {}, "created_ids": {}}
+    _fixture_signal_state = state
     def interrupted(signum, _frame):
-        for kind in previous:signal.signal(kind, signal.SIG_IGN)
-        raise FixtureInterrupted(signum)
+        if state["pending"] is None: state["pending"] = signum
+        if state["cleaning"] or state["registering"] or state["delivered"]: return
+        state["delivered"] = True
+        raise FixtureInterrupted(state["pending"])
     try:
-        for kind in previous:signal.signal(kind, interrupted)
+        for kind in previous: signal.signal(kind, interrupted)
+        yield state
+        if state["pending"] is not None: raise FixtureInterrupted(state["pending"])
+    finally:
+        _fixture_signal_state = outer
+        for kind, handler in previous.items(): signal.signal(kind, handler)
+
+
+@contextmanager
+def fixture_cleanup_signals():
+    state = _fixture_signal_state
+    primary = sys.exc_info()[1]
+    before = state["cleaning"] if state else False
+    if state: state["cleaning"] = True
+    try:
         yield
     finally:
-        for kind, handler in previous.items():signal.signal(kind, handler)
+        if state: state["cleaning"] = before
+    if primary is None and state and not before and state["pending"] is not None:
+        raise FixtureInterrupted(state["pending"])
+
+
+def fixture_manager(env=None):
+    """Load the canonical manager through the primary Git/workspace resolver."""
+    if _fixture_signal_state and _fixture_signal_state["manager"] is not None:
+        return _fixture_signal_state["manager"]
+    import importlib.util
+    from resolve_phone_backend import isolated_git_environment
+    common = Path(subprocess.check_output(["git", "-C", str(ROOT), "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        env=isolated_git_environment(), text=True, stderr=subprocess.DEVNULL, timeout=30).strip()).resolve()
+    if common.name != ".git": raise RuntimeError("fixture workspace common directory invalid")
+    bootstrap = common.parent.parent / "anshin/scripts/workspace_paths.py"
+    spec = importlib.util.spec_from_file_location("phone_fixture_workspace", bootstrap)
+    paths = importlib.util.module_from_spec(spec); spec.loader.exec_module(paths)
+    environment = os.environ if env is None else env
+    workspace = paths.resolve_workspace_root(repository_root=ROOT, env=environment)
+    configured = environment.get("ANSHIN_GOVERNANCE_ROOT")
+    governance = paths.validate_repository_path(Path(configured), "Anshin governance") if configured else paths.resolve_repository_path(workspace, "Anshin governance", ("anshin",))
+    spec = importlib.util.spec_from_file_location("phone_fixture_docker_owner", governance / "scripts/local_docker_resource_manager.py")
+    manager = importlib.util.module_from_spec(spec); spec.loader.exec_module(manager)
+    if _fixture_signal_state is not None: _fixture_signal_state["manager"] = manager
+    return manager
 
 
 def fixture_labels(project, expires_at=None):
@@ -115,23 +163,144 @@ def docker_test_lease():
         yield
 
 
-def run(command: list[str], *, env: dict[str, str], check: bool = True, input_text: str | None = None) -> subprocess.CompletedProcess[str]:
-    if input_text is None:
-        from production_runtime import run_owned_process
-        result = run_owned_process(command, cwd=ROOT, env=env, text=True,
-                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=None)
-        if check:result.check_returncode()
+def fixture_process_factory(argv, **options):
+    state=_fixture_signal_state
+    if state:state['registering']=True
+    try:return subprocess.Popen(argv,**options)
+    except BaseException:
+        if state:state['registering']=False
+        raise
+
+
+def fixture_process_registered(process):
+    state=_fixture_signal_state
+    if state:state['registering']=False
+    if state and not state['cleaning'] and state['pending'] is not None and not state['delivered']:
+        state['delivered']=True
+        raise FixtureInterrupted(state['pending'])
+
+
+def fixture_runtime_runner(project, env):
+    """Decorate only the local Runtime instance, keeping native recipe bytes."""
+    manager=fixture_manager(env);labels=frozen_fixture_labels(project,env)
+    state=_fixture_signal_state
+    attempted=state['attempted'] if state else {}
+    known=state['created_ids'] if state else {}
+    def native(argv, **options):
+        options.setdefault('timeout',180)
+        options.setdefault('termination_grace',5)
+        return manager.fixture_command(argv,process_factory=fixture_process_factory,registered=fixture_process_registered,**options)
+    def runner(argv, **options):
+        original=list(argv)
+        def metadata(command, **io):
+            return native(command,env=options.get('env'),**io)
+        command=2
+        if argv[:2]==['docker','compose']:
+            global_values={'--project-name','-p','--project-directory','--env-file','--file','-f','--profile','--ansi','--progress','--parallel'}
+            while command<len(argv) and argv[command].startswith('-'):
+                command+=2 if argv[command] in global_values else 1
+        if argv[:2]==['docker','compose'] and command<len(argv) and argv[command] in ('up','run','create'):
+            prefix=argv[:command]
+            rendered=native([*prefix,'config','--format','json','--no-env-resolution'],
+                env=options.get('env'),capture_output=True,text=True,timeout=30,check=True)
+            config=json.loads(rendered.stdout)
+            services=config.get('services',{})
+            if not services or any(any((recipe.get('labels') or {}).get(k)!=v for k,v in labels.items()) for recipe in services.values()):
+                raise RuntimeError('fixture native Compose declaration owner mismatch')
+            manager.verify_fixture_project(project,labels,config=config,driver=metadata)
+            manager.verify_fixture_build_images(config,project,labels,driver=metadata)
+            attempted.update({recipe.get('container_name') or project+'-'+service+'-1':dict(labels)
+                for service,recipe in services.items()})
+        if argv[:2] in (['docker','run'],['docker','create']) or argv[:2]==['docker','compose']:
+            declared={}
+            argv=manager.fixture_container_arguments(argv,labels,declared,preserve_volume_identity=True)
+            if any(proof!=labels for proof in declared.values()):
+                raise RuntimeError('fixture creation owner differs before RPC')
+            for name in declared:
+                if name in known:
+                    prior=metadata(['docker','ps','-aq','--no-trunc','--filter','id='+known[name]],capture_output=True,text=True,timeout=30)
+                    if prior.returncode or prior.stdout.strip():raise RuntimeError('fixture prior full identity still present before recreation')
+                    known.pop(name)
+            attempted.update(declared)
+        action = argv[1] if argv[:1]==['docker'] and len(argv)>1 else None
+        if argv[:2]==['docker','container'] and len(argv)>2:action=argv[2]
+        if action in ('stop','kill','rm'):
+            # Native callers use one target; reject any extra unproved actor.
+            start=3 if argv[:2]==['docker','container'] else 2
+            operands=[];index=start
+            values={'--time','-t','--signal','-s','--timeout'}
+            flags={'--force','-f','--volumes','-v','--link','-l'}
+            while index<len(argv):
+                token=argv[index]
+                if token in values:
+                    if index+1>=len(argv):raise RuntimeError('fixture native mutation option incomplete')
+                    index+=2;continue
+                if token in flags:index+=1;continue
+                if token.startswith('--') and '=' in token and token.split('=',1)[0] in values:index+=1;continue
+                if token.startswith('-'):raise RuntimeError('fixture native mutation option unsupported')
+                operands.append(token);index+=1
+            if len(operands)!=1 or operands[0]!=argv[-1]:raise RuntimeError('fixture native mutation requires one final target')
+            target=operands[0]
+            if not (target in attempted or re.fullmatch('[a-f0-9]{64}',target)):
+                raise RuntimeError('fixture native mutation identity unregistered')
+            read=metadata(['docker','inspect',target],capture_output=True,text=True,timeout=30)
+            if read.returncode:
+                # Inspect errors are not absence. An exact fresh list may prove
+                # an already removed registered name/ID, never adopt a new one.
+                query='id='+target if re.fullmatch('[a-f0-9]{64}',target) else 'name=^/'+re.escape(target)+'$'
+                present=metadata(['docker','ps','-aq','--no-trunc','--filter',query],capture_output=True,text=True,timeout=30)
+                if present.returncode or present.stdout.strip():raise RuntimeError('fixture native mutation identity unavailable')
+                return subprocess.CompletedProcess(original,0,'' if options.get('text') else b'','' if options.get('text') else b'')
+            rows=json.loads(read.stdout)
+            if len(rows)!=1:raise RuntimeError('fixture native mutation identity ambiguous')
+            row=rows[0];name=row.get('Name','').lstrip('/')
+            if (name not in attempted or attempted[name]!=labels or not re.fullmatch('[a-f0-9]{64}',row.get('Id',''))
+                    or target!=name and target!=row['Id']
+                    or name in known and known[name]!=row['Id']
+                    or any((row.get('Config',{}).get('Labels') or {}).get(k)!=v for k,v in labels.items())):
+                raise RuntimeError('fixture native mutation owner mismatch')
+            if action=='rm':
+                removed=fixture_cleanup_action(lambda:manager.cleanup_named_fixture_assets([name],(),labels,expected_ids={name:row['Id']},
+                    force='--force' in argv or '-f' in argv,driver=metadata) or True)
+                if removed is True:known.pop(name,None)
+                return subprocess.CompletedProcess(original,0,'' if options.get('text') else b'','' if options.get('text') else b'')
+            # Apply the checked immutable ID, never the lookup name.
+            argv=[*argv[:-1],row['Id']]
+        result=native(argv,**options)
+        if argv[:2]==['docker','create'] and not result.returncode:
+            identity=result.stdout.strip()
+            if isinstance(identity,bytes):identity=identity.decode()
+            if re.fullmatch('[a-f0-9]{64}',identity):
+                for name in attempted:
+                    if '--name' in argv and argv[argv.index('--name')+1]==name:known[name]=identity
         return result
-    return subprocess.run(
-        command,
-        cwd=ROOT,
-        env=env,
-        check=check,
-        text=True,
-        input=input_text,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-    )
+    return runner
+
+
+def fixture_volume_observation(runtime, project, env):
+    """Project only validated fixture metadata before the native consumer."""
+    labels=frozen_fixture_labels(project,env);original=runtime.command
+    names={project+'_postgres-data',project+'_fax-protected-storage'}
+    def command(argv, **options):
+        result=original(argv,**options)
+        if argv[:3]==['docker','volume','inspect'] and '--format' not in argv and not result.returncode:
+            rows=json.loads(result.stdout)
+            for row in rows:
+                if row.get('Name') not in names:continue
+                actual=row.get('Labels') or {}
+                if any(actual.get(k)!=v for k,v in labels.items()):raise RuntimeError('fixture native volume ownership changed')
+                row['Labels']={k:v for k,v in actual.items() if k not in labels}
+            return subprocess.CompletedProcess(result.args,result.returncode,json.dumps(rows),result.stderr)
+        return result
+    runtime.command=command
+    return original
+
+
+def run(command: list[str], *, env: dict[str, str], check: bool = True, input_text: str | None = None, timeout: float | None = None, cwd=None, stdin=None, text=True, termination_grace=0) -> subprocess.CompletedProcess[str]:
+    manager = fixture_manager(env)
+    return manager.fixture_command(command, cwd=cwd or ROOT, env=env, text=text, input=input_text, stdin=stdin,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout if timeout is not None else 600 if "--build" in command or "build" in command else 180,
+        check=check, process_factory=fixture_process_factory, registered=fixture_process_registered,termination_grace=termination_grace)
 
 
 def compose_args(project: str) -> list[str]:
@@ -212,16 +381,124 @@ def ensure_cleanup_succeeded(cleanup: subprocess.CompletedProcess[str], residue:
             raise RuntimeError(message)
 
 
-def cleanup_owned_runtime(base: list[str], project: str, env: dict[str,str], failed: bool) -> None:
-    # A UI consumer is created with docker run, so Compose does not own it.
-    # Remove it before its network producers, including a failed restore phase.
-    run(["docker","rm","--force",project+"-management-ui"],env=env,check=False)
-    built_image_ids = project_image_ids(project,env)
-    cleanup = run(cleanup_args(base),env=env,check=False)
-    residue = cleanup_residue(base,project,env,built_image_ids)
-    if cleanup.returncode != 0 or residue or failed:
-        print(cleanup.stdout,end="")
-    ensure_cleanup_succeeded(cleanup,residue,failed)
+def fixture_phase_driver(env):
+    def driver(argv, **options):
+        return run(argv, env=env, check=options.get("check", False), input_text=options.get("input"), timeout=options.get("timeout",30))
+    return driver
+
+
+def frozen_fixture_labels(project, env):
+    expiry=env.get("PHONE_TEST_EXPIRES_AT")
+    if not expiry: raise RuntimeError("fixture original expiry missing; inputs retained")
+    return fixture_labels(project, expiry)
+
+
+def verify_fixture_build_images(manager, config, project, labels, driver):
+    return manager.verify_fixture_build_images(config,project,labels,driver=driver)
+
+
+def _cleanup_owned_runtime(base: list[str], project: str, env: dict[str,str], failed: bool) -> None:
+    manager=fixture_manager(env);labels=frozen_fixture_labels(project,env);driver=fixture_phase_driver(env)
+    errors=[];config=None;tags=[]
+    try: config=json.loads(run(base+["config","--format","json","--no-env-resolution"],env=env,timeout=30).stdout)
+    except Exception as error: errors.append(error)
+    # UI is a direct run actor and must be gone before its network producers.
+    try: manager.cleanup_named_fixture_assets([project+'-management-ui'],(),labels,driver=driver,
+            expected_ids={project+'-management-ui':env['PHONE_UI_CONTAINER_ID']} if env.get('PHONE_UI_CONTAINER_ID') else None)
+    except Exception as error: errors.append(error)
+    preflight_failed=False
+    if config is not None:
+        try:
+            manager.verify_fixture_project(project,labels,config=config,driver=driver)
+            tags=verify_fixture_build_images(manager,config,project,labels,driver)
+        except Exception as error: errors.append(error);preflight_failed=True
+        if not preflight_failed:
+            try: run(cleanup_args(base),env=env,timeout=120)
+            except Exception as error: errors.append(error)
+        # Even a rejected member or partial down cannot skip other declared
+        # resources with fresh, independently proven original ownership.
+        containers=[recipe.get('container_name') or project+'-'+service+'-1' for service,recipe in config.get('services',{}).items()]
+        state=_fixture_signal_state
+        if state:containers+= [name for name,proof in state['attempted'].items() if proof==labels and name not in containers]
+        networks=[recipe.get('name') or project+'_'+key for key,recipe in config.get('networks',{}).items() if not recipe.get('external')]
+        volumes=[recipe.get('name') or project+'_'+key for key,recipe in config.get('volumes',{}).items() if not recipe.get('external')]
+        for action in (
+            lambda:manager.cleanup_named_fixture_assets(containers,networks,labels,volumes=volumes,driver=driver,expected_ids=state['created_ids'] if state else None),
+            lambda:manager.cleanup_fixture_images(labels,allowed_tags=tags,driver=driver),
+            lambda:manager.verify_fixture_project(project,labels,config=config,absent=True,driver=driver),
+        ):
+            try:action()
+            except Exception as error:errors.append(error)
+    if errors:
+        if failed: print('SIP E2E cleanup unconfirmed; original failure and inputs retained')
+        else: raise RuntimeError('SIP E2E cleanup unconfirmed; inputs retained') from errors[0]
+
+
+def fixture_cleanup_action(action):
+    primary=sys.exc_info()[1]
+    try:
+        with fixture_cleanup_signals(): return action()
+    except BaseException:
+        if primary is None: raise
+        if hasattr(primary,'add_note'): primary.add_note('Phone fixture secondary cleanup failed; retain inputs')
+        else: print('Phone fixture secondary cleanup failed; retain inputs',file=sys.stderr)
+
+
+def fixture_cleanup_actions(*actions):
+    def all_actions():
+        errors=[]
+        for action in actions:
+            try: action()
+            except BaseException as error: errors.append(error)
+        if errors:
+            state=_fixture_signal_state
+            if state and state['pending'] is not None:
+                state['delivered']=True
+                raise FixtureInterrupted(state['pending']) from errors[0]
+            raise RuntimeError('Phone fixture cleanup incomplete; retain inputs') from errors[0]
+    return fixture_cleanup_action(all_actions)
+
+
+def stop_fixture_process(process):
+    if process is None:return
+    if getattr(process,'_fixture_drained',False):return
+    # A completed/reaped CLI must not signal a potentially reused PID later.
+    if process.returncode is None:
+        try:os.killpg(process.pid,signal.SIGTERM)
+        except ProcessLookupError:pass
+    try:process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:os.killpg(process.pid,signal.SIGKILL)
+        except ProcessLookupError:pass
+        process.communicate(timeout=5)
+    process._fixture_drained=True
+    state=_fixture_signal_state
+    if state and process in state['backgrounds']:state['backgrounds'].remove(process)
+
+
+def start_fixture_process(argv, **options):
+    state=_fixture_signal_state
+    if state:state['registering']=True
+    try:
+        process=subprocess.Popen(argv,start_new_session=True,**options)
+        if state:state['backgrounds'].append(process)
+    except BaseException:
+        if state:state['registering']=False
+        raise
+    if state:
+        state['registering']=False
+        if state['pending'] is not None and not state['cleaning'] and not state['delivered']:
+            state['delivered']=True
+            fixture_cleanup_actions(lambda:stop_fixture_process(process))
+            raise FixtureInterrupted(state['pending'])
+    return process
+
+
+def cleanup_owned_runtime(base, project, env, failed):
+    primary=sys.exc_info()[1]
+    state=_fixture_signal_state
+    actions=[lambda process=process:stop_fixture_process(process) for process in state['backgrounds']] if state else []
+    return fixture_cleanup_actions(*actions,lambda:_cleanup_owned_runtime(base,project,env,failed or primary is not None))
 
 
 def wait_for_asterisk(base: list[str], env: dict[str, str]) -> None:
@@ -319,7 +596,7 @@ def wait_for_smartphone_contact(base: list[str], env: dict[str, str]) -> None:
 def exec_background(
     base: list[str], service: str, args: list[str], env: dict[str, str]
 ) -> subprocess.Popen[str]:
-    return subprocess.Popen(
+    return start_fixture_process(
         base + ["exec", "-T", service] + args,
         cwd=ROOT,
         env=env,
@@ -333,11 +610,13 @@ def finish(process: subprocess.Popen[str], label: str) -> None:
     try:
         output, _ = process.communicate(timeout=20)
     except subprocess.TimeoutExpired:
-        process.terminate()
-        output, _ = process.communicate(timeout=5)
-        raise RuntimeError(f"{label} timed out:\n{output}")
+        stop_fixture_process(process)
+        raise RuntimeError(f"{label} timed out; private fixture inputs retained")
+    process._fixture_drained=True
+    state=_fixture_signal_state
+    if state and process in state['backgrounds']:state['backgrounds'].remove(process)
     if process.returncode != 0:
-        raise RuntimeError(f"{label} failed with exit {process.returncode}:\n{output}")
+        raise RuntimeError(f"{label} failed with exit {process.returncode}; private fixture inputs retained")
 
 
 def validate_browser_inputs(env: dict[str,str]) -> tuple[Path,dict]:
@@ -364,13 +643,15 @@ def run_management_browser_flow(base: list[str], env: dict[str, str], secret_pat
     print("phase=management-browser state=started", flush=True)
     succeeded = False
     try:
-        run(["docker", "run", "--log-driver", "local", "--log-opt", "max-size=10m", "--log-opt", "max-file=5", "--detach", "--name", container, "--label", "anshin.task=phone-foundation-20261012",
+        ui_result=run(["docker", "run", "--label", "com.docker.compose.project="+project, "--log-driver", "local", "--log-opt", "max-size=10m", "--log-opt", "max-file=5", "--detach", "--name", container, "--label", "anshin.task=phone-foundation-20261012",
             *[argument for key,value in fixture_labels(project,env.get("PHONE_TEST_EXPIRES_AT")).items() for argument in ("--label",key+"="+value)],
             "--user", f"{os.getuid()}:{os.getgid()}", "--network", project + "_phone-data",
             "--publish", "127.0.0.1:3015:3015", "--volume", str(frontend) + ":/workspace",
             "--workdir", "/workspace/apps/anshin-phone", "--env", "PHONE_API_PROXY_TARGET=http://backend:8000",
             "--env", "VITE_OIDC_ISSUER=" + env["PHONE_LOCAL_OIDC_ISSUER"], "node:24-bookworm-slim",
             "node", "node_modules/vite/bin/vite.js", "--host", "0.0.0.0", "--port", "3015", "--strictPort"], env=env)
+        if not re.fullmatch('[a-f0-9]{64}',ui_result.stdout.strip()):raise RuntimeError('fixture UI create response invalid')
+        env['PHONE_UI_CONTAINER_ID']=ui_result.stdout.strip()
         run(["docker", "network", "connect", env["PHONE_LOCAL_AUTH_NETWORK"], container], env=env)
         import urllib.request
         deadline = time.monotonic() + 15
@@ -384,8 +665,8 @@ def run_management_browser_flow(base: list[str], env: dict[str, str], secret_pat
             raise RuntimeError("phase=management-browser state=startup-timeout")
         browser_env = dict(env, PHONE_TEST_BASE_URL="http://localhost:3015", PHONE_TEST_PDF_FILE=str(secret_path / "synthetic-fax.pdf"),
             PHONE_TEST_OUTPUT_DIR=str(secret_path / "playwright-output"))
-        completed = subprocess.run(["pnpm", "--dir", "apps/anshin-phone", "run", "test:e2e"], cwd=frontend,
-            env=browser_env, text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=240)
+        completed = run(["pnpm", "--dir", "apps/anshin-phone", "run", "test:e2e"], cwd=frontend,
+            env=browser_env, check=False, timeout=240)
         print(completed.stdout, end="", flush=True)
         if completed.returncode:
             raise RuntimeError("phase=management-browser state=assertion-failed")
@@ -393,7 +674,8 @@ def run_management_browser_flow(base: list[str], env: dict[str, str], secret_pat
         succeeded = True
     finally:
         if not (succeeded and env.get("PHONE_PREVIEW_DIR")):
-            run(["docker", "rm", "--force", container], env=env, check=False)
+            fixture_cleanup_action(lambda:fixture_manager(env).cleanup_named_fixture_assets([container],(),frozen_fixture_labels(project,env),driver=fixture_phase_driver(env),
+                    expected_ids={container:env['PHONE_UI_CONTAINER_ID']} if env.get('PHONE_UI_CONTAINER_ID') else None))
 
 
 def start_concurrent_voice(base: list[str], env: dict[str,str]):
@@ -438,7 +720,7 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
     run(base + ["exec", "-T", "mock-carrier", "gs", "-q", "-dSAFER", "-dBATCH", "-dNOPAUSE", "-sDEVICE=pdfwrite", "-sOutputFile=/tmp/mock-send.pdf", "/mock-fax/synthetic-fax.ps"], env=env)
     carrier_log = secret_path / "mock-fax-runtime.log"
     carrier_output = carrier_log.open("w")
-    carrier = subprocess.Popen(base + ["exec", "-T", "mock-carrier", "sh", "/mock-fax/start.sh"], cwd=ROOT, env=env,
+    carrier = start_fixture_process(base + ["exec", "-T", "mock-carrier", "sh", "/mock-fax/start.sh"], cwd=ROOT, env=env,
         text=True, stdout=carrier_output, stderr=subprocess.STDOUT)
     load_smartphone = None
     completed = False
@@ -554,20 +836,44 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
         return carrier.pid if env.get("PHONE_PREVIEW_DIR") else None
 
     finally:
-        if forwarder_paused:
-            run(base + ['unpause', 'pbx-event-forwarder'], env=env, check=False)
-        if load_smartphone is not None and load_smartphone.poll() is None:
-            load_smartphone.terminate()
-            load_smartphone.communicate(timeout=5)
-        if not (completed and env.get("PHONE_PREVIEW_DIR")):
-            if carrier.poll() is None:
-                carrier.terminate()
-            try:
-                carrier.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                carrier.kill()
-                carrier.communicate(timeout=5)
-        carrier_output.close()
+        actions=[]
+        if forwarder_paused:actions.append(lambda:run(base+['unpause','pbx-event-forwarder'],env=env,check=False))
+        if load_smartphone is not None:actions.append(lambda:stop_fixture_process(load_smartphone))
+        if not (completed and env.get('PHONE_PREVIEW_DIR')):actions.append(lambda:stop_fixture_process(carrier))
+        actions.append(carrier_output.close)
+        fixture_cleanup_actions(*actions)
+
+
+def fixture_backup_environment(env, project):
+    # Scoped to this native shell invocation; no global executable or source
+    # recipe is replaced. Python's direct Docker RPCs bypass the Bash function.
+    name=project+'-backup-tar-'+uuid.uuid4().hex[:10]
+    state=_fixture_signal_state
+    if state:state['attempted'][name]=frozen_fixture_labels(project,env)
+    result=dict(env,PHONE_FIXTURE_PROJECT=project,PHONE_FIXTURE_HELPER_NAME=name,PHONE_FIXTURE_PYTHON=sys.executable,
+                PHONE_FIXTURE_SCRIPT=str(Path(__file__).resolve()))
+    result['BASH_FUNC_docker%%']='() { if [[ "$1" == run ]]; then shift; "$PHONE_FIXTURE_PYTHON" "$PHONE_FIXTURE_SCRIPT" --fixture-docker-run run --name "$PHONE_FIXTURE_HELPER_NAME" "$@"; else command docker "$@"; fi; }'
+    return result
+
+
+def run_fixture_docker_command(arguments):
+    if not arguments or arguments[0]!='run':raise ValueError('fixture native adapter accepts only docker run')
+    env=os.environ.copy();project=env['PHONE_FIXTURE_PROJECT']
+    labels={**frozen_fixture_labels(project,env),'com.docker.compose.project':project}
+    with fixture_signals():
+        # This short native archive consumer has one bounded body and complete
+        # owned finalization; first/repeated stops are delivered after both.
+        with fixture_cleanup_signals():
+            manager=fixture_manager(env)
+            def driver(argv,**options):
+                return manager.fixture_command(argv,env=env,process_factory=fixture_process_factory,
+                    registered=fixture_process_registered,**options)
+            declared={}
+            argv=manager.fixture_container_arguments(['docker',*arguments],labels,declared,preserve_volume_identity=True)
+            if set(declared)!={env['PHONE_FIXTURE_HELPER_NAME']}:
+                raise RuntimeError('fixture native helper name differs from parent registration')
+            result=manager.run_owned_fixture_container(argv,labels,driver=driver,timeout=180)
+    return result.returncode
 
 
 def run_backup_restore(base: list[str], env: dict[str,str], directory: Path) -> None:
@@ -577,10 +883,10 @@ def run_backup_restore(base: list[str], env: dict[str,str], directory: Path) -> 
     backup_env = dict(env, COMPOSE_PROJECT_NAME=project, COMPOSE_FILE=os.pathsep.join(compose_files))
     run(base + ["pause","backend","asterisk","pbx-event-forwarder"],env=env)
     try:
-        result = run(["sh",str(ROOT / "scripts/create_phase1_backup.sh"),"--execute",str(directory / "backup")],env=backup_env)
+        result = run(["bash",str(ROOT / "scripts/create_phase1_backup.sh"),"--execute",str(directory / "backup")],env=fixture_backup_environment(backup_env,project),termination_grace=430)
         print(result.stdout,end="",flush=True)
     finally:
-        run(base + ["unpause","backend","asterisk","pbx-event-forwarder"],env=env)
+        fixture_cleanup_actions(lambda:run(base + ["unpause","backend","asterisk","pbx-event-forwarder"],env=env))
     backup = next((directory / "backup").iterdir())
     run(["shasum","-a","256","-c",str(backup / "SHA256SUMS")],env=env)
     restore_db = "phone_restore_" + uuid.uuid4().hex[:12]
@@ -590,16 +896,17 @@ def run_backup_restore(base: list[str], env: dict[str,str], directory: Path) -> 
     run(base + ["exec","-T","postgres","createdb","-U","anshin_phone",restore_db],env=env)
     try:
         with (backup / "postgres.dump").open("rb") as source:
-            subprocess.run(base + ["exec","-T","postgres","pg_restore","--exit-on-error","--no-owner","-U","anshin_phone","-d",restore_db],cwd=ROOT,env=env,stdin=source,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
+            run(base + ["exec","-T","postgres","pg_restore","--exit-on-error","--no-owner","-U","anshin_phone","-d",restore_db],env=env,stdin=source,text=False,timeout=180)
         run(base + ["exec","-T","backend","mkdir","-m","700",restore_root],env=env)
         with (backup / "fax-encrypted.tar").open("rb") as source:
-            subprocess.run(base + ["exec","-T","backend","tar","-xf","-","-C",restore_root],cwd=ROOT,env=env,stdin=source,stdout=subprocess.PIPE,stderr=subprocess.PIPE,check=True)
+            run(base + ["exec","-T","backend","tar","-xf","-","-C",restore_root],env=env,stdin=source,text=False,timeout=180)
         code = "from sqlalchemy import select;from app.core.database import SessionLocal;from app.models.telephony import FaxDocument,FaxJob,CallRecord;from app.core.fax_storage import read,validate_document;db=SessionLocal();docs=list(db.scalars(select(FaxDocument)));assert len(docs)>=3;assert len(list(db.scalars(select(CallRecord))))>=2;assert len(list(db.scalars(select(FaxJob).where(FaxJob.status=='sent'))))>=2;[(validate_document(read(db,d.tenant_id,d.id)[1],d.content_type)) for d in docs];print('PASS: isolated restored database and AES-GCM originals through production reader')"
         result = run(base + ["exec","-T","--env","ANSHIN_PHONE_DB_NAME="+restore_db,"--env","ANSHIN_PHONE_FAX_STORAGE_DIR="+restore_root,"backend","python","-c",code],env=env)
         print(result.stdout,end="",flush=True)
     finally:
-        run(base + ["exec","-T","postgres","dropdb","-U","anshin_phone",restore_db],env=env)
-        run(base + ["exec","-T","backend","rm","-rf",restore_root],env=env)
+        fixture_cleanup_actions(
+            lambda:run(base + ["exec","-T","postgres","dropdb","-U","anshin_phone",restore_db],env=env),
+            lambda:run(base + ["exec","-T","backend","rm","-rf",restore_root],env=env))
 
 
 def verify_personal_call_history(base, env):
@@ -708,6 +1015,10 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
         base += ["--file",str(ownership)]
         failed = False
         try:
+            manager=fixture_manager(env);labels=frozen_fixture_labels(project,env);driver=fixture_phase_driver(env)
+            rendered=json.loads(run(base+["config","--format","json","--no-env-resolution"],env=env,timeout=30).stdout)
+            manager.verify_fixture_project(project,labels,config=rendered,driver=driver)
+            verify_fixture_build_images(manager,rendered,project,labels,driver)
             bootstrap_started = time.monotonic()
             print("phase=compose-bootstrap state=started", flush=True)
             if fixture_only == "database":
@@ -810,16 +1121,8 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 # The UI is the last consumer. Keep producer resources and
                 # their original secret mounts alive until the owning session
                 # terminates this fixture; cleanup then follows the same path.
-                import signal
-                stopped = False
-                def stop(*_):
-                    nonlocal stopped
-                    stopped = True
-                signal.signal(signal.SIGTERM, stop)
-                signal.signal(signal.SIGINT, stop)
-                while not stopped:
+                while True:
                     time.sleep(1)
-                return 0
 
             registration = run(
                 base
@@ -1124,7 +1427,8 @@ def production_backup_transition_fixture(runtime, temporary, profile):
                 if duplicated:os.dup2(lock.fileno(),9,inheritable=False)
                 try:
                     with patch.dict(os.environ,kwargs['env']):
-                        result=owner.capture_pair(work,work/'fixture.dump.age',recipient,runtime=runtime)
+                        with fixture_cleanup_signals():
+                            result=owner.capture_pair(work,work/'fixture.dump.age',recipient,runtime=runtime)
                 finally:
                     if duplicated:os.close(9)
             captures.append(result)
@@ -1165,6 +1469,7 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
     env = os.environ.copy()
     ensure_mock_networks_available(env)
     project = 'phone-management-' + uuid.uuid4().hex[:12]
+    env['PHONE_TEST_EXPIRES_AT']=fixture_labels(project)['care.anshin.local.expires_at']
     transport = {key: env[key] for key in ('PATH', 'HOME', 'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG') if key in env}
     if not transport.get('DOCKER_HOST'):
         transport['DOCKER_HOST'] = run(['docker', 'context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'], env=env).stdout.strip()
@@ -1222,28 +1527,33 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
             # The daemon is inside the Mac Docker VM. Bind the already
             # inspected backing path: unlike a named volume or -v, --mount
             # fails if it disappeared and never creates a replacement.
-            observed = runtime.command(['docker', 'run', '--log-driver', 'local', '--log-opt', 'max-size=10m', '--log-opt', 'max-file=5', '--rm', '--pull', 'never', '--network', 'none',
+            manager=fixture_manager(env)
+            observed = manager.run_owned_fixture_container(['docker', 'run', '--log-driver', 'local', '--log-opt', 'max-size=10m', '--log-opt', 'max-file=5', '--rm', '--pull', 'never', '--network', 'none',
                 '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--user', '0:0',
                 '--label', 'com.docker.compose.project=' + project,
                 '--label', 'com.docker.compose.service=volume-inspection',
                 '--label', 'care.anshin.local.ephemeral=true',
-                '--label', 'care.anshin.local.expires_at=' + (datetime.now(timezone.utc)+timedelta(hours=1)).isoformat(),
-                '--label', 'care.anshin.local.owner=MAC',
-                '--label', 'care.anshin.local.task_id=phone-production-20261016',
+                *[part for key,value in frozen_fixture_labels(project,env).items() if key!='care.anshin.local.ephemeral' for part in ('--label',key+'='+value)],
                 '--mount', 'type=bind,src=' + mountpoint + ',dst=/inspect,readonly',
                 '--entrypoint', 'python', image, '-c',
-                "import os,json; s=os.lstat('/inspect'); print(json.dumps({'mode':s.st_mode,'device':s.st_dev,'inode':s.st_ino}))"], timeout=30)
+                "import os,json; s=os.lstat('/inspect'); print(json.dumps({'mode':s.st_mode,'device':s.st_dev,'inode':s.st_ino}))"], frozen_fixture_labels(project,env),driver=fixture_phase_driver({**env,**transport}),
+                    created=_fixture_signal_state['attempted'] if _fixture_signal_state else None,timeout=30)
             return json.loads(observed.stdout)
         runtime = Runtime(root=ROOT, state=temporary / 'state', secrets=secret_root, project=project,
-                          lock=temporary / 'release.lock', transport=transport, backend_port=port,
+                          lock=temporary / 'release.lock', transport=transport, backend_port=port,runner=fixture_runtime_runner(project,env),
                           backend_bind='127.0.0.1', compose_extra_files=(network_override,), volume_stat=volume_stat)
         infra_sha = run(['git', 'rev-parse', 'HEAD'], env=env).stdout.strip()
         profile = {'source_root': str(ROOT), 'backend_image': image, 'backend_sha': backend_sha, 'infra_sha': infra_sha}
         compiled=json.loads(runtime.compose(profile,'config','--format','json','--no-env-resolution').stdout)
-        ownership=fixture_ownership_override(compiled,project)
+        ownership=fixture_ownership_override(compiled,project,env["PHONE_TEST_EXPIRES_AT"])
         for name, config in json.loads(network_override.read_text())["networks"].items():
             ownership["networks"].setdefault(name,{}).update(config)
         network_override.write_text(json.dumps(ownership))
+        if _fixture_signal_state is not None:
+            labels=frozen_fixture_labels(project,env)
+            _fixture_signal_state['attempted'].update({recipe.get('container_name') or project+'-'+service+'-1':dict(labels)
+                for service,recipe in compiled.get('services',{}).items()})
+        fixture_volume_observation(runtime,project,env)
         failed = True
         try:
             actual_health = runtime.health
@@ -1396,15 +1706,17 @@ with SessionLocal() as db:
                               'vm_capacity_accepted': False}, sort_keys=True), flush=True)
             failed = False
         finally:
-            cleanup = runtime.compose(profile, 'down', '--volumes', '--remove-orphans', allow_failure=True)
-            selector = f'label=com.docker.compose.project={project}'
-            residue = [kind for kind in ('container', 'volume', 'network')
-                       if runtime.command(['docker', kind, 'ls', '--quiet', '--filter', selector]).stdout.strip()]
-            ensure_cleanup_succeeded(cleanup, residue, failed)
+            base=['docker','compose','--project-name',project,'--project-directory',str(ROOT),'--env-file','/dev/null',
+                  '--file',str(ROOT/'compose.production.yaml'),'--file',str(network_override)]
+            cleanup_owned_runtime(base,project,{**env,**runtime.environment(profile)},failed)
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv=sys.argv[1:] if argv is None else argv
+    if argv[:1]==['--fixture-docker-run']:
+        try:return run_fixture_docker_command(argv[1:])
+        except FixtureInterrupted as error:return 128+error.signum
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
