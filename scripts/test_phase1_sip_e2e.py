@@ -49,7 +49,7 @@ def fixture_ownership_override(compiled, project, expires_at=None):
     labels=fixture_labels(project, expires_at)
     services={}
     for name, service in compiled["services"].items():
-        services[name]={"labels":labels}
+        services[name]={"labels":labels,"logging":{"driver":"local","options":{"max-size":"10m","max-file":"5"}}}
         if service.get("build"):services[name]["build"]={"labels":labels}
     result={"services":services}
     for kind in ("volumes","networks"):
@@ -356,7 +356,7 @@ def run_management_browser_flow(base: list[str], env: dict[str, str], secret_pat
     print("phase=management-browser state=started", flush=True)
     succeeded = False
     try:
-        run(["docker", "run", "--detach", "--name", container, "--label", "anshin.task=phone-foundation-20261012",
+        run(["docker", "run", "--log-driver", "local", "--log-opt", "max-size=10m", "--log-opt", "max-file=5", "--detach", "--name", container, "--label", "anshin.task=phone-foundation-20261012",
             *[argument for key,value in fixture_labels(project,env.get("PHONE_TEST_EXPIRES_AT")).items() for argument in ("--label",key+"="+value)],
             "--user", f"{os.getuid()}:{os.getgid()}", "--network", project + "_phone-data",
             "--publish", "127.0.0.1:3015:3015", "--volume", str(frontend) + ":/workspace",
