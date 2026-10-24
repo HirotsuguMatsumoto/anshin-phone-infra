@@ -127,9 +127,13 @@ def fixture_directory(*, prefix="anshin-phone-test-secrets-", allow_preview=True
         path = Path(tempfile.mkdtemp(prefix=prefix))
     try:
         yield path, state
-    except BaseException:
+    except BaseException as primary:
         state["retain"] = True
-        print("SIP E2E inputs retained after failure: " + str(path))
+        try:
+            print("SIP E2E inputs retained after failure: " + str(path))
+        except (OSError, ValueError):
+            if hasattr(primary, "add_note"):
+                primary.add_note("SIP E2E inputs retained; diagnostic output unavailable")
         raise
     finally:
         if not state["retain"]:

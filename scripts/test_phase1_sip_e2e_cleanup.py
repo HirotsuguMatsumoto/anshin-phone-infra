@@ -724,15 +724,22 @@ raise SystemExit('stop was lost')
         self.assertEqual(set(labels),{"care.anshin.local."+key for key in ("owner","task_id","ephemeral","expires_at")})
 
     def test_fixture_sources_survive_failed_cleanup(self):
-        import os,shutil
+        import os,shutil,signal
         path = None
         try:
-            with mock.patch.dict(os.environ, {"PHONE_PREVIEW_DIR":""}):
-                with self.assertRaisesRegex(RuntimeError, "cleanup-unconfirmed"):
-                    with test_phase1_sip_e2e.fixture_directory() as (path, state):
-                        (path / "source").write_text("retain")
-                        raise RuntimeError("cleanup-unconfirmed")
-            self.assertTrue((path / "source").exists())
+            for primary in (RuntimeError("cleanup-unconfirmed"),
+                            test_phase1_sip_e2e.FixtureInterrupted(signal.SIGTERM)):
+                for diagnostic_error in (BrokenPipeError(),OSError(),ValueError()):
+                    with self.subTest(primary=type(primary).__name__,diagnostic=type(diagnostic_error).__name__), \
+                         mock.patch.dict(os.environ, {"PHONE_PREVIEW_DIR":""}), \
+                         mock.patch('builtins.print',side_effect=diagnostic_error):
+                        with self.assertRaises(type(primary)) as caught:
+                            with test_phase1_sip_e2e.fixture_directory() as (path, state):
+                                (path / "source").write_text("retain")
+                                raise primary
+                        self.assertIs(primary,caught.exception)
+                        self.assertTrue((path / "source").exists())
+                    shutil.rmtree(path);path=None
         finally:
             if path is not None:shutil.rmtree(path)
         with mock.patch.dict(os.environ, {"PHONE_PREVIEW_DIR":""}):
