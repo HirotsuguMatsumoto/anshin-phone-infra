@@ -19,6 +19,7 @@ import shlex
 import stat
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
@@ -216,8 +217,6 @@ REPOSITORY_NAMES = (
     "anshin-frontend-mobile",
     "anshin-frontend-monorepo",
     "anshin-helper-service",
-    "anshin-marketing-backend",
-    "anshin-marketing-infra",
     "anshin-operations-platform",
     "anshin-phone-backend",
     "anshin-phone-infra",
@@ -1193,22 +1192,6 @@ def repository_adapter_spec(
         raise ContractError("build-check native selector signature is ambiguous")
     if candidates:
         return candidates[0]
-    marketing_markers = (
-        'MODE="${1:---full}"',
-        "--full|--fast|--documents-only",
-        "tests.test_marketing_retirement_guard tests.test_release_impact",
-        'if [[ "$MODE" == "--full" ]]; then',
-        "bash tests/test_marketing_retirement_integration.sh",
-    )
-    if all(marker in text for marker in marketing_markers):
-        return {
-            "kind": "marketing-legacy",
-            "invocation": [],
-            "selector": "",
-            "dependencies": [],
-            "plan_args": [],
-            "execution_args": [],
-        }
     return {
         "kind": "legacy",
         "invocation": _legacy_invocation(base_hook),
@@ -1983,8 +1966,50 @@ def _adapter_spec(repository_root: Path) -> dict[str, Any]:
     return _adapter_spec_from_build(build.read_bytes())
 
 
+def _frontend_removed_projects(
+    repository_root: Path, *, base: str, tree: str,
+    module_source: bytes | None = None, config_source: bytes | None = None,
+) -> dict[str, Any]:
+    """Reuse the repository's release owner for an exact Git deletion proof."""
+    config_source = config_source if config_source is not None else (
+        repository_root / "config/release-impact.json"
+    ).read_bytes()
+    previous = json.loads(distribution_git(
+        repository_root, "show", f"{base}:config/release-impact.json"
+    ))
+    candidate = json.loads(config_source)
+    if not (set(previous.get("projects", {})) - set(candidate.get("projects", {}))):
+        return {"files": [], "units": []}
+    module_source = module_source if module_source is not None else (
+        repository_root / "scripts/vercel-release-plan.mjs"
+    ).read_bytes()
+    with tempfile.TemporaryDirectory(prefix="anshin-removed-project-plan-") as directory:
+        module = Path(directory) / "vercel-release-plan.mjs"
+        module.write_bytes(module_source)
+        command = ["node", "--input-type=module", "-e", """
+import { pathToFileURL } from 'node:url';
+const owner = await import(pathToFileURL(process.argv[1]).href);
+if (typeof owner.removedProjectsFromGit !== 'function') throw new Error('removed project native owner unavailable');
+const proof = owner.removedProjectsFromGit({ cwd: process.argv[2], baseSha: process.argv[3],
+  currentSha: process.argv[4], config: JSON.parse(process.argv[5]) });
+console.log(JSON.stringify(proof));
+""", str(module), str(repository_root), base, tree, config_source.decode("utf-8")]
+        completed = subprocess.run(command, check=False, text=True, capture_output=True)
+    if completed.returncode:
+        raise ContractError(completed.stderr.strip() or "removed project native proof failed")
+    value = json.loads(completed.stdout)
+    if (
+        not isinstance(value, dict) or set(value) != {"files", "units"}
+        or any(not isinstance(value[key], list) or any(not isinstance(item, str) for item in value[key])
+               for key in ("files", "units"))
+    ):
+        raise ContractError("removed project native proof is invalid")
+    return value
+
+
 def _native_selected_checks(
-    repository_root: Path, spec: dict[str, Any], paths: list[str]
+    repository_root: Path, spec: dict[str, Any], paths: list[str],
+    *, removed_projects: dict[str, Any] | None = None,
 ) -> tuple[list[str], str, bool]:
     selector = spec["selector"]
     selector_paths = paths
@@ -2013,6 +2038,12 @@ print(json.dumps(plan,sort_keys=True))
 """
         command = [sys.executable, "-I", "-c", wrapper, selector, *selector_paths]
     elif modern_frontend:
+        if removed_projects is None:
+            removed_projects = {"files": [], "units": []}
+            if "config/release-impact.json" in paths and (repository_root / ".git").exists():
+                base = distribution_git(repository_root, "merge-base", "HEAD", "origin/main").strip().decode("ascii")
+                tree = distribution_git(repository_root, "write-tree").strip().decode("ascii")
+                removed_projects = _frontend_removed_projects(repository_root, base=base, tree=tree)
         wrapper = """const path=require('node:path');
 const selector=path.resolve(process.argv[1]);
 // Historical native selectors read Git identity at module load and planning.
@@ -2037,10 +2068,10 @@ cp.execFileSync=(command,args,options={})=>{
 };
 const modulePlan=require(selector);
 if(typeof modulePlan.rootQualityPlan!=='function') throw new Error('root pure planner unavailable');
-const plan=modulePlan.rootQualityPlan(process.argv.slice(2),{identity:()=>({qualification:false})});
+const plan=modulePlan.rootQualityPlan(process.argv.slice(3),{identity:()=>({qualification:false}),removedProjects:JSON.parse(process.argv[2])});
 console.log(JSON.stringify(plan));
 """
-        command = ["node", "-e", wrapper, selector, *selector_paths]
+        command = ["node", "-e", wrapper, selector, json.dumps(removed_projects), *selector_paths]
     else:
         command = [
             "node" if selector.endswith(".js") else sys.executable,
@@ -2230,23 +2261,6 @@ def distribution_quality_plan(
         requires_full = False
         reasons = ["SELECTED_DOCUMENT_DISTRIBUTION"]
         deferred = ["repository-runtime", "business-test"]
-    elif spec["kind"] == "marketing-legacy":
-        fast_paths = set(DISTRIBUTION_PATHS) | {
-            "AGENTS.md",
-            "scripts/build_check.sh",
-            "tests/test_marketing_retirement_guard.py",
-        }
-        if set(selected_paths).issubset(fast_paths):
-            checks = ["repository-fast"]
-            profile = "repository-fast"
-            risk, requires_full = "normal", False
-            reasons = ["SELECTED_REPOSITORY_FAST"]
-        else:
-            checks = ["repository-canonical"]
-            profile = "repository-canonical"
-            risk, requires_full = "high", True
-            reasons = ["SELECTED_REPOSITORY_CANONICAL"]
-        deferred = []
     elif spec["kind"] == "legacy":
         checks = ["repository-canonical"]
         profile = "repository-canonical"
@@ -2295,7 +2309,7 @@ def execute_distribution_quality_plan(repository_root: Path, plan_path: Path) ->
         raise ContractError("document-distribution is executed by the shell adapter")
     spec = _adapter_spec(repository_root)
     if plan["profile"] == "repository-canonical":
-        if spec["kind"] not in {"legacy", "marketing-legacy"} or plan[
+        if spec["kind"] != "legacy" or plan[
             "selected_checks"
         ] != ["repository-canonical"]:
             raise ContractError("repository canonical plan does not match its adapter")
@@ -2303,21 +2317,6 @@ def execute_distribution_quality_plan(repository_root: Path, plan_path: Path) ->
         completed = subprocess.run(command, cwd=repository_root, check=False)
         if completed.returncode:
             raise ContractError("repository canonical build check failed")
-        return
-    if plan["profile"] == "repository-fast":
-        if (
-            spec["kind"] != "marketing-legacy"
-            or plan["selected_checks"] != ["repository-fast"]
-            or plan["requires_full"]
-        ):
-            raise ContractError("repository fast plan does not match its adapter")
-        completed = subprocess.run(
-            ["bash", "scripts/build_check.sh", "--fast"],
-            cwd=repository_root,
-            check=False,
-        )
-        if completed.returncode:
-            raise ContractError("repository fast build check failed")
         return
     if plan["profile"] != "repository-native" or spec["kind"] == "legacy":
         raise ContractError("repository-native plan does not match its adapter")
@@ -2430,27 +2429,18 @@ def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -
         or (
             actual.get("profile") == "repository-canonical"
             and (
-                spec["kind"] not in {"legacy", "marketing-legacy"}
+                spec["kind"] != "legacy"
                 or actual.get("selected_checks") != ["repository-canonical"]
             )
         )
         or (
-            actual.get("profile") == "repository-fast"
-            and (
-                spec["kind"] != "marketing-legacy"
-                or actual.get("selected_checks") != ["repository-fast"]
-                or actual.get("requires_full")
-            )
-        )
-        or (
             actual.get("profile") == "repository-native"
-            and spec["kind"] in {"legacy", "marketing-legacy"}
+            and spec["kind"] == "legacy"
         )
         or actual.get("profile")
         not in {
             "document-distribution",
             "repository-canonical",
-            "repository-fast",
             "repository-native",
         }
     ):
