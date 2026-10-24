@@ -35,7 +35,7 @@ def fixture_signals():
     global _fixture_signal_state
     previous = {kind: signal.getsignal(kind) for kind in (signal.SIGHUP, signal.SIGTERM, signal.SIGINT)}
     outer = _fixture_signal_state
-    state = {"cleaning": False, "registering": False, "pending": None, "delivered": False, "manager": None, "backgrounds": [], "attempted": {}, "created_ids": {}}
+    state = {"cleaning": False, "registering": False, "pending": None, "delivered": False, "manager": None, "backgrounds": [], "attempted": {}, "created_ids": {}, "configs": {}}
     _fixture_signal_state = state
     def interrupted(signum, _frame):
         if state["pending"] is None: state["pending"] = signum
@@ -180,6 +180,15 @@ def fixture_process_registered(process):
         raise FixtureInterrupted(state['pending'])
 
 
+def remember_fixture_config(project, config):
+    """Retain declared physical names before a creation reply can be lost."""
+    state=_fixture_signal_state
+    if state is not None:
+        saved=state['configs'].setdefault(project,[])
+        snapshot=json.loads(json.dumps(config))
+        if snapshot not in saved:saved.append(snapshot)
+
+
 def fixture_runtime_runner(project, env):
     """Decorate only the local Runtime instance, keeping native recipe bytes."""
     manager=fixture_manager(env);labels=frozen_fixture_labels(project,env)
@@ -209,6 +218,7 @@ def fixture_runtime_runner(project, env):
                 raise RuntimeError('fixture native Compose declaration owner mismatch')
             manager.verify_fixture_project(project,labels,config=config,driver=metadata)
             manager.verify_fixture_build_images(config,project,labels,driver=metadata)
+            remember_fixture_config(project,config)
             attempted.update({recipe.get('container_name') or project+'-'+service+'-1':dict(labels)
                 for service,recipe in services.items()})
         if argv[:2] in (['docker','run'],['docker','create']) or argv[:2]==['docker','compose']:
@@ -399,36 +409,42 @@ def verify_fixture_build_images(manager, config, project, labels, driver):
 
 def _cleanup_owned_runtime(base: list[str], project: str, env: dict[str,str], failed: bool) -> None:
     manager=fixture_manager(env);labels=frozen_fixture_labels(project,env);driver=fixture_phase_driver(env)
-    errors=[];config=None;tags=[]
-    try: config=json.loads(run(base+["config","--format","json","--no-env-resolution"],env=env,timeout=30).stdout)
+    errors=[];config=None
+    state=_fixture_signal_state
+    configs=list(state['configs'].get(project,[])) if state else []
+    try:
+        config=json.loads(run(base+["config","--format","json","--no-env-resolution"],env=env,timeout=30).stdout)
+        if config not in configs:configs.append(config)
     except Exception as error: errors.append(error)
     # UI is a direct run actor and must be gone before its network producers.
     try: manager.cleanup_named_fixture_assets([project+'-management-ui'],(),labels,driver=driver,
             expected_ids={project+'-management-ui':env['PHONE_UI_CONTAINER_ID']} if env.get('PHONE_UI_CONTAINER_ID') else None)
     except Exception as error: errors.append(error)
-    preflight_failed=False
     if config is not None:
         try:
             manager.verify_fixture_project(project,labels,config=config,driver=driver)
-            tags=verify_fixture_build_images(manager,config,project,labels,driver)
-        except Exception as error: errors.append(error);preflight_failed=True
-        if not preflight_failed:
+            verify_fixture_build_images(manager,config,project,labels,driver)
+        except Exception as error: errors.append(error)
+        else:
             try: run(cleanup_args(base),env=env,timeout=120)
             except Exception as error: errors.append(error)
-        # Even a rejected member or partial down cannot skip other declared
-        # resources with fresh, independently proven original ownership.
-        containers=[recipe.get('container_name') or project+'-'+service+'-1' for service,recipe in config.get('services',{}).items()]
-        state=_fixture_signal_state
-        if state:containers+= [name for name,proof in state['attempted'].items() if proof==labels and name not in containers]
-        networks=[recipe.get('name') or project+'_'+key for key,recipe in config.get('networks',{}).items() if not recipe.get('external')]
-        volumes=[recipe.get('name') or project+'_'+key for key,recipe in config.get('volumes',{}).items() if not recipe.get('external')]
-        for action in (
-            lambda:manager.cleanup_named_fixture_assets(containers,networks,labels,volumes=volumes,driver=driver,expected_ids=state['created_ids'] if state else None),
-            lambda:manager.cleanup_fixture_images(labels,allowed_tags=tags,driver=driver),
-            lambda:manager.verify_fixture_project(project,labels,config=config,absent=True,driver=driver),
-        ):
-            try:action()
-            except Exception as error:errors.append(error)
+    # A failed render disables Compose down, not the independent strict cleanup
+    # of original declarations and helpers registered before their creation RPC.
+    containers=[];networks=[];volumes=[];tags=[]
+    for declared in configs:
+        containers += [recipe.get('container_name') or project+'-'+service+'-1' for service,recipe in declared.get('services',{}).items()]
+        networks += [recipe.get('name') or project+'_'+key for key,recipe in declared.get('networks',{}).items() if not recipe.get('external')]
+        volumes += [recipe.get('name') or project+'_'+key for key,recipe in declared.get('volumes',{}).items() if not recipe.get('external')]
+        tags += [recipe.get('image') or project+'-'+service+':latest' for service,recipe in declared.get('services',{}).items() if recipe.get('build')]
+    if state:containers += [name for name,proof in state['attempted'].items() if proof==labels and name not in containers]
+    actions=[
+        lambda:manager.cleanup_named_fixture_assets(containers,networks,labels,volumes=volumes,driver=driver,expected_ids=state['created_ids'] if state else None),
+        lambda:manager.cleanup_fixture_images(labels,allowed_tags=tags,driver=driver),
+        *[lambda declared=declared:manager.verify_fixture_project(project,labels,config=declared,absent=True,driver=driver) for declared in configs or [None]],
+    ]
+    for action in actions:
+        try:action()
+        except Exception as error:errors.append(error)
     if errors:
         if failed: print('SIP E2E cleanup unconfirmed; original failure and inputs retained')
         else: raise RuntimeError('SIP E2E cleanup unconfirmed; inputs retained') from errors[0]
@@ -1019,6 +1035,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             rendered=json.loads(run(base+["config","--format","json","--no-env-resolution"],env=env,timeout=30).stdout)
             manager.verify_fixture_project(project,labels,config=rendered,driver=driver)
             verify_fixture_build_images(manager,rendered,project,labels,driver)
+            remember_fixture_config(project,rendered)
             bootstrap_started = time.monotonic()
             print("phase=compose-bootstrap state=started", flush=True)
             if fixture_only == "database":

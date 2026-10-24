@@ -481,39 +481,82 @@ raise SystemExit('stop was lost')
         import phone_postgresql_backup_adapter as native
         env=dict(os.environ,PHONE_TEST_EXPIRES_AT='2026-10-25T00:00:00+00:00')
         project='phone-management-capture';labels=test_phase1_sip_e2e.frozen_fixture_labels(project,env)
-        with test_phase1_sip_e2e.fixture_signals() as owner:
-            manager=test_phase1_sip_e2e.fixture_manager(env)
-            actors={};volumes=set();calls=[];image='sha256:'+'c'*64
-            def driver(argv,**options):
-                calls.append(argv)
-                if argv[:2]==['docker','create']:
-                    name=argv[argv.index('--name')+1]
-                    care=dict(x.split('=',1) for flag,x in zip(argv,argv[1:]) if flag=='--label')
-                    self.assertTrue(all(care.get(k)==v for k,v in labels.items()))
-                    actors[name]={'Id':'a'*64,'Name':'/'+name,'Config':{'Labels':care,'Image':image},'Mounts':[{'Type':'volume','Name':'d'*64}]}
-                    volumes.add('d'*64)
-                    raise subprocess.TimeoutExpired('creation response lost',1)
-                if argv[:2]==['docker','ps'] or argv[:3]==['docker','container','ls']:
-                    value='\n'.join(row['Id'] for row in actors.values())
-                elif argv[:3]==['docker','volume','ls']:value='\n'.join(volumes)
-                elif argv[:3]==['docker','network','ls'] or argv[:3]==['docker','image','ls']:value=''
-                elif 'inspect' in argv:value=json.dumps(list(actors.values()))
-                elif argv[:2]==['docker','rm']:actors.clear();volumes.clear();value=''
-                elif argv[:2]==['docker','compose'] and 'config' in argv:value=json.dumps({'services':{},'networks':{},'volumes':{}})
-                elif argv[:2]==['docker','compose'] and 'down' in argv:raise RuntimeError('partial native down')
-                else:self.fail(str(argv))
-                return subprocess.CompletedProcess(argv,0,value,'')
-            with mock.patch.object(manager,'fixture_command',side_effect=driver):
-                runtime=Runtime(project=project,runner=test_phase1_sip_e2e.fixture_runtime_runner(project,env))
-                try:native.helper_create(runtime,{},'db',image,['--network','none'],['true'])
-                except RuntimeFailure as primary:
-                    self.assertEqual('phone_capture_helper_creation_unknown',str(primary))
-                    self.assertIn(project+'-backup-db',owner['attempted'])
-                    with redirect_stdout(io.StringIO()):
-                        test_phase1_sip_e2e.cleanup_owned_runtime(['docker','compose','--project-name',project],project,env,True)
-                else:self.fail('actual native helper did not propagate reply loss')
-            self.assertFalse(actors);self.assertFalse(volumes)
-            self.assertFalse(any(a[:3]==['docker','image','rm'] for a in calls))
+        for mode in ('partial-down','render-fails'):
+         with self.subTest(mode=mode),test_phase1_sip_e2e.fixture_signals() as owner:
+             manager=test_phase1_sip_e2e.fixture_manager(env)
+             actors={};volumes=set();calls=[];image='sha256:'+'c'*64
+             def driver(argv,**options):
+                 calls.append(argv)
+                 if argv[:2]==['docker','create']:
+                     name=argv[argv.index('--name')+1]
+                     care=dict(x.split('=',1) for flag,x in zip(argv,argv[1:]) if flag=='--label')
+                     self.assertTrue(all(care.get(k)==v for k,v in labels.items()))
+                     actors[name]={'Id':'a'*64,'Name':'/'+name,'Config':{'Labels':care,'Image':image},'Mounts':[{'Type':'volume','Name':'d'*64}]}
+                     volumes.add('d'*64)
+                     raise subprocess.TimeoutExpired('creation response lost',1)
+                 if argv[:2]==['docker','ps'] or argv[:3]==['docker','container','ls']:
+                     value='\n'.join(row['Id'] for row in actors.values())
+                 elif argv[:3]==['docker','volume','ls']:value='\n'.join(volumes)
+                 elif argv[:3]==['docker','network','ls'] or argv[:3]==['docker','image','ls']:value=''
+                 elif 'inspect' in argv:value=json.dumps(list(actors.values()))
+                 elif argv[:2]==['docker','rm']:actors.clear();volumes.clear();value=''
+                 elif argv[:2]==['docker','compose'] and 'config' in argv:
+                     if mode=='render-fails':raise subprocess.TimeoutExpired('cleanup config unavailable',30)
+                     value=json.dumps({'services':{},'networks':{},'volumes':{}})
+                 elif argv[:2]==['docker','compose'] and 'down' in argv:raise RuntimeError('partial native down')
+                 else:self.fail(str(argv))
+                 return subprocess.CompletedProcess(argv,0,value,'')
+             with mock.patch.object(manager,'fixture_command',side_effect=driver):
+                 runtime=Runtime(project=project,runner=test_phase1_sip_e2e.fixture_runtime_runner(project,env))
+                 try:native.helper_create(runtime,{},'db',image,['--network','none'],['true'])
+                 except RuntimeFailure as primary:
+                     self.assertEqual('phone_capture_helper_creation_unknown',str(primary))
+                     self.assertIn(project+'-backup-db',owner['attempted'])
+                     with redirect_stdout(io.StringIO()):
+                         test_phase1_sip_e2e.cleanup_owned_runtime(['docker','compose','--project-name',project],project,env,True)
+                 else:self.fail('actual native helper did not propagate reply loss')
+             self.assertFalse(actors);self.assertFalse(volumes)
+             self.assertFalse(any(a[:3]==['docker','image','rm'] for a in calls))
+             if mode=='render-fails':self.assertFalse(any('down' in a for a in calls))
+
+    def test_cleanup_config_failure_uses_all_original_declarations_and_keeps_primary_inputs(self):
+        import tempfile
+        owner=test_phase1_sip_e2e
+        project='phone-saved-declarations';env={'PHONE_TEST_EXPIRES_AT':'2026-10-25T00:00:00Z'}
+        config={'services':{'backend':{'build':'.','image':project+':owned'}},
+                'networks':{'private':{'name':project+'-original'},'foreign':{'name':'borrowed-network','external':True}},
+                'volumes':{'data':{'name':project+'-data'},'foreign':{'name':'borrowed-volume','external':True}}}
+        manager=mock.Mock();events=[]
+        def cleanup(containers,networks,labels,**options):
+            events.append(('assets',list(containers),list(networks),options.get('volumes',[])))
+            if networks:raise RuntimeError('foreign collision retained')
+        manager.cleanup_named_fixture_assets.side_effect=cleanup
+        manager.cleanup_fixture_images.side_effect=lambda *args,**options:events.append(('images',options['allowed_tags']))
+        manager.verify_fixture_project.side_effect=lambda *args,**options:events.append(('absent',options['absent'],options['config']))
+        with tempfile.TemporaryDirectory() as raw,owner.fixture_signals() as state:
+            source=Path(raw)/'source';source.write_text('preserve')
+            owner.remember_fixture_config(project,config)
+            # The owner holds a snapshot, unaffected by later consumer mutation.
+            config['networks']['private']['name']='replacement-must-not-be-adopted'
+            labels=owner.frozen_fixture_labels(project,env)
+            state['attempted'][project+'-backup-db']=labels
+            state['attempted']['foreign-helper']={**labels,'care.anshin.local.task_id':'foreign'}
+            state['created_ids'][project+'-backup-db']='a'*64
+            primary=RuntimeError('original business failure')
+            with mock.patch.object(owner,'fixture_manager',return_value=manager),mock.patch.object(owner,'run',side_effect=subprocess.TimeoutExpired('config',30)) as run:
+                try:
+                    raise primary
+                except RuntimeError as observed:
+                    with redirect_stdout(io.StringIO()):owner.cleanup_owned_runtime(['docker','compose'],project,env,True)
+                    self.assertIs(primary,observed)
+            self.assertEqual('preserve',source.read_text())
+            self.assertEqual(1,run.call_count) # No Compose down on unrendered input.
+            self.assertIn(('assets',[project+'-backend-1',project+'-backup-db'],[project+'-original'],[project+'-data']),events)
+            self.assertIn(('images',[project+':owned']),events)
+            self.assertTrue(any(event[0]=='absent' and event[1] is True for event in events))
+            self.assertNotIn('foreign-helper',str(events));self.assertNotIn('borrowed-',str(events[:2]))
+            calls=manager.cleanup_named_fixture_assets.call_args_list
+            self.assertEqual({project+'-backup-db':'a'*64},calls[-1].kwargs['expected_ids'])
 
     def test_native_compose_preflight_registers_services_and_pins_stop_identity(self):
         import os
