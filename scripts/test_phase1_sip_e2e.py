@@ -49,7 +49,15 @@ def fixture_ownership_override(compiled, project, expires_at=None):
     labels=fixture_labels(project, expires_at)
     services={}
     for name, service in compiled["services"].items():
-        services[name]={"labels":labels,"logging":{"driver":"local","options":{"max-size":"10m","max-file":"5"}}}
+        logging = service.get("logging") or {}
+        options = logging.get("options") or {}
+        size = re.fullmatch(r"([1-9][0-9]*)([kmg]?)", str(options.get("max-size", "")).lower())
+        files = str(options.get("max-file", ""))
+        bounded = (logging.get("driver") in {"local", "json-file"} and size is not None
+                   and files.isdecimal() and int(files) > 0
+                   and int(size[1]) * {"":1,"k":1024,"m":1024**2,"g":1024**3}[size[2]] * int(files) <= 50 * 1024**2)
+        services[name]={"labels":labels,"logging":logging if logging.get("driver")=="none" or bounded
+                        else {"driver":"local","options":{"max-size":"10m","max-file":"5"}}}
         if service.get("build"):services[name]["build"]={"labels":labels}
     result={"services":services}
     for kind in ("volumes","networks"):
@@ -1214,7 +1222,7 @@ def run_production_management_fixture(image: str, backend_sha: str) -> int:
             # The daemon is inside the Mac Docker VM. Bind the already
             # inspected backing path: unlike a named volume or -v, --mount
             # fails if it disappeared and never creates a replacement.
-            observed = runtime.command(['docker', 'run', '--rm', '--pull', 'never', '--network', 'none',
+            observed = runtime.command(['docker', 'run', '--log-driver', 'local', '--log-opt', 'max-size=10m', '--log-opt', 'max-file=5', '--rm', '--pull', 'never', '--network', 'none',
                 '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--user', '0:0',
                 '--label', 'com.docker.compose.project=' + project,
                 '--label', 'com.docker.compose.service=volume-inspection',

@@ -317,7 +317,16 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
     def test_fixture_ownership_labels_cover_builds_and_preserve_external_assets(self):
         compiled={"services":{"backend":{"build":{"context":"fixture"}},"postgres":{"image":"postgres:16"}},
                   "networks":{"owned":{},"shared":{"external":True}},"volumes":{"owned":{},"shared":{"external":True}}}
+        equivalent={"driver":"json-file","options":{"max-size":"10m","max-file":"5"}}
+        silent={"driver":"none"}
+        compiled["services"].update({"bounded":{"logging":equivalent},"silent":{"logging":silent},
+                                     "unbounded":{"logging":{"driver":"json-file"}}})
         override=test_phase1_sip_e2e.fixture_ownership_override(compiled,"owned-fixture")
+        self.assertEqual(override["services"]["bounded"]["logging"],equivalent)
+        self.assertEqual(override["services"]["silent"]["logging"],silent)
+        for name in ("backend","postgres","unbounded"):
+            self.assertEqual(override["services"][name]["logging"],
+                             {"driver":"local","options":{"max-size":"10m","max-file":"5"}})
         labels=test_phase1_sip_e2e.fixture_labels("owned-fixture",override["services"]["backend"]["labels"]["care.anshin.local.expires_at"])
         self.assertEqual(override["services"]["backend"]["build"]["labels"],labels)
         self.assertEqual(override["services"]["postgres"]["labels"],labels)
