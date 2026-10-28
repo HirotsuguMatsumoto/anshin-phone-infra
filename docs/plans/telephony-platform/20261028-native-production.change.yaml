@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin.phone.native-production.2026-10-28.anshin-phone-infra",
+  "title": "Phone専用資格の初回登録・本番native認証binding",
+  "owner": "anshin-phone-infra",
+  "status": "approved",
+  "risk_level": "high",
+  "production_change": true,
+  "spec_ids": [
+    "anshin.auth.web-session-platform"
+  ],
+  "repositories": [
+    "anshin",
+    "anshin-auth",
+    "anshin-backend",
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/compose.production.yaml",
+    "anshin-phone-infra/docs/plans/telephony-platform/20261028-native-production.change.yaml",
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "anshin-phone-infra/scripts/production_runtime.py"
+  ],
+  "contract_paths": [
+    "docs/plans/telephony-platform/20261028-native-production.change.yaml"
+  ],
+  "generated_artifacts": [],
+  "test_paths": [
+    "scripts/verify_phase1.sh"
+  ],
+  "invariants": [
+    "2026-10-28本人が2資格の新規発行・既存owner/Secret Manager登録・検証・独立review・main・本番有効化を明示。既存開始/UI/MFA承認を保持しMacだけがwriter/executorとなる",
+    "Phone HMAC/anshin-phone-enrollmentを他用途資格と分離しsecret値をGit/chat/log/argv/environmentへ出さずSecret Manager数値versionとFILE consumerを使う",
+    "既存Admin申請/owner承認/materialize/canary/probe/promotion/active bindingを再利用し追加authority/署名/receipt/gateを作らない",
+    "issuer/client/callback/logout/backchannel/AAL2/AMR/Policy1/provider-assurance-v1を既存設計17へ固定。Phone native session/DBとCore資格を分離",
+    "telephony_enabled=false、S3 SSE-S3/31日・DB/FAX鍵/backupを保全し、政策支援4機能・Push・実Cloco・番号切替・Storeを含めない",
+    "実Google/OS callback・本人操作を含む本番受入はfixtureや資格登録・配備と分けて記録する"
+  ],
+  "acceptance_criteria": [
+    "既存selector canonicalと変更した実producer/consumerの業務回帰を通し固定SHAの独立Sol/high reviewを得る",
+    "guarded非強制main統合と実remote SHA照合後、必要image/backup/migration/health/rollback/receiptを正規release ownerで確認",
+    "Phone2資格の固定version・candidate FILE/probe・required consumer readback・DB active bindingを確認する",
+    "案件専用Simulatorで実Google→OS callback→本人API/refresh/logoutを確認し必要本人操作だけを案内する"
+  ],
+  "out_of_scope": [
+    "他者dirty/primary手編集、stash/reset/restore/削除、foreign runtime/DB/Simulator変更",
+    "新Google OAuth資格、Push/Cloco/Store/番号切替/行政申請/購入",
+    "既存global-revoke制御の独自複製、追加trust/authority/署名/監査gate"
+  ],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin": "task/phone-frontend-central-current-20261017",
+      "anshin-auth": "task/phone-production-20261016",
+      "anshin-backend": "task/phone-native-auth-20261024",
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin": "5686dc0ad3ed5b9788c3b2f5af33b356f5c7cb3a",
+      "anshin-auth": "3b6f62377b1a4bf6e88ae70aaf8ab54f64e7ee32",
+      "anshin-backend": "7996c16a27f95e53d79b559b2aada71303d823c8",
+      "anshin-phone-infra": "7d1f0d6331ae5d050a2197530a6e65993147a968"
+    },
+    "integration_order": [
+      "anshin-auth",
+      "anshin",
+      "anshin-backend",
+      "anshin-phone-infra"
+    ],
+    "owned_paths": [
+      "anshin-phone-infra/compose.production.yaml",
+      "anshin-phone-infra/docs/plans/telephony-platform/20261028-native-production.change.yaml",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/scripts/production_runtime.py"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra:compose.production.yaml": "c119848e487e2a7056ac0e1e9e77499724ea9f8a",
+      "anshin-phone-infra:docs/plans/telephony-platform/production-and-softphone-preparation.md": "cf11da374691d1bbe3736afaa2b0be9a069e1e4f",
+      "anshin-phone-infra:scripts/production_runtime.py": "a71f25bc649e24b0d4301f3c067307b653fc60c2",
+      "anshin-phone-infra:docs/plans/telephony-platform/20261028-native-production.change.yaml": null
+    }
+  },
+  "rollout": {
+    "strategy": "existing-owner-credential-lifecycle-and-scoped-production-release",
+    "steps": [
+      "必要な固定source検査・独立review・main統合",
+      "Auth正規image配備とPhone client/binding、既存ownerによる初回Secret Manager登録",
+      "Core registry consumer反映とAdmin qualification、Phone required consumerの固定version promotion",
+      "通常Phone releaseでnativeを有効化し実Google/OS callback受入"
+    ],
+    "triggers": [
+      "current-chat-owner-explicit-new-credential-and-native-production-20261028"
+    ]
+  },
+  "rollback": {
+    "strategy": "existing-owner-compensation-and-prior-qualified-release",
+    "steps": [
+      "既存資格ownerのrollbackと通常Auth/Phone切戻しを使用し、DB/鍵/バックアップを保全する",
+      "nativeを無効な既存構成へ戻し未完了・実結果を記録する"
+    ],
+    "triggers": [
+      "資格配布・IdP・AAL2・失効・health・本人APIの不整合"
+    ]
+  },
+  "monitoring": {
+    "owner": "mac-hmac-matsumotoyuuji",
+    "signals": [
+      "既存検証/review/release結果とcredential consumer readback",
+      "本人操作を含む実Google/OS callbackと本人HTTP、refresh/logout/失効"
+    ],
+    "observation_period": "今回のnative本番受入と最後のconsumerまで"
+  },
+  "approvals": [
+    {
+      "role": "owner-scope-authorization",
+      "approved_by": "owner",
+      "approved_at": "2026-10-28",
+      "approval_ref": "current-chat:2資格は未発行として既存owner/Secret Managerで新規発行登録し、規定検証・独立review・main統合・本番有効化まで進め実Google callback本人操作だけ案内"
+    }
+  ]
+}

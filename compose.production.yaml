@@ -16,6 +16,9 @@ services:
     platform: linux/amd64
     environment:
       ANSHIN_PHONE_ENVIRONMENT: production
+      ANSHIN_PHONE_NATIVE_AUTH_ENABLED: "true"
+      ANSHIN_PHONE_NATIVE_ASSURANCE_POLICY_VERSION: "1"
+      ANSHIN_PHONE_NATIVE_PROVIDER_CONTRACT_VERSION: provider-assurance-v1
       ANSHIN_PHONE_TELEPHONY_ENABLED: "false"
       ANSHIN_PHONE_SIP_SERVER: ""
       ANSHIN_PHONE_FAX_RETENTION_POLICY: cloco_previous_month

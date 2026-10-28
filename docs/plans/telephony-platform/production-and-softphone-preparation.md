@@ -21,7 +21,7 @@ source_doc_ids:
   - anshin.release.contract
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
-code_paths: [scripts/phone_postgresql_backup_adapter.py, scripts/production_runtime.py]
+code_paths: [scripts/phone_postgresql_backup_adapter.py, scripts/production_runtime.py, compose.production.yaml]
 contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml, docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml, docs/specs/changes/2026-10-22-own-call-history.change.yaml]
 test_paths: [scripts/build_check.sh]
 last_reviewed: "2026-10-22"
@@ -242,3 +242,14 @@ ownerは、既存Mobile/Infra/Backendの専用worktreeで、通話時の本人�
 Backendの2table追加は旧CDRを保持し、再割当・遅延・再送で帰属を変えない。Mobileは本人専用GETの結果だけを表示し、masked相手から再発信しない。履歴取得中も通話状態を維持し、組織切替・失効・logoutではcacheと旧応答を捨てる。管理向けの組織全体一覧は変更しない。
 
 既存SIP fixtureの発着信後、同じ実PostgreSQLのmigration head、PBX snapshot、CDRとproduction本人queryを検証する。これはnative認証を通したHTTP受入ではなく、認可wireの拒否条件はBackend既存suiteで別に検証する。実行・fixed SHA review・本人履歴UI確認・main統合・必要なDEPLOYを分けて記録し、sourceだけで本番反映済みとは扱わない。
+
+
+## 2026-10-28 native認証の本番接続
+
+本人はPhone専用HMAC鍵と`anshin-phone-enrollment`資格が未発行であることを前提に、既存Auth/資格管理owner・Secret Managerでの新規発行登録、規定検証・独立review・main統合・本番有効化と実Google callback受入を明示した。以前の隔離限定範囲を本番接続へ進めるが、Push・Cloco開通・番号切替・Store・政策支援4機能は含めない。
+
+Authのpublic clientは`anshin-phone-mobile`、package/bundleは`care.anshin.phone`、callback/logoutは`care.anshin.phone:/oauthredirect`と`care.anshin.phone:/logout`、署名backchannelは`https://phone.anshin.care/api/v1/auth/native/backchannel-logout`。issuer、managed AAL2/AMR、Policy1/provider-assurance-v1を既存正本へ固定する。資格の値はこの文書へ記録せず、共通資格管理正本のPhone専用2 ID・固定数値version・read-only FILE consumerを使う。
+
+既存資格ownerのcandidate canary/promotionは鍵の配布までを所有し、Phone Runtimeは通常配備のComposeへそのprojectionを引き継ぐ。両資格とAuthをqualification後、`compose.production.yaml`の明示flagでnativeを有効化する。Settings/healthはnative有効時にHMAC・enrollment資格とpolicy版が揃うことを確認し、telephonyはfalseを維持する。通常backup/migration/health/rollbackを既存release ownerに任せ、DB/FAX鍵・S3 SSE-S3/31日を変更しない。
+
+資格の登録、native配備、案件専用Simulatorでの実Google→OS AppAuth callback、本人API/refresh/logout/失効の受入は別の完了項目として実結果へ記録する。本人操作が必要なGoogle login/MFAのみ案内し、端末提供・既存UI承認を再質問しない。

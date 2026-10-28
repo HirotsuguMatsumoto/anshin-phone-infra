@@ -33,6 +33,8 @@ SETTINGS_CHECK = (
     'assert s.fax_retention_policy=="cloco_previous_month" and s.fax_retention_seconds is None; '
     'assert s.oidc_issuer=="https://auth.anshin.care/realms/anshin" and s.oidc_audience=="anshin-phone"; '
     'assert s.oidc_required_acr>=2 and s.fax_storage_key and s.sip_master_secret; '
+    'assert not s.native_auth_enabled or (s.native_auth_key and len(s.native_auth_key)>=32 and s.native_enrollment_secret); '
+    'assert s.native_assurance_policy_version==1 and s.native_provider_contract_version=="provider-assurance-v1"; '
     'from app.core.fax_storage import cipher; cipher()'
 )
 
@@ -124,6 +126,11 @@ class Runtime:
         command = ['docker', 'compose', '--project-name', self.project,
             '--project-directory', profile['source_root'], '--env-file', '/dev/null',
             '--file', str(Path(profile['source_root']) / 'compose.production.yaml')]
+        # The existing credential promotion owner writes only the registered
+        # Phone FILE projection. Preserve it across every ordinary release.
+        bindings = Path('/opt/anshin/state/external-credentials/phone-runtime-bindings.compose.yml')
+        if bindings.is_file():
+            command.extend(('--file', str(bindings)))
         # Explicit fixture input only. The production CLI never obtains extra
         # files from argv or ambient COMPOSE_FILE.
         for path in self.compose_extra_files:
