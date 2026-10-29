@@ -1,14 +1,14 @@
 <?xml version='1.0' encoding='utf-8'?>
 <mxfile host="Anshin" version="provider-alignment-20261029">
-  <diagram id="standard" name="01 Cloco標準仕様へ合わせる最初の社内試験（未実装・未試験）">
+  <diagram id="standard" name="01 Cloco株式会社様の標準仕様へ合わせる最初の社内試験（未実装・未試験）">
     <mxGraphModel page="1" pageWidth="1600" pageHeight="1000" grid="1">
       <root>
         <mxCell id="0" />
         <mxCell id="1" parent="0" />
-        <mxCell id="title" value="01 Cloco標準仕様へ合わせる最初の社内試験（未実装・未試験）" style="text;html=0;align=left;fontSize=26;fontStyle=1;" parent="1" vertex="1">
+        <mxCell id="title" value="01 Cloco株式会社様の標準仕様へ合わせる最初の社内試験（未実装・未試験）" style="text;html=0;align=left;fontSize=26;fontStyle=1;" parent="1" vertex="1">
           <mxGeometry as="geometry" x="40" y="20" width="1500" height="70" />
         </mxCell>
-        <mxCell id="cloco" value="Cloco既存SIPトランク・番号&#10;先方仕様を変更しない" style="rounded=0;whiteSpace=wrap;html=0;fontSize=18;fillColor=#FFFFFF;strokeColor=#1F6B56;" parent="1" vertex="1">
+        <mxCell id="cloco" value="Cloco株式会社様既存SIPトランク・番号&#10;先方仕様を変更しない" style="rounded=0;whiteSpace=wrap;html=0;fontSize=18;fillColor=#FFFFFF;strokeColor=#1F6B56;" parent="1" vertex="1">
           <mxGeometry as="geometry" x="45" y="230" width="340" height="150" />
         </mxCell>
         <mxCell id="pbx" value="当社Asterisk PBX&#10;認証・登録・SIP/RTP終端" style="rounded=0;whiteSpace=wrap;html=0;fontSize=18;fillColor=#FFFFFF;strokeColor=#1F6B56;" parent="1" vertex="1">
@@ -23,7 +23,7 @@
         <mxCell id="e1" value="当社内線" style="edgeStyle=orthogonalEdgeStyle;html=0;endArrow=block;startArrow=block;fontSize=16;" parent="1" source="pbx" target="phone" edge="1">
           <mxGeometry as="geometry" relative="1" />
         </mxCell>
-        <mxCell id="notes" value="基準: SIPトランク2 IP-PBX接続マニュアル Ver2.0.1 / Cloco 10月28日回答&#10;最初は当社独自スマホ/SBC/媒体中継を含めず、当社で接続検証する。&#10;当社公開接続口・物理配置は未選定。現private VMで到達すると推定しない。&#10;ポート転送制約の解除、新規調達・公開設定・契約・開通は今回実施しない。&#10;本図は当社再設計、Clocoへの追加構成要求ではない。送付済み原図・届出図は別途保持。" style="text;html=0;align=left;verticalAlign=top;fontSize=19;" parent="1" vertex="1">
+        <mxCell id="notes" value="基準: SIPトランク2 IP-PBX接続マニュアル Ver2.0.1 / Cloco株式会社様 10月28日回答&#10;最初は当社独自スマホ/SBC/媒体中継を含めず、当社で接続検証する。&#10;当社公開接続口・物理配置は未選定。現private VMで到達すると推定しない。&#10;ポート転送制約の解除、新規調達・公開設定・契約・開通は今回実施しない。&#10;本図は当社再設計、Cloco株式会社様への追加構成要求ではない。送付済み原図・届出図は別途保持。" style="text;html=0;align=left;verticalAlign=top;fontSize=19;" parent="1" vertex="1">
           <mxGeometry as="geometry" x="55" y="650" width="1490" height="260" />
         </mxCell>
       </root>
@@ -37,7 +37,7 @@
         <mxCell id="title" value="02 製品へ組み込む当社目標（未実装・未試験）" style="text;html=0;align=left;fontSize=26;fontStyle=1;" parent="1" vertex="1">
           <mxGeometry as="geometry" x="40" y="20" width="1500" height="70" />
         </mxCell>
-        <mxCell id="c" value="Cloco&#10;標準トランク" style="rounded=0;whiteSpace=wrap;html=0;fontSize=18;fillColor=#FFFFFF;strokeColor=#1F6B56;" parent="1" vertex="1">
+        <mxCell id="c" value="Cloco株式会社様&#10;標準トランク" style="rounded=0;whiteSpace=wrap;html=0;fontSize=18;fillColor=#FFFFFF;strokeColor=#1F6B56;" parent="1" vertex="1">
           <mxGeometry as="geometry" x="40" y="200" width="270" height="150" />
         </mxCell>
         <mxCell id="p" value="当社Asterisk B2BUA/PBX&#10;carrier側と端末側を終端・分離" style="rounded=0;whiteSpace=wrap;html=0;fontSize=18;fillColor=#FFFFFF;strokeColor=#1F6B56;" parent="1" vertex="1">

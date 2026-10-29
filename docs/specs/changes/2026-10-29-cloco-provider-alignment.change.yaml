@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "change_id": "anshin-phone-infra.cloco-provider-alignment.2026-10-29",
-  "title": "Cloco標準接続へ当社を合わせるcarrier終端・段階検証の再設計",
+  "title": "Cloco株式会社様の標準接続へ当社を合わせるcarrier終端・段階検証の再設計",
   "owner": "anshin-phone-infra",
   "status": "review",
   "risk_level": "high",
@@ -22,7 +22,9 @@
     "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md",
     "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
     "anshin-phone-infra/docs/README.md",
-    "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml"
+    "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml",
+    "anshin-phone-infra/AGENTS.md",
+    "anshin-phone-infra/docs/runbooks/telephony-platform/fax-and-number-provisioning.md"
   ],
   "generated_artifacts": [
     "既存drawioの2頁更新・Git外確認用PDF/TXT"
@@ -31,7 +33,7 @@
     "anshin-phone-infra/scripts/build_check.sh"
   ],
   "invariants": [
-    "Clocoへの仕様変更・追加処理・NAT保証・当社PJSIPサポート要求をしない",
+    "Cloco株式会社様への仕様変更・追加処理・NAT保証・当社PJSIPサポート要求をしない",
     "telephony=false、管理/native認証・backup・資格・他案件dirtyを保全",
     "物理接続口未選定を保持しポート転送制約を勝手に解除しない",
     "送付済み原図・行政原本は不変、秘密・実番号をGitへ記録しない"
@@ -41,7 +43,9 @@
     "初期最小社内試験から製品組込みとFAXへ段階化",
     "To主のDID正規化と音声/FAX別From実送出を当社受入項目へ固定",
     "技術正本・diagram・runbook・corporate返信/PDFの整合",
-    "文書検査・fixed SHA別Sol/high review後に既存guarded mainへ統合"
+    "文書検査・fixed SHA別Sol/high review後に既存guarded mainへ統合",
+    "owner追加指示の敬称統一と、先方工数最小化の既存規定§6.1へのrouting",
+    "質問1件・添付0、6頁PDFは社内検討用・送信対象外、FAX/書類は内部未確認へ保持"
   ],
   "out_of_scope": [
     "runtime実装・ネットワーク適用・credential変更・実回線接続・課金申込",
@@ -106,7 +110,9 @@
       "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md",
       "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
       "anshin-phone-infra/docs/README.md",
-      "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml"
+      "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml",
+      "anshin-phone-infra/AGENTS.md",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/fax-and-number-provisioning.md"
     ],
     "pre_edit_blob_ids": {
       "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md": "88cb64503674e85febb2c63e524a24d485154552",
@@ -115,7 +121,9 @@
       "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md": "aef87f7d46f2bbd23b1b9dffc67e510a5a870bdc",
       "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "e095818a20b00c86116443c191ae400fe7dff244",
       "anshin-phone-infra/docs/README.md": "7fb668513666d6b2fffb0df066e65c998b2cec40",
-      "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml": null
+      "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml": null,
+      "anshin-phone-infra/AGENTS.md": "b7eb47702be2d9c3e29d44baac4d3336ceca31e8",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/fax-and-number-provisioning.md": "5f651c8cc074e2a42fdcaae0e0a6923674e486e2"
     },
     "integration_order": [
       "anshin-phone-infra",

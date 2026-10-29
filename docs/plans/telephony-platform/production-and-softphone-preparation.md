@@ -49,15 +49,15 @@ ownerの本番反映依頼と基礎開発指示に対する準備計画である
 
 事業・行政・契約は[Phone総合資料入口](https://github.com/HirotsuguMatsumoto/anshin-corporate-strategy/blob/main/documents/plans/anshin-phone/README.md)、機能・検証は[Backend運用契約](https://github.com/HirotsuguMatsumoto/anshin-phone-backend/blob/main/documents/specs/telephony-platform/foundation-runtime.md)と[UI資料入口](https://github.com/HirotsuguMatsumoto/anshin-frontend-monorepo/blob/main/apps/anshin-phone/documents/README.md)を参照する。
 
-## 2026-10-29 Cloco標準接続を先に成立させる再設計
+## 2026-10-29 Cloco株式会社様の標準接続を先に成立させる再設計
 
-[Cloco接続仕様](../../specs/telephony-platform/cloco-sip-trunk-interface.md)を技術詳細の参照先とする。上流を当社暫定実装へ合わせる前提を廃し、最初はCloco標準トランク↔当社Asterisk↔社内SIP端末で確認する。製品段階でKamailio/RTPengineを端末側へ組み込み、上流はAsteriskで終端する目標へ変更する。物理接続口・到達経路は未選定で、現在のprivate VM・outbound REGISTERだけで成立するとしない。既存carrier用Composeは目標へ未対応で、後続実装・検査・実回線受入が必要。管理・native認証の受入済み経路は保全し、telephonyは無効のまま。既存ポート転送制約の無断解除、新調達・公開・Cloco特別対応の要求は行わない。
+[Cloco株式会社様の接続仕様](../../specs/telephony-platform/cloco-sip-trunk-interface.md)を技術詳細の参照先とする。上流を当社暫定実装へ合わせる前提を廃し、最初はCloco株式会社様の標準トランク↔当社Asterisk↔社内SIP端末で確認する。製品段階でKamailio/RTPengineを端末側へ組み込み、上流はAsteriskで終端する目標へ変更する。物理接続口・到達経路は未選定で、現在のprivate VM・outbound REGISTERだけで成立するとしない。既存carrier用Composeは目標へ未対応で、後続実装・検査・実回線受入が必要。管理・native認証の受入済み経路は保全し、telephonyは無効のまま。既存ポート転送制約の無断解除、新調達・公開・Cloco株式会社様の特別対応の要求は行わない。
 
 ## 実装・検証・配備を分けた現在状態
 
 | 対象 | 確認済み | 未確認・未実施 |
 | --- | --- | --- |
-| 基礎管理経路 | 実Docker、隔離Auth、Backend、実PBX、架空番号・模擬carrierを通す番号/端末管理・通話・G.711 FAX・監査・隔離復元 | 実Cloco、実番号、T.38、顧客通信、商用容量 |
+| 基礎管理経路 | 実Docker、隔離Auth、Backend、実PBX、架空番号・模擬carrierを通す番号/端末管理・通話・G.711 FAX・監査・隔離復元 | Cloco株式会社様との実回線、実番号、T.38、顧客通信、商用容量 |
 | 管理画面 | 説明iconのclick/Escape、必要状態・エラー・FAX制限表示。対象画面の自動試験・右サイド実browser確認。ownerの「画面問題ない。本番反映お願い」により当該画面の本人確認受領済み。公式 https://phone.anshin.care で本番Google loginと管理6画面を確認 | h-test3の再登録完了を本番管理画面で読取済み。別Chromeでの再ログイン・MFA通過はowner報告により完了 |
 | source | Backend `7770e877b2901d1b99c09cf32606f8abdc55178d`のruntime変更、Infraの既存runtime変更、Frontend `ba6bcbdb97cc4d80c0f45cb0c4aebb2e3d301c57`の説明・文書整備をmainへ統合 | source統合を本番提供と扱わない |
 | 本番adapter | MS-A2-1専用VM・管理API/DB・公式公開・本番Google認証・実S34世代・同世代DB/FAX隔離復旧と両timer有効化を2026-10-20に受入 | 中央generic経路の完成は専用operationの受入から推定せず、中央runnerの実装・検査・release結果で判定。定期実発火と証明書更新切替の実施結果を別記 |
@@ -112,7 +112,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 
 費用が発生し得るVM追加資産、hardware、hosting、off-host保管、外部secret/provider/Push等は、実契約・resource・料金・期間を先に確認する。追加費用を確認できない操作は実行せず、目的・対象・見積り・未確定項目・単発/継続・期間を示してownerの具体的指示を得る。既存CIの通常利用はownerの確認不要例外を適用する。内部DB/password/HMAC/FAX keyを、外部provider資格4件や有料Secret Manager作成へ自動的に置換しない。
 
-電気通信事業届出は、2026-10-20に通知書原本から受理・当社A-08-24437（届出日10月2日、通知日10月16日）を確認済み。事業側正本 `anshin.corporate.anshin-phone.notification-status` を参照し、受理待ちへ戻さない。番号計画の当社への適用・必要手続、Cloco契約・実SIP/RTP/FAX/channel条件と資格は未確認として個別照合する。資格台帳と許可済みprimary設定の確認前に再共有を要求しない。基礎管理基盤の本番化、実回線、顧客開通及び商用提供を区別し、受理通知だけで実回線を有効化しない。助成対象4機能は先行実装しない。
+電気通信事業届出は、2026-10-20に通知書原本から受理・当社A-08-24437（届出日10月2日、通知日10月16日）を確認済み。事業側正本 `anshin.corporate.anshin-phone.notification-status` を参照し、受理待ちへ戻さない。番号計画の当社への適用・必要手続、Cloco株式会社様との契約・実SIP/RTP/FAX/channel条件と資格は未確認として個別照合する。資格台帳と許可済みprimary設定の確認前に再共有を要求しない。基礎管理基盤の本番化、実回線、顧客開通及び商用提供を区別し、受理通知だけで実回線を有効化しない。助成対象4機能は先行実装しない。
 
 ## Softphoneの技術比較と次の検証
 
@@ -129,7 +129,7 @@ Phone guestのproduction RuntimeはAPIを固定private IPv4 `10.91.40.10`へbind
 
 隔離の実SDK driverで登録・発着信・双方向音声・再接続・失効を確認し、その成功条件を既存suite/fixture/ownerへ固定する。背景/スリープ、OS終了、通知/マイク権限拒否、Wi-Fi/モバイル切替、重複着信、応答競合は両OSの実機と実Push consumerまで確認する。模擬SIP試験をAndroid/iPhone SDK・Push成功へ読み替えない。卸トランク資格を顧客端末へ配布しない。
 
-2026-10-21に同じMacの既存toolchainを読取り、Flutter 3.44.2/Dart 3.12.2、Xcode 26.6/iPhoneOS SDK 26.5、Android API 34/35/36・adb 36.0.2の所在を確認した。install/build、署名qualification、接続実機、Phone Push資格、SDK実装の成功ではない。Git外の既存案件設計書へSDK条件・Push・実機計画と新UI詳細を整理し、同日の本人回答で画面・操作設計§4の事前承認を受領した。続いて本人からPJSIP 2.17の社内評価用独立package・Phone専用API consumer・最小native bridge・既存隔離PBX fixtureの追加実装scopeを承認済み。商用license確定・購入・Store公開・実Cloco開通・本番mobile client/Push binding・実機/マイクは含めず、実装後の本人実UI最終確認も未受領。他製品資格を転用せず、native未確認を完成した基礎管理経路の追加品質gateへ変更しない。
+2026-10-21に同じMacの既存toolchainを読取り、Flutter 3.44.2/Dart 3.12.2、Xcode 26.6/iPhoneOS SDK 26.5、Android API 34/35/36・adb 36.0.2の所在を確認した。install/build、署名qualification、接続実機、Phone Push資格、SDK実装の成功ではない。Git外の既存案件設計書へSDK条件・Push・実機計画と新UI詳細を整理し、同日の本人回答で画面・操作設計§4の事前承認を受領した。続いて本人からPJSIP 2.17の社内評価用独立package・Phone専用API consumer・最小native bridge・既存隔離PBX fixtureの追加実装scopeを承認済み。商用license確定・購入・Store公開・Cloco株式会社様との実回線開通・本番mobile client/Push binding・実機/マイクは含めず、実装後の本人実UI最終確認も未受領。他製品資格を転用せず、native未確認を完成した基礎管理経路の追加品質gateへ変更しない。
 
 
 ## Macでの再開と管理用配備定義（2026-10-16）
@@ -211,7 +211,7 @@ Gov `d2b980cb3cefcd138553c8868529f8c1bf55ddb4` / Infra `e2b53ffafcbc3a44837a2dbc
 
 10:30 JSTの旧source service失敗は、backup source更新の停止処理と時刻が重なる履歴として保存した。新sourceの欠陥又は停止が原因と断定せず、Gov `4d8077f93b03a0e686132d9e1092008468196b70`の既存`backup-run`から固定systemd unitを実行した。新operation・producer・unit・外側lock・名前によるstopは追加しない。同一Invocation `d7b1153ffd7a4db8b59e47932bfc21f6`の開始から終了、`Result=success / ExecMainCode=1 / ExecMainStatus=0`（UTC 02:27:51〜02:28:25）、fresh DB artifact/manifest両VersionIDを照合した。captureは`release-da58b4feaf10d85191f0b65b`、DB artifact SHA-256は`54adb4275ddb3268a98e4ef25e81018046edd14170c4fb21726929710a654e7f`、作成UTC 02:27:52・保護期限11月21日02:27:52、SSE-S3 AES256である。
 
-このexact世代を`release-1c4210cf08aca66b30956ad4`で隔離restoreし、11 table/head `20261012_0002`・`public.phone_numbers` 0件・application read-only smoke・cleanupを確認した。final statusも同じlatest世代とbackup service成功、backup/retention両timerのactive/enabledを示した。今回の手動unit実行を定刻発火の追加実績へ読み替えず、翌予定のbackup UTC09:30（18:30 JST）、retention UTC15:00（翌日00:00 JST）は予定として記録する。実FAX原本0件のため、非空の実原本の本番restore、実Cloco・実番号・商用容量・Softphone実機は未確認のまま維持する。
+このexact世代を`release-1c4210cf08aca66b30956ad4`で隔離restoreし、11 table/head `20261012_0002`・`public.phone_numbers` 0件・application read-only smoke・cleanupを確認した。final statusも同じlatest世代とbackup service成功、backup/retention両timerのactive/enabledを示した。今回の手動unit実行を定刻発火の追加実績へ読み替えず、翌予定のbackup UTC09:30（18:30 JST）、retention UTC15:00（翌日00:00 JST）は予定として記録する。実FAX原本0件のため、非空の実原本の本番restore、Cloco株式会社様との実回線・実番号・商用容量・Softphone実機は未確認のまま維持する。
 
 FAX一時TIFFはInfra `a00b0a4c3bb7631ac646e78b2ee55e4803d82860`でclaim別原本・実ACK後回収・旧受信event互換・指定DLQ一件の通知再送を修正し、既存HTTP回帰、隔離の実G.711送受信、canonical及びfixed-SHA独立reviewを通してmainへ統合した。[FAX運用契約](../../runbooks/telephony-platform/fax-and-number-provisioning.md)を参照する。管理専用productionへPBXを追加しておらず、実回線での適用・受入成功とは扱わない。
 
@@ -250,7 +250,7 @@ Backendの2table追加は旧CDRを保持し、再割当・遅延・再送で帰�
 
 ## 2026-10-28 native認証の本番接続
 
-本人はPhone専用HMAC鍵と`anshin-phone-enrollment`資格が未発行であることを前提に、既存Auth/資格管理owner・Secret Managerでの新規発行登録、規定検証・独立review・main統合・本番有効化と実Google callback受入を明示した。以前の隔離限定範囲を本番接続へ進めるが、Push・Cloco開通・番号切替・Store・政策支援4機能は含めない。
+本人はPhone専用HMAC鍵と`anshin-phone-enrollment`資格が未発行であることを前提に、既存Auth/資格管理owner・Secret Managerでの新規発行登録、規定検証・独立review・main統合・本番有効化と実Google callback受入を明示した。以前の隔離限定範囲を本番接続へ進めるが、Push・Cloco株式会社様開通・番号切替・Store・政策支援4機能は含めない。
 
 Authのpublic clientは`anshin-phone-mobile`、package/bundleは`care.anshin.phone`、callback/logoutは`care.anshin.phone:/oauthredirect`と`care.anshin.phone:/logout`、署名backchannelは`https://phone.anshin.care/api/v1/auth/native/backchannel-logout`。issuer、managed AAL2/AMR、Policy1/provider-assurance-v1を既存正本へ固定する。資格の値はこの文書へ記録せず、共通資格管理正本のPhone専用2 ID・固定数値version・read-only FILE consumerを使う。
 

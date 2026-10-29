@@ -49,13 +49,13 @@ Backend三文書・管理画面二文書は既存resolverで一意に解決で�
 
 - [Phone 本番準備・ソフトフォン技術検証計画](plans/telephony-platform/production-and-softphone-preparation.md): 実機観測の限界、本番adapter・保存/復旧・公開経路の残件、SDK候補と未検証範囲。reference / draftであり、費用・UI/UX・商用提供の承認又は追加release gateではない。
 
-- [Cloco SIPトランク接続・責任分界の確認仕様](specs/telephony-platform/cloco-sip-trunk-interface.md): 10/29再設計。Cloco標準へ合わせる当社carrier終端・番号正規化・媒体・段階試験、未確定の物理接続口。
+- [Cloco株式会社様 SIPトランク接続・責任分界の確認仕様](specs/telephony-platform/cloco-sip-trunk-interface.md): 10/29再設計。Cloco株式会社様の標準へ合わせる当社carrier終端・番号正規化・媒体・段階試験、未確定の物理接続口。
 
-- [Cloco × アンシンフォン 論理・物理構成図](specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio): 最小社内標準接続試験と、carrierをPBXで終端して端末側SBC/媒体を分ける目標の2頁。未実装・未試験の当社設計。
+- [Cloco株式会社様 × アンシンフォン 論理・物理構成図](specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio): 最小社内標準接続試験と、carrierをPBXで終端して端末側SBC/媒体を分ける目標の2頁。未実装・未試験の当社設計。
 - [Phase 1 実番号接続手順](runbooks/telephony-platform/phase1_real_number_runbook.md): 実番号試験の参照runbook。`reference / inventory`であり、商用提供可否や法令適合の正本ではない。
 - [スマートフォン実機・音声品質検証](runbooks/telephony-platform/smartphone-and-voice-validation.md): 端末credentialの安全な投入、失効、実機・30分音声品質の合格条件。
 - [FAX・番号プロビジョニング](runbooks/telephony-platform/fax-and-number-provisioning.md): PDF参照、送信queue/retry、TEL番号とSIP endpointの割当・状態遷移。
-- [VPS配備・キャリア接続情報受領手順](runbooks/telephony-platform/vps-deployment-and-carrier-intake.md): 配備gate、firewall、backup/rollback、Cloco等の接続情報検証。
+- [VPS配備・キャリア接続情報受領手順](runbooks/telephony-platform/vps-deployment-and-carrier-intake.md): 配備gate、firewall、backup/rollback、Cloco株式会社様等の接続情報検証。
 - [VPS Phase 1配置前監査 2026-08-21](evidence/telephony-platform/vps_phase1_readiness_2026-08-21.md): 初回の読み取り専用監査結果。
 - [VPS Phase 1配置前監査 2026-08-22](evidence/telephony-platform/vps_phase1_readiness_2026-08-22.md): 再監査結果と現在の配置停止条件。
 

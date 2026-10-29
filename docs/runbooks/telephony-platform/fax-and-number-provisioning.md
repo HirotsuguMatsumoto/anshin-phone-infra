@@ -57,7 +57,7 @@ workerはPostgreSQLのrow lockとskip-lockedでjobを取得し、同じsending j
 
 DLQの原因修正後は既存forwarderの`python /app/forwarder.py --replay-dead-letter '<basename>.json' --expected-sha256 '<event-file-sha256>'`で指定一件だけをpendingへ戻せる。固定spool内の通常file、hashとevent schemaを照合し、pending同名があれば上書きしない。再送するのは同一ID・claimの結果通知だけで、claim取得・callfile作成・物理FAX再送はしない。unknown・DLQ・孤児原本に日数による自動削除を追加しない。本番原本の月単位保持とS3の31日保護は別の既存ownerが扱う。
 
-`FAX_MEDIA_MODE=audio`は実G.711、`t38`はT.38交渉とaudio fallbackを選ぶ。実Cloco・T.38の適合、malware scanの商用連携及び本番提供は未確認である。今回の隔離模擬キャリアによる実FAX通信を実回線成功へ読み替えない。
+`FAX_MEDIA_MODE=audio`は実G.711、`t38`はT.38交渉とaudio fallbackを選ぶ。Cloco株式会社様との実回線・T.38の適合、malware scanの商用連携及び本番提供は未確認である。今回の隔離模擬キャリアによる実FAX通信を実回線成功へ読み替えない。
 
 ## 再実行入口と追加boundary
 
