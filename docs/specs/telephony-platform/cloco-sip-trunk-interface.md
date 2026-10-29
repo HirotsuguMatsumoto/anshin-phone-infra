@@ -12,9 +12,9 @@ status: draft
 risk_level: high
 source_doc_ids: [anshin.corporate.anshin-phone.cloco-response-2026-09-30, anshin.corporate.anshin-phone.notification-status, anshin.infrastructure.system-architecture]
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-corporate-strategy]
-code_paths: [compose.phase1.yaml, configs/carrier-intake.example.json]
+code_paths: [compose.phase1.yaml, compose.phase1.mock.yaml, configs/carrier-intake.example.json, deploy/asterisk/config/pjsip.conf.template, deploy/asterisk/config/extensions.conf.template, deploy/asterisk/scripts/render_config.py, deploy/asterisk/scripts/pbx_management.py, deploy/kamailio/config/kamailio.cfg.template, deploy/kamailio/scripts/render_config.py]
 contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml]
-test_paths: [scripts/build_check.sh]
+test_paths: [scripts/build_check.sh, scripts/test_phase1_render_config.py, scripts/test_kamailio_render_config.py, scripts/test_pbx_event_pipeline.py, scripts/test_phase1_sip_e2e.py]
 last_reviewed: "2026-10-29"
 review_interval_days: 30
 sensitivity: restricted
@@ -55,10 +55,10 @@ sensitivity: restricted
 最小接続試験は、Cloco株式会社様が提供する標準トランクと当社PBXを直接接続し、当社内のSIP端末一つで検証する。当社独自のスマホ経路をCloco株式会社様側へ要求しない。これは当社の試験順序であり、試験用回線の数量・相手先は先方の標準提供条件に合わせる。
 
 ```text
-最初の標準接続試験（未実装・未実施）
+最初の実回線試験の構成（実回線未受入）
 一般電話網 ⇄ Cloco株式会社様の標準SIPトランク | 責任分界 | 当社Asterisk ⇄ 社内試験SIP端末
 
-製品側を組み込む目標構成（未実装・未実施）
+製品側へ組み込む構成（Mac内の隔離受入済み、実回線未受入）
 SIP: Cloco株式会社様 ⇄ Asteriskのcarrier接続口・PBX ⇄ Kamailio ⇄ 当社端末
 RTP: Cloco株式会社様 ⇄ Asteriskのcarrier媒体口・PBX ⇄ RTPengine ⇄ 当社端末
 管理: 管理API・DB ⇄ PBXの番号/内線/権限/履歴/FAX結果（音声経路外）
@@ -93,11 +93,11 @@ Asterisk 22.10.1/PJSIPは既存資産を使う当社保守候補とする。マ�
 
 当社内で次の順に選定する。①既存の承認済み自社接続口・経路でSIP/RTPの双方向到達を確保できるかinventoryする。②不足する場合、標準通信条件を満たす当社管理の接続口への配置変更を、所在地・経路・費用・障害切分け・届出への差分込みで具体化する。③新規調達・公開設定・ルーター制約変更が必要なら具体案をownerへ示し、その変更の指示前に適用しない。VPNやHTTPS公開の存在だけでUDP経路があると推定しない。Cloco株式会社様へ『ポート転送なしで使えるようにしてほしい』『代替方式を設計してほしい』とは依頼しない。
 
-## 4. 現実装との差分と内部実装順序
+## 4. 改修前実装との差分と当社修正
 
 比較元Infra `a858e152c07d06f0250631cf8f79f5040a4282eb`、Backend `abe90f6fdb401149e7dc85d8269ba04a0d522ce9`。記載はsourceのread-only照合であり、今回の本番live観測ではない。
 
-| ID | 現実装 | 後続の当社修正と合格条件 |
+| ID | 改修前実装 | 当社修正と合格条件 |
 | --- | --- | --- |
 | R1 接続境界 | AsteriskがSBCをoutbound_proxyとしてcarrier登録・発信。Kamailio/RTPengineが上流にも介在 | carrier用transport・auth・registration・媒体口をAsteriskに集約。上流proxy設定を分離し、REGISTER/INVITE/response/dialog/SDPの実線上でCloco株式会社様の標準に一致 |
 | R2 到達性 | private VM、SBC広告IP、RTPengine 20000～20100の設定 | 接続口の実在・送信元/宛先/NAT/媒体範囲を当社で確定。数値の重なりでは判定しない。アイドル後・再登録後も着信と音声が成立 |
@@ -112,10 +112,10 @@ Asterisk 22.10.1/PJSIPは既存資産を使う当社保守候補とする。マ�
 
 | 段階 | 当社が用意する検証 | 現在状態 |
 | --- | --- | --- |
-| 0 資料・接続口 | manualへの要求対応、接続口/経路/提供資格/試験許可の具体化 | 論理再設計、物理接続口・提供条件は未確定 |
-| 1 標準音声 | PBXと社内試験端末のみ。登録・アイドル後着信・再登録、双方発信/切断、再INVITE、双方向音声、許可番号のFrom | 未実装・未試験 |
-| 2 製品接続 | 端末側SBC/媒体中継、組織/内線権限、複数DID、ToとRequest-URIが異なる着信、Alert-Info有無/不一致/未知番号、番号別From、履歴 | 未実装・未試験 |
-| 3 FAX・容量 | 方式回答に従うFAX実送受信/対向結果/失敗、契約上限と当社制限、ログ切分け | 未実装・未試験 |
+| 0 資料・接続口 | manualへの要求対応、接続口/経路/提供資格/試験許可の具体化 | Mac内経路は具体化・隔離受入済み。本番接続口・提供条件は未確定 |
+| 1 標準音声 | PBXと社内試験端末のみ。登録・アイドル後着信・再登録、双方発信/切断、再INVITE、双方向音声、許可番号のFrom | Mac内fixtureで隔離受入済み。実回線未受入 |
+| 2 製品接続 | 端末側SBC/媒体中継、組織/内線権限、複数DID、ToとRequest-URIが異なる着信、Alert-Info有無/不一致/未知番号、番号別From、履歴 | Mac内fixtureで隔離受入済み。実回線未受入 |
+| 3 FAX・容量 | 方式回答に従うFAX実送受信/対向結果/失敗、契約上限と当社制限、ログ切分け | Mac内G.711 FAX回帰済み。実提供方式・実回線FAX・契約容量は未確認 |
 | 4 顧客提供 | 番号制度・契約・所在/設備手続・品質・告知・実機等の必要条件 | 未完了。社内試験の成功で顧客提供可としない |
 
 当社fixtureによるwire回帰と、許可されたCloco株式会社様との実回線環境の受入を分ける。障害時は当社側で時刻・匿名化したSIP応答・媒体経路を切り分け、既存窓口が指定する情報だけを相談する。独自構成全体のデバッグ・試験設計・合格保証をCloco株式会社様へ依頼しない。
@@ -150,3 +150,18 @@ PDCA：前回は方針の語調修正にとどまり、技術正本と出力TXT�
 本番の次判断は、先方の標準社内テスト案内を受領後、既存承認経路で実現可能かを当社が照合する。成立しなければ、当社管理PBXの配置・接続口、費用、届出差分を具体案としてownerへ示す。新規費用・公開設定変更・実回線接続の指示前には適用しない。先方へ当社都合のNAT保証・代替経路構築を求めない。
 
 現在の改修はTo主のDID、存在時のAlert-Info一致、許可番号別の実From、carrier認証と端末認証の分離を対象とする。複数DID、誤形式・不一致・未割当拒否と既存本人履歴を隔離環境で検証する。FAXは音声方式の回帰と実提供条件の確認を分け、T.38を無条件で有効にしない。実Google/native認証は受入済み結果を再利用し、Simulatorを再起動しない。
+
+
+### 6.2 当社内の実装・隔離受入結果
+
+実装・fixture固定版 `c31633156bd1d1d6a4f4d00f87a9b82f903c2d7b` で既存 `--fixture voice` と `--fixture fax` がexit0。Task専用bridgeと模擬carrierのみを使い、実資格・実回線は使っていない。
+
+- 生成したregistration設定をAsterisk所有UID10001で読み込み、実Digest challenge/応答とunregisterを確認。Contactのuser・広告socketが実PBXのcarrier口と一致することをassertし、その記録先へ実SIP着信を送った。模擬registrarはfixtureのpeer portを解放するため先に終了しており、実providerの登録中ルーティング・NAT寿命の検証ではない。
+- Contact userでの着信と、Request-URIを変えたE.164 To＋Alert-Info省略の着信が両方成功。Alert-Info不一致・未割当DID・不正Toを実SIPで拒否した。
+- 音声のB-leg Fromは許可TEL DID、carrier SDPはAsterisk自身の口、上流Record-Route中継なしを確認。模擬上流のRTPは15000/UDPを使用し、発着信の双方で実PCMUの双方向packetを確認した。端末停止・再有効化の登録拒否/回復と、実PostgreSQLの本人履歴・別subject拒否も確認した。Google認証は再試験していない。
+- FAXは別の許可FAX DIDが実Fromに載り、PDF→SendFAX→対向ReceiveFAX、受信原本の保護保存と履歴、Backend ACK後の原本回収までG.711で確認した。実Cloco株式会社様のFAX提供条件・実送達は未確認。
+- 各fixtureのnative finallyによる所有container/volume/network/imageの終了と回収が成功した。共通cache、別案件、専用Simulator、本番runtime・DB・鍵・backupは変更しない。
+
+結果はPhone既存作業記録の `maintenance_current_20261022.carrier_standard_local_20261029`、Git外 `carrier-standard-local-20261029/voice-r4.log`・`fax-r1.log`。source検査・独立review・main統合の最終SHAは同記録へ分けて記録する。
+
+PDCA：初回cold buildは依存downloadとcompileで600/1800秒の旧準備期限を超過し、通話処理前に停止した。実測compile stage1617.9秒と後続のFAX/font準備を根拠にbuild準備だけ2700秒へ変更した。SIP/媒体/業務の期限と合格条件は不変。完了済みbuild cacheを再利用した後のbootstrapはvoice49.910秒・FAX48.321秒であり、cold全体や本番性能の改善効果とはしない。所有UIDでの設定再生成、Contactの証拠範囲を修正して実通信を確認した。同じ成功入力のnative/Simulator試験は反復していない。

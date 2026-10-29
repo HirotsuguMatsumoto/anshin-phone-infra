@@ -262,3 +262,5 @@ Authのpublic clientは`anshin-phone-mobile`、package/bundleは`care.anshin.pho
 ### 2026-10-29 標準接続への当社側改修
 
 接続経路・未採用の本番口・Mac内試験の区別は `anshin.phone.cloco-sip-trunk-interface` §6.1を参照する。今回は管理API/DB・本番runtime・公開設定・実資格・実回線を変更しない。提供元向けの追加メールは送らない。Task専用bridge上でcarrier→Asterisk直接、端末側だけKamailio/RTPengineという構成を検証する。既存 `scripts/test_phase1_sip_e2e.py --fixture voice` とFAX fixtureを再利用する。source検査と実packet/音声の結果は既存Phone作業記録へ記載し、模擬結果を実回線合格へ読み替えない。
+
+Mac内のvoice/FAX隔離受入は技術仕様§6.2の固定版でexit0。REGISTER/Digest、Contact、To/Alert-Info、TEL/FAX別From、PCMU、原本/履歴/ACKと終了処理を確認した。実回線・本番公開設定・費用・FAX提供条件・契約容量の確認へ読み替えない。既存firewall rendererの旧端末側設定を、新しいcarrier口の許可設定として適用しない。
