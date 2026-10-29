@@ -67,6 +67,8 @@ python3 -m py_compile "$repo_dir/scripts/validate_carrier_intake.py"
 ANSHIN_PHONE_SECRET_DIR="$validation_root/secrets" \
   CARRIER_AUTH_MODE=registration \
   CARRIER_HOST=carrier.invalid \
+  CARRIER_SIGNALING_ADDRESS=203.0.113.20 \
+  CARRIER_MEDIA_ADDRESS=203.0.113.20 \
   CARRIER_SOURCE_CIDRS=198.51.100.10/32 \
   SMARTPHONE_SOURCE_CIDRS=192.0.2.10/32 \
   CARRIER_SIP_USERNAME=phase1-validation \

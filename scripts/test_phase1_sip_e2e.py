@@ -312,8 +312,10 @@ def fixture_volume_observation(runtime, project, env):
 
 def run(command: list[str], *, env: dict[str, str], check: bool = True, input_text: str | None = None, timeout: float | None = None, cwd=None, stdin=None, text=True, termination_grace=0) -> subprocess.CompletedProcess[str]:
     manager = fixture_manager(env)
+    # Cold apt/pip downloads exceeded 600s at observed 65-87kB/s. Only build
+    # preparation gets 1800s; SIP, media and business deadlines are unchanged.
     return manager.fixture_command(command, cwd=cwd or ROOT, env=env, text=text, input=input_text, stdin=stdin,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout if timeout is not None else 600 if "--build" in command or "build" in command else 180,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout if timeout is not None else 1800 if "--build" in command or "build" in command else 180,
         check=check, process_factory=fixture_process_factory, registered=fixture_process_registered,termination_grace=termination_grace)
 
 
@@ -829,6 +831,7 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
         protected_destination = run(base + ["exec", "-T", "backend", "python", "-c", code], env=env).stdout.strip()
         run(base + ['pause', 'pbx-event-forwarder'], env=env)
         forwarder_paused = True
+        run(base + ["exec", "-T", "mock-carrier", "asterisk", "-rx", "pjsip set logger on"], env=env)
         job = backend_request(base, env, "POST", "/api/v1/fax-jobs", {
             "tenant_id": "anshin-phase1", "phone_number_id": fax_number["id"],
             "idempotency_key": "isolated-real-fax-send", "destination_masked": "030****0000",
@@ -851,6 +854,10 @@ def run_fax_flow(base: list[str], env: dict[str, str], fax_number: dict, secret_
         observed = run(base + ["exec", "-T", "mock-carrier", "cat", "/tmp/mock-fax-status"], env=env).stdout.strip()
         if observed != "SUCCESS":
             raise RuntimeError("phase=fax-send state=failed consumer=mock-carrier")
+        carrier_output.flush()
+        if not re.search(r"From:.*<sip:0300000002@", carrier_log.read_text()):
+            raise RuntimeError("phase=fax-send state=incorrect-carrier-From")
+        print("PASS: actual FAX carrier B-leg uses the authorized FAX DID in From", flush=True)
         removed_source(sent_source)
         print("PASS: queued PDF -> actual SendFAX -> mock carrier ReceiveFAX -> completion/history", flush=True)
         print('PASS: received and sent TIFF preserved while consumer paused; exact originals reclaimed only after typed Backend ACK', flush=True)
@@ -943,7 +950,7 @@ from app.core.database import SessionLocal
 from app.api.dependencies import AuthenticatedUser, ManagementContext
 from app.api.management_routes import list_own_call_records
 with SessionLocal() as db:
-    assert db.scalar(text('SELECT version_num FROM alembic_version')) == '20261022_0003'
+    assert db.scalar(text('SELECT version_num FROM alembic_version')) == '20261028_0005'
     def own(subject):
         return list_own_call_records(Response(), limit=50, cursor=None,
             context=ManagementContext(AuthenticatedUser(subject,None,None),'anshin-phase1','phone-operator'),db=db)
@@ -1011,6 +1018,8 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 "CARRIER_AUTH_MODE": "ip",
                 "CARRIER_HOST": "mock-carrier",
                 "CARRIER_PORT": "5060",
+                "CARRIER_SIGNALING_ADDRESS": "10.254.250.20",
+                "CARRIER_MEDIA_ADDRESS": "10.254.250.20",
                 "CARRIER_QUALIFY_FREQUENCY": "0",
                 "CARRIER_SOURCE_CIDRS": "10.254.250.10/32",
                 "CARRIER_SIP_USERNAME": "mock-carrier",
@@ -1073,6 +1082,30 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             wait_for_sbc(base, env)
             wait_for_asterisk(base, env)
             wait_for_backend(base, env)
+            if fixture_only == "voice":
+                registrar = exec_background(base, "mock-carrier",
+                    ["python3", "/scenarios/registration_probe.py"], env)
+                deadline = time.monotonic() + 10
+                while run(base + ["exec", "-T", "mock-carrier", "test", "-f", "/tmp/registration-probe-ready"], env=env, check=False).returncode:
+                    if registrar.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError("phase=carrier-registration state=registrar-not-ready")
+                    time.sleep(.1)
+                # Render the actual registration configuration after the peer
+                # is ready; do not depend on an earlier unanswered retry timer.
+                run(base + ["exec", "-T", "asterisk", "env", "CARRIER_AUTH_MODE=registration",
+                    "python3", "/opt/anshin-phone/render_config.py"], env=env)
+                run(base + ["exec", "-T", "asterisk", "asterisk", "-rx",
+                    "module reload res_pjsip_outbound_registration.so"], env=env)
+                deadline = time.monotonic() + 15
+                while True:
+                    ready = run(base + ["exec", "-T", "mock-carrier", "test", "-f", "/tmp/registration-probe-passed"], env=env, check=False)
+                    if ready.returncode == 0:
+                        break
+                    if registrar.poll() is not None or time.monotonic() >= deadline:
+                        raise RuntimeError("phase=carrier-registration state=failed")
+                    time.sleep(.5)
+                run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "pjsip send unregister carrier-registration"], env=env)
+                finish(registrar, "synthetic carrier registration")
             tel_number = backend_request(
                 base,
                 env,
@@ -1178,70 +1211,77 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             print(registration.stdout, end="")
             wait_for_smartphone_contact(base, env)
 
-            smartphone = exec_background(
-                base,
-                "mock-smartphone",
-                [
-                    "sipp",
-                    "-nostdin",
-                    "-sf",
-                    "/scenarios/smartphone_inbound_uas.xml",
-                    "-trace_msg", "-message_file", "/tmp/inbound-uas.log", "-recv_timeout", "10000",
-                    "-i",
-                    "10.254.250.30",
-                    "-p",
-                    "5060",
-                    "-m",
-                    "1",
-                    "-timeout",
-                    "15s",
-                ],
-                env,
-            )
-            time.sleep(1)
-            inbound = run(
-                base
-                + [
-                    "exec",
-                    "-T",
-                    "mock-carrier",
-                    "sipp",
-                    "-nostdin",
-                    "10.254.250.40:5060",
-                    "-sf",
-                    "/scenarios/carrier_inbound_uac.xml",
-                    "-i",
-                    "10.254.250.10",
-                    "-p",
-                    "5060",
-                    "-m",
-                    "1",
-                    "-timeout",
-                    "15s",
-                    "-trace_msg",
-                    "-message_file",
-                    "/tmp/inbound-messages.log",
-                ],
-                env=env,
-                check=False,
-            )
-            print(inbound.stdout, end="")
-            if inbound.returncode != 0:
-                if smartphone.poll() is None:
-                    smartphone.terminate()
-                smartphone_output, _ = smartphone.communicate(timeout=5)
-                raise RuntimeError(
-                    f"mock carrier inbound scenario failed:\n{inbound.stdout}\n"
-                    f"mock smartphone scenario output:\n{smartphone_output}"
+            # The Request-URI deliberately differs from To. Also exercise
+            # E.164 To normalization and a genuinely absent optional Alert-Info.
+            run(base + ["exec", "-T", "mock-carrier", "python3", "-c",
+                "from pathlib import Path;p=Path('/scenarios/carrier_inbound_uac.xml');"
+                "s=chr(10).join(line for line in p.read_text().splitlines() if not line.strip().startswith('Alert-Info:')).replace('To: <sip:0300000001@','To: <sip:+81300000001@');"
+                "Path('/tmp/carrier-inbound-no-alert.xml').write_text(s)"], env=env)
+            for scenario in ("/scenarios/carrier_inbound_uac.xml", "/tmp/carrier-inbound-no-alert.xml"):
+                smartphone = exec_background(
+                    base,
+                    "mock-smartphone",
+                    [
+                        "sipp",
+                        "-nostdin",
+                        "-sf",
+                        "/scenarios/smartphone_inbound_uas.xml",
+                        "-trace_msg", "-message_file", "/tmp/inbound-uas.log", "-recv_timeout", "10000",
+                        "-i",
+                        "10.254.250.30",
+                        "-p",
+                        "5060",
+                        "-m",
+                        "1",
+                        "-timeout",
+                        "15s",
+                    ],
+                    env,
                 )
-            finish(smartphone, "mock smartphone inbound scenario")
-            inbound_trace = run(
-                base + ["exec", "-T", "mock-carrier", "cat", "/tmp/inbound-messages.log"],
-                env=env,
-            ).stdout
-            if "c=IN IP4 10.254.250.50" not in inbound_trace:
-                raise RuntimeError("RTPengine did not rewrite inbound response SDP to its edge address")
-            print("PASS: mock carrier -> Kamailio/RTPengine -> Asterisk -> smartphone")
+                time.sleep(1)
+                inbound = run(
+                    base
+                    + [
+                        "exec",
+                        "-T",
+                        "mock-carrier",
+                        "sipp",
+                        "-nostdin",
+                        "10.254.250.20:5060",
+                        "-sf",
+                        scenario,
+                        "-i",
+                        "10.254.250.10",
+                        "-p",
+                        "5060",
+                        "-m",
+                        "1",
+                        "-timeout",
+                        "15s",
+                        "-trace_msg",
+                        "-message_file",
+                        "/tmp/inbound-messages.log",
+                    ],
+                    env=env,
+                    check=False,
+                )
+                print(inbound.stdout, end="")
+                if inbound.returncode != 0:
+                    if smartphone.poll() is None:
+                        smartphone.terminate()
+                    smartphone_output, _ = smartphone.communicate(timeout=5)
+                    raise RuntimeError(
+                        f"mock carrier inbound scenario failed:\n{inbound.stdout}\n"
+                        f"mock smartphone scenario output:\n{smartphone_output}"
+                    )
+                finish(smartphone, "mock smartphone inbound scenario")
+                inbound_trace = run(
+                    base + ["exec", "-T", "mock-carrier", "cat", "/tmp/inbound-messages.log"],
+                    env=env,
+                ).stdout
+                if "c=IN IP4 10.254.250.20" not in inbound_trace:
+                    raise RuntimeError("Asterisk did not terminate carrier media at its own address")
+                print("PASS: mock carrier -> Asterisk -> downstream relay -> smartphone")
 
             carrier = exec_background(
                 base,
@@ -1251,6 +1291,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     "-nostdin",
                     "-sf",
                     "/scenarios/carrier_outbound_uas.xml",
+                    "-trace_msg", "-message_file", "/tmp/carrier-outbound.log",
                     "-i",
                     "10.254.250.10",
                     "-p",
@@ -1289,6 +1330,12 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             )
             finish(outbound, "mock smartphone outbound scenario")
             finish(carrier, "mock carrier outbound scenario")
+            carrier_trace = run(base + ["exec", "-T", "mock-carrier", "cat", "/tmp/carrier-outbound.log"], env=env).stdout
+            if not re.search(r"From:.*<sip:0300000001@", carrier_trace) or "c=IN IP4 10.254.250.20" not in carrier_trace:
+                raise RuntimeError("phase=carrier-outbound state=incorrect-From-or-media")
+            if re.search(r"Record-Route:", carrier_trace, re.IGNORECASE):
+                raise RuntimeError("phase=carrier-outbound state=unexpected-upstream-relay")
+            print("PASS: actual carrier B-leg From and direct PBX SDP; no upstream relay")
             outbound_trace = run(
                 base + ["exec", "-T", "mock-smartphone", "cat", "/tmp/outbound-messages.log"],
                 env=env,
@@ -1296,6 +1343,16 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             if "c=IN IP4 10.254.250.50" not in outbound_trace:
                 raise RuntimeError("RTPengine did not rewrite outbound response SDP to its edge address")
             print("PASS: smartphone -> Kamailio/RTPengine -> Asterisk -> mock carrier")
+
+            for to_user, alert in (("0300000001", "0300000002"), ("0300000099", ""), ("invalid", "")):
+                source = (ROOT / "tests/mock-sip/scenarios/carrier_inbound_denied.xml").read_text()
+                source = source.replace("To: <sip:0300000001@", "To: <sip:" + to_user + "@")
+                if alert:
+                    source = source.replace("    Call-ID:", "    Alert-Info: " + alert + "\n    Call-ID:", 1)
+                run(base + ["exec", "-T", "mock-carrier", "sh", "-c", "cat > /tmp/carrier-denied.xml"], env=env, input_text=source)
+                run(base + ["exec", "-T", "mock-carrier", "sipp", "-nostdin", "10.254.250.20:5060",
+                    "-sf", "/tmp/carrier-denied.xml", "-i", "10.254.250.10", "-p", "5060", "-m", "1", "-timeout", "15s"], env=env)
+            print("PASS: actual carrier SIP rejects conflicting Alert-Info, unallocated DID and malformed To")
 
             call_records = wait_for_event_count(base, env, "call-records", 2)
             if not all("*" in str(record["remote_number_masked"]) for record in call_records):
@@ -1310,7 +1367,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             # Existing registered contacts must not bypass current assignment
             # or endpoint status. These are real SIP failures, not DB-only checks.
             backend_request(base, env, "DELETE", f"/api/v1/phone-number-assignments/{assignment['id']}?tenant_id=anshin-phase1")
-            denied = run(base + ["exec", "-T", "mock-carrier", "sipp", "-nostdin", "10.254.250.40:5060",
+            denied = run(base + ["exec", "-T", "mock-carrier", "sipp", "-nostdin", "10.254.250.20:5060",
                 "-sf", "/scenarios/carrier_inbound_denied.xml", "-i", "10.254.250.10", "-p", "5060", "-m", "1", "-timeout", "15s"], env=env)
             print("PASS: unassigned number denies actual inbound SIP", flush=True)
             backend_request(base, env, "PATCH", f"/api/v1/sip-endpoints/{endpoint['id']}", {"status":"suspended"})

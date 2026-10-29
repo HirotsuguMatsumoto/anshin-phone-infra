@@ -13,7 +13,7 @@ risk_level: critical
 source_doc_ids: []
 consumers: [anshin-phone-infra]
 code_paths: [compose.phase1.yaml, scripts/render_phase1_firewall.py, scripts/validate_carrier_intake.py]
-contract_paths: [configs/carrier-intake.example.json, docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml]
+contract_paths: [configs/carrier-intake.example.json, docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml]
 test_paths: [scripts/test_carrier_and_firewall_tools.py]
 last_reviewed: "2026-10-29"
 review_interval_days: 30
@@ -46,7 +46,7 @@ sensitivity: internal
 
 10/29の[接続・責任分界の確認仕様](../../specs/telephony-platform/cloco-sip-trunk-interface.md)を技術上の優先参照とする。Cloco株式会社様の原図・10/28回答・Ver2.0.1の既知条件は同仕様へ取り込んだ。To/Alert-Info、番号別From、標準認証方式と通信許可条件を再質問せず当社が実装する。個別トランクの値、既存FAX条件、試験利用条件は受領資料・管理画面・通常案内から確定する。
 
-carrierをAsteriskで終端し、まず社内端末だけをつなぐ最小試験へ変更する設計である。現在のPhase1 Composeは旧SBC透過接続の実装であり、新設計の配備手順としてそのまま使わない。接続口・物理配置未選定、private VMでの到達未証明を維持する。新しい公開・調達・ルーター変更、旧runtimeの適用は行わない。標準仕様へ当社が合わせ、先方へ特別構成を求めない。
+carrierをAsteriskで終端し、まず社内端末だけをつなぐ最小試験へ変更する設計である。Phase1 Composeの上流接続をAsterisk直接終端へ改修するが、Mac内の隔離検証と本番適用を区別する。接続口・物理配置未選定、private VMでの到達未証明を維持する。新しい公開・調達・ルーター変更、旧runtimeの適用は行わない。標準仕様へ当社が合わせ、先方へ特別構成を求めない。
 
 Cloco株式会社様等から回答を受領したら、`configs/carrier-intake.example.json`をGit外へ複製し、SIP/RTP CIDR、認証方式、codec、DTMF、DID形式、FAX、チャネル、CPS、緊急通報条件を記録する。passwordは記録せず、外部secret保管先の識別子だけを設定する。
 
@@ -70,3 +70,8 @@ python3 scripts/validate_carrier_intake.py /protected/path/carrier-intake.json
 着信不能、片通話、誤った発信者番号、FAX欠落、履歴欠落、SIP不正利用又は既存マーケティング基盤への影響が1件でもあれば、新規発信を止める。旧image digestと旧Compose定義へ戻し、DB schemaを先に巻き戻さない。番号経路はCloco株式会社様と合意した旧関連付けへ戻し、旧経路の復旧を確認する。復旧後に差分・SIP response・時刻・影響を記録する。
 
 host firewall適用、container再起動、DB restore、番号経路変更は本番mutationであり、各操作の明示承認なしに実行しない。
+
+
+### 2026-10-29 標準接続への当社側改修
+
+接続経路・未採用の本番口・Mac内試験の区別は `anshin.phone.cloco-sip-trunk-interface` §6.1を参照する。今回は管理API/DB・本番runtime・公開設定・実資格・実回線を変更しない。提供元向けの追加メールは送らない。Task専用bridge上でcarrier→Asterisk直接、端末側だけKamailio/RTPengineという構成を検証する。既存 `scripts/test_phase1_sip_e2e.py --fixture voice` とFAX fixtureを再利用する。source検査と実packet/音声の結果は既存Phone作業記録へ記載し、模擬結果を実回線合格へ読み替えない。

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 import re
-from ipaddress import ip_network
+from ipaddress import ip_network, IPv4Address
 from pathlib import Path
 
 
@@ -71,7 +71,9 @@ def main() -> None:
     for cidr in source_cidrs:
         ip_network(cidr, strict=False)
     identify = ["[carrier-identify]", "type=identify", "endpoint=carrier-endpoint"]
-    identify.append("match_header=X-Anshin-Source: carrier")
+    identify.extend(f"match={ip_network(cidr, strict=False)}" for cidr in source_cidrs)
+    signaling_address = str(IPv4Address(required("CARRIER_SIGNALING_ADDRESS")))
+    media_address = str(IPv4Address(required("CARRIER_MEDIA_ADDRESS")))
 
     username = required("CARRIER_SIP_USERNAME")
     if not re.fullmatch(r"[A-Za-z0-9_.+@-]+", username):
@@ -100,11 +102,10 @@ def main() -> None:
             [
                 "[carrier-registration]",
                 "type=registration",
-                "transport=transport-udp",
+                "transport=transport-carrier",
                 "outbound_auth=carrier-auth",
                 f"server_uri=sip:{carrier_host}:{carrier_port}",
                 f"client_uri=sip:{username}@{carrier_host}",
-                f"outbound_proxy=sip:{sbc_host}:{sbc_port}\\;lr",
                 f"contact_user={tel_did}",
                 "retry_interval=30",
                 "forbidden_retry_interval=300",
@@ -117,6 +118,11 @@ def main() -> None:
         raise RuntimeError("FAX_MEDIA_MODE must be audio or t38")
     common = {
         "FAX_OPTIONS": "F" if fax_media_mode == "audio" else "f",
+        "T38_ENABLED": "yes" if fax_media_mode == "t38" else "no",
+        "CARRIER_SIGNALING_ADDRESS": signaling_address,
+        "PBX_DEVICE_IP": str(IPv4Address(required("PBX_DEVICE_IP"))),
+        "PBX_CARRIER_IP": str(IPv4Address(required("PBX_CARRIER_IP"))),
+        "CARRIER_MEDIA_ADDRESS": media_address,
         "CARRIER_HOST": carrier_host,
         "CARRIER_PORT": carrier_port,
         "CARRIER_QUALIFY_FREQUENCY": carrier_qualify_frequency,

@@ -2,10 +2,11 @@
 <!DOCTYPE scenario SYSTEM "sipp.dtd">
 <scenario name="Anshin Phone mock carrier sends inbound call">
   <send retrans="500"><![CDATA[
-    INVITE sip:0300000001@[remote_ip]:[remote_port] SIP/2.0
+    INVITE sip:registration-contact@[remote_ip]:[remote_port] SIP/2.0
     Via: SIP/2.0/UDP [local_ip]:[local_port];branch=[branch]
     From: "Mock caller" <sip:9991000001@[local_ip]>;tag=[call_number]
     To: <sip:0300000001@[remote_ip]>
+    Alert-Info: 0300000001
     Call-ID: [call_id]
     CSeq: 1 INVITE
     Contact: <sip:carrier@[local_ip]:[local_port];transport=UDP>

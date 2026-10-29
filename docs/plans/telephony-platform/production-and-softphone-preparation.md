@@ -257,3 +257,8 @@ Authのpublic clientは`anshin-phone-mobile`、package/bundleは`care.anshin.pho
 既存資格ownerのcandidate canary/promotionは鍵の配布までを所有し、Phone Runtimeは通常配備のComposeへそのprojectionを引き継ぐ。両資格とAuthをqualification後、`compose.production.yaml`の明示flagでnativeを有効化する。Settings/healthはnative有効時にHMAC・enrollment資格とpolicy版が揃うことを確認し、telephonyはfalseを維持する。通常backup/migration/health/rollbackを既存release ownerに任せ、DB/FAX鍵・S3 SSE-S3/31日を変更しない。
 
 資格の登録、native配備、案件専用Simulatorでの実Google→OS AppAuth callback、本人API/refresh/logout/失効の受入は別の完了項目として実結果へ記録する。本人操作が必要なGoogle login/MFAのみ案内し、端末提供・既存UI承認を再質問しない。
+
+
+### 2026-10-29 標準接続への当社側改修
+
+接続経路・未採用の本番口・Mac内試験の区別は `anshin.phone.cloco-sip-trunk-interface` §6.1を参照する。今回は管理API/DB・本番runtime・公開設定・実資格・実回線を変更しない。提供元向けの追加メールは送らない。Task専用bridge上でcarrier→Asterisk直接、端末側だけKamailio/RTPengineという構成を検証する。既存 `scripts/test_phase1_sip_e2e.py --fixture voice` とFAX fixtureを再利用する。source検査と実packet/音声の結果は既存Phone作業記録へ記載し、模擬結果を実回線合格へ読み替えない。

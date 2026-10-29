@@ -957,6 +957,10 @@ class Phase1RenderConfigTest(unittest.TestCase):
                 "CARRIER_AUTH_MODE": auth_mode,
                 "CARRIER_HOST": "198.51.100.10",
                 "CARRIER_PORT": "5060",
+                "CARRIER_SIGNALING_ADDRESS": "203.0.113.20",
+                "PBX_DEVICE_IP": "172.31.251.20",
+                "PBX_CARRIER_IP": "172.31.250.20",
+                "CARRIER_MEDIA_ADDRESS": "203.0.113.21",
                 "CARRIER_QUALIFY_FREQUENCY": "30",
                 "CARRIER_SOURCE_CIDRS": "198.51.100.0/24,203.0.113.8/32",
                 "CARRIER_SIP_USERNAME": "phase1-test",
@@ -991,9 +995,16 @@ class Phase1RenderConfigTest(unittest.TestCase):
         pjsip, extensions, pjsip_mode, extensions_mode = self.render("registration")
 
         self.assertIn("[carrier-registration]", pjsip)
+        carrier = pjsip.split("[2001-auth]", 1)[0]
+        self.assertNotIn("outbound_proxy=", carrier)
+        self.assertNotIn("from_user=", carrier)
+        self.assertIn("transport=transport-carrier", carrier)
+        self.assertIn("media_address=203.0.113.21", carrier)
+        self.assertIn("external_signaling_address=203.0.113.20", carrier)
         self.assertIn("client_uri=sip:phase1-test@198.51.100.10", pjsip)
         self.assertIn("outbound_proxy=sip:sbc.example.test:5060\\;lr", pjsip)
-        self.assertIn("match_header=X-Anshin-Source: carrier", pjsip)
+        self.assertIn("match=198.51.100.0/24", pjsip)
+        self.assertNotIn("match_header=", pjsip)
         self.assertIn("[2001]", pjsip)
         self.assertIn("aors=2001", pjsip)
         self.assertIn("outbound_proxy=sip:sbc.example.test:5060\\;lr", pjsip)
@@ -1032,13 +1043,14 @@ class Phase1RenderConfigTest(unittest.TestCase):
         self.assertNotIn("[carrier-registration]", pjsip)
         self.assertIn("[carrier-identify]", pjsip)
         self.assertIn("endpoint=carrier-endpoint", pjsip)
-        self.assertIn("match_header=X-Anshin-Source: carrier", pjsip)
+        self.assertIn("match=198.51.100.0/24", pjsip)
+        self.assertNotIn("match_header=", pjsip)
 
     def test_dialplan_separates_tel_fax_and_blocks_high_risk_destinations(self) -> None:
         _, extensions, _, _ = self.render("registration")
 
-        self.assertIn("exten => 0300000000,1,NoOp(Anshin Phone inbound TEL", extensions)
-        self.assertIn("exten => 0300000001,1,NoOp(Anshin Phone inbound FAX", extensions)
+        self.assertIn("exten => s,1,NoOp(Anshin Phone inbound TEL", extensions)
+        self.assertIn("exten => s,1,NoOp(Anshin Phone inbound FAX", extensions)
         self.assertIn("exten => 110,1,NoOp(Block emergency call", extensions)
         self.assertIn("exten => 118,1,Goto(110,1)", extensions)
         self.assertIn("exten => 119,1,Goto(110,1)", extensions)

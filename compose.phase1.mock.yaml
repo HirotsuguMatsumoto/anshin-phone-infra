@@ -31,8 +31,14 @@ services:
 
   asterisk:
     environment:
-      CARRIER_SOURCE_CIDRS: 10.254.251.40/32
+      CARRIER_SOURCE_CIDRS: 10.254.250.10/32
+      PBX_DEVICE_IP: 10.254.251.20
+      PBX_CARRIER_IP: 10.254.250.20
+      CARRIER_SIGNALING_ADDRESS: 10.254.250.20
+      CARRIER_MEDIA_ADDRESS: 10.254.250.20
     networks:
+      sip-edge:
+        ipv4_address: 10.254.250.20
       pbx-internal:
         ipv4_address: 10.254.251.20
 

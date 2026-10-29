@@ -52,7 +52,6 @@ def condition(networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network]) -> 
 
 def main() -> None:
     asterisk_networks = cidrs("ASTERISK_SOURCE_CIDRS")
-    carrier_networks = cidrs("CARRIER_SOURCE_CIDRS")
     smartphone_networks = cidrs("SMARTPHONE_SOURCE_CIDRS")
     socket = required("RTPENGINE_SOCKET")
     if not SOCKET_RE.fullmatch(socket) or not 1 <= int(socket.rsplit(":", 1)[1]) <= 65535:
@@ -66,10 +65,9 @@ def main() -> None:
         "__ASTERISK_PORT__": port("ASTERISK_PORT"),
         "__RTPENGINE_SOCKET__": socket,
         "__ASTERISK_SOURCE_CONDITION__": condition(asterisk_networks),
-        "__CARRIER_SOURCE_CONDITION__": condition(carrier_networks),
         "__SMARTPHONE_SOURCE_CONDITION__": condition(smartphone_networks),
         "__TRUSTED_SOURCE_CONDITION__": condition(
-            asterisk_networks + carrier_networks + smartphone_networks
+            asterisk_networks + smartphone_networks
         ),
     }
     rendered = TEMPLATE.read_text(encoding="utf-8")

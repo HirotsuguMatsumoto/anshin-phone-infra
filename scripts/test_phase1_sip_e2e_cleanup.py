@@ -73,7 +73,7 @@ class Phase1SipE2ECleanupTest(unittest.TestCase):
             root=Path(raw)
             env={**os.environ,'PHONE_SOFTPHONE_SIMULATOR':'android','PHONE_SOFTPHONE_DEVICE':'emulator-5558',
                  'ANSHIN_PHONE_SECRET_DIR':raw,'ANSHIN_PHONE_BACKEND_DIR':raw,'PUBLIC_SIP_IP':'192.0.2.1',
-                 'PUBLIC_RTP_IP':'192.0.2.2','CARRIER_AUTH_MODE':'ip','CARRIER_HOST':'mock-carrier','CARRIER_SOURCE_CIDRS':'10.254.250.10/32',
+                 'PUBLIC_RTP_IP':'192.0.2.2','CARRIER_SIGNALING_ADDRESS':'10.254.250.20','CARRIER_MEDIA_ADDRESS':'10.254.250.20','CARRIER_AUTH_MODE':'ip','CARRIER_HOST':'mock-carrier','CARRIER_SOURCE_CIDRS':'10.254.250.10/32',
                  'SMARTPHONE_SOURCE_CIDRS':'10.254.250.30/32','CARRIER_SIP_USERNAME':'fixture','TEL_DID':'0300000001','FAX_DID':'0300000002'}
             with mock.patch.object(sdk.subprocess,'run',return_value=mock.Mock(stdout='phone-softphone-20261022\nOK\n')):
                 override=sdk.prepare_simulator(test_phase1_sip_e2e.ROOT,root,env,root)

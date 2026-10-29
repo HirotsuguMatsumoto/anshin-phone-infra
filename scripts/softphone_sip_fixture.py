@@ -229,7 +229,7 @@ def run_simulator_flow(base,env,endpoint,configuration,run,exec_background,finis
                 else:control_port = device_port
                 simulator_control_post(control_port,'config',{'endpoint_id':endpoint['id'],'server':f"{env['PHONE_SIM_HOST']}:{port}",'username':'2001','password':configuration['endpoints'][0]['password']})
             elif phase == 'registered':
-                peers.append(exec_background(base,'mock-carrier',['sipp','-nostdin','10.254.250.40:5060','-sf','/scenarios/carrier_inbound_uac.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','35s'],env))
+                peers.append(exec_background(base,'mock-carrier',['sipp','-nostdin','10.254.250.20:5060','-sf','/scenarios/carrier_inbound_uac.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','35s'],env))
             elif phase == 'outbound_ready':
                 finish(peers[-1],'Simulator inbound carrier')
                 peers.append(exec_background(base,'mock-carrier',['sipp','-nostdin','-sf','/scenarios/carrier_outbound_uas.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','35s'],env))
@@ -297,7 +297,7 @@ def run_softphone_flow(base,env,endpoint,configuration,backend_request,run,exec_
             probe=exec_background(base,'mock-carrier',['python3','/softphone-carrier-audio-probe.py','6'],env)
             peers.append(probe);time.sleep(.25)
             if direction=='inbound':
-                peer=exec_background(base,'mock-carrier',['sipp','-nostdin','10.254.250.40:5060','-sf','/scenarios/carrier_inbound_uac.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','20s'],env)
+                peer=exec_background(base,'mock-carrier',['sipp','-nostdin','10.254.250.20:5060','-sf','/scenarios/carrier_inbound_uac.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','20s'],env)
                 peers.append(peer);incoming=command('wait',kind=2);token=incoming['call'];ok(command('answer',call=token))
             else:
                 peer=exec_background(base,'mock-carrier',['sipp','-nostdin','-sf','/scenarios/carrier_outbound_uas.xml','-i','10.254.250.10','-p','5060','-m','1','-timeout','20s'],env)

@@ -148,6 +148,41 @@ def agi_variable(name: str, value: str) -> None:
         raise RuntimeError("AGI variable response was not accepted")
 
 
+def inbound_did(to_header: str, alert_info: str = "") -> str:
+    """Carrier contract: To owns DID; optional Alert-Info must agree.
+
+    Header values come from PJSIP's parsed request, never from argv or the
+    Request-URI/REGISTER Contact. The manual's Alert-Info is a bare DID.
+    """
+    if any(c in to_header + alert_info for c in "\r\n"):
+        raise ValueError("invalid carrier header")
+    users = re.findall(r"(?:^|<)sips?:([^@;<>\s]+)@", to_header.strip(), re.IGNORECASE)
+    if len(users) != 1:
+        raise ValueError("carrier To must contain one SIP identity")
+    def normalize(value):
+        if re.fullmatch(r"\+81[1-9][0-9]{8,9}", value):
+            value = "0" + value[3:]
+        if not re.fullmatch(r"0[0-9]{9,10}", value):
+            raise ValueError("invalid carrier DID")
+        return value
+    did = normalize(users[0])
+    if alert_info and normalize(alert_info.strip()) != did:
+        raise ValueError("carrier DID headers disagree")
+    return did
+
+
+def agi_header(name: str, index: int = 1) -> str:
+    # Both arguments are internal literals. Do not interpolate received SIP.
+    print(f'GET FULL VARIABLE "${{PJSIP_HEADER(read,{name},{index})}}"', flush=True)
+    response = sys.stdin.readline().rstrip("\r\n")
+    if response == "200 result=0":
+        return ""
+    match = re.fullmatch(r"200 result=1 \((.*)\)", response)
+    if not match:
+        raise RuntimeError("carrier header read failed")
+    return match[1]
+
+
 def authorize(arguments: list[str]) -> int:
     # Consume the AGI environment before writing AGI commands.
     while sys.stdin.readline().strip():
@@ -155,6 +190,16 @@ def authorize(arguments: list[str]) -> int:
     allowed, did, targets = "0", "", ""
     try:
         mode, identity = arguments[:2]
+        if mode == "carrier-inbound":
+            if len(arguments) != 2:
+                raise ValueError("invalid carrier route arguments")
+            call_id = identity
+            to_header, alert_info = agi_header("To"), agi_header("Alert-Info")
+            if agi_header("To", 2) or agi_header("Alert-Info", 2):
+                raise ValueError("ambiguous carrier DID headers")
+            identity = inbound_did(to_header, alert_info)
+            mode = "fax" if identity == os.environ["FAX_DID"] else "inbound"
+            arguments = [mode, identity] if mode == "fax" else [mode, identity, call_id]
         if mode not in {"inbound", "outbound", "fax"} or not re.fullmatch(r"[0-9]{3,11}", identity):
             raise ValueError("invalid route identity")
         tenant = os.environ["ANSHIN_PHONE_TENANT_ID"]
@@ -174,7 +219,7 @@ def authorize(arguments: list[str]) -> int:
         if value["allowed"]:
             did = value["national_number"]
             extensions = value["extensions"]
-            if not re.fullmatch(r"0[0-9]{9,10}", did) or any(not re.fullmatch(r"[0-9]{3,8}", e) for e in extensions):
+            if (mode != "outbound" and did != identity) or not re.fullmatch(r"0[0-9]{9,10}", did) or any(not re.fullmatch(r"[0-9]{3,8}", e) for e in extensions):
                 raise ValueError("invalid PBX route")
             targets = "&".join("PJSIP/" + e for e in extensions)
             allowed = "1"

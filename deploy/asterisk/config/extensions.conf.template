@@ -10,21 +10,29 @@ SMARTPHONE_EXTENSION=__SMARTPHONE_EXTENSION__
 TENANT_ID=__TENANT_ID__
 
 [from-carrier]
-exten => __TEL_DID__,1,NoOp(Anshin Phone inbound TEL)
+exten => _.,1,Goto(carrier-ingress,s,1)
+exten => s,1,Goto(carrier-ingress,s,1)
+
+[carrier-ingress]
+exten => s,1,AGI(pbx_management.py,carrier-inbound,${UNIQUEID})
+ same => n,GotoIf($["${PHONE_ROUTE_ALLOWED}"!="1"]?denied)
+ same => n,GotoIf($["${PHONE_ROUTE_DID}"="${FAX_DID}"]?carrier-fax,s,1)
+ same => n,Goto(carrier-voice,s,1)
+ same => n(denied),Hangup(21)
+
+[carrier-voice]
+exten => s,1,NoOp(Anshin Phone inbound TEL)
  same => n,Set(PHASE1_DIRECTION=inbound)
- same => n,Set(PHASE1_DID=${TEL_DID})
+ same => n,Set(PHASE1_DID=${PHONE_ROUTE_DID})
  same => n,Set(PHASE1_REMOTE_MASKED=${CALLERID(num):0:3}****${CALLERID(num):-4})
  same => n,Set(PHASE1_STARTED_AT=${STRFTIME(${EPOCH},,%Y-%m-%dT%H:%M:%SZ)})
  same => n,Set(CHANNEL(hangup_handler_push)=phase1-hangup,s,1)
- same => n,AGI(pbx_management.py,inbound,${EXTEN},${UNIQUEID})
- same => n,GotoIf($["${PHONE_ROUTE_ALLOWED}"!="1"]?denied)
  same => n,Dial(${PHONE_ROUTE_TARGETS},30,U(phase1-answer))
  same => n(denied),Hangup(21)
  same => n,Hangup()
 
-exten => __FAX_DID__,1,NoOp(Anshin Phone inbound FAX)
- same => n,AGI(pbx_management.py,fax,${EXTEN})
- same => n,GotoIf($["${PHONE_ROUTE_ALLOWED}"!="1"]?denied)
+[carrier-fax]
+exten => s,1,NoOp(Anshin Phone inbound FAX)
  same => n,Set(FAX_FILE=/var/spool/asterisk/fax/${STRFTIME(${EPOCH},,%Y%m%d-%H%M%S)}-${UNIQUEID}.tif)
  same => n,Answer()
  same => n,Wait(2)
@@ -66,7 +74,6 @@ exten => s,1,NoOp(Anshin Phone outbound TEL)
  same => n,Set(PHASE1_STARTED_AT=${STRFTIME(${EPOCH},,%Y-%m-%dT%H:%M:%SZ)})
  same => n,Set(CHANNEL(hangup_handler_push)=phase1-hangup,s,1)
  same => n,Set(CALLERID(num)=${PHONE_ROUTE_DID})
- same => n,Set(PJSIP_HEADER(add,P-Asserted-Identity)=<sip:${PHONE_ROUTE_DID}@__CARRIER_HOST__>)
  same => n,Dial(PJSIP/${ARG1}@carrier-endpoint,60,U(phase1-answer))
  same => n,Return()
  same => n(denied),Hangup(21)

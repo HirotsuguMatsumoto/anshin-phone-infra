@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin-phone-infra.carrier-standard-local.2026-10-29",
+  "title": "Cloco株式会社様標準に合わせる当社PBX終端・DID/From・隔離受入",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "high",
+  "production_change": false,
+  "spec_ids": [
+    "anshin.phone.cloco-sip-trunk-interface"
+  ],
+  "repositories": [
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/compose.phase1.mock.yaml",
+    "anshin-phone-infra/compose.phase1.yaml",
+    "anshin-phone-infra/deploy/asterisk/config/extensions.conf.template",
+    "anshin-phone-infra/deploy/asterisk/config/pjsip.conf.template",
+    "anshin-phone-infra/deploy/asterisk/scripts/pbx_management.py",
+    "anshin-phone-infra/deploy/asterisk/scripts/render_config.py",
+    "anshin-phone-infra/deploy/kamailio/config/kamailio.cfg.template",
+    "anshin-phone-infra/deploy/kamailio/scripts/render_config.py",
+    "anshin-phone-infra/scripts/softphone_sip_fixture.py",
+    "anshin-phone-infra/scripts/test_kamailio_render_config.py",
+    "anshin-phone-infra/scripts/test_pbx_event_pipeline.py",
+    "anshin-phone-infra/scripts/test_phase1_render_config.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
+    "anshin-phone-infra/scripts/verify_phase1.sh",
+    "anshin-phone-infra/tests/mock-sip/fax/pjsip.conf",
+    "anshin-phone-infra/tests/mock-sip/scenarios/carrier_inbound_uac.xml",
+    "anshin-phone-infra/tests/mock-sip/scenarios/registration_probe.py"
+  ],
+  "contract_paths": [
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md",
+    "anshin-phone-infra/docs/runbooks/telephony-platform/vps-deployment-and-carrier-intake.md",
+    "anshin-phone-infra/docs/specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio",
+    "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",
+    "anshin-phone-infra/docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml"
+  ],
+  "generated_artifacts": [
+    "Task-owned isolated voice/FAX logs and cleanup result outside Git"
+  ],
+  "test_paths": [
+    "anshin-phone-infra/scripts/test_phase1_render_config.py",
+    "anshin-phone-infra/scripts/test_kamailio_render_config.py",
+    "anshin-phone-infra/scripts/test_pbx_event_pipeline.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+    "anshin-phone-infra/scripts/build_check.sh",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py"
+  ],
+  "invariants": [
+    "追加費用・公開設定変更・本番操作・実回線接続・追加メールなし",
+    "受入済みnative/本人履歴・backup・別案件資産を保全",
+    "Cloco株式会社様の標準を当社側で実装し特別対応を依頼しない"
+  ],
+  "acceptance_criteria": [
+    "carrierはAsteriskが直接終端、SBC/RTPengineは端末側だけ",
+    "To DIDと存在時Alert-Info照合、番号別Fromを実SIPで確認",
+    "既存隔離fixtureで発着信・双方向PCMU・失効拒否・FAX回帰とcleanupを確認",
+    "source canonicalとfixed SHA Sol/high独立review",
+    "本番接続口の必要条件・現行禁止経路・未適用を文書で明示"
+  ],
+  "out_of_scope": [
+    "production・STG・MS-A2接続及び公開設定の適用",
+    "新規費用・契約・実資格発行・実回線接続・外部メール",
+    "政策支援4機能・Push・実機受入・Store公開"
+  ],
+  "rollout": {
+    "strategy": "local-source-only-no-production",
+    "steps": [
+      "最新main取込み",
+      "当社経路具体化とruntime修正",
+      "隔離fixtureとcanonical",
+      "fixed SHA独立reviewと承認済みguarded統合"
+    ],
+    "triggers": [
+      "owner-current-chat-20261029-progress-own-standard-implementation-without-public-changes"
+    ]
+  },
+  "rollback": {
+    "strategy": "preserve-originals-correct-source",
+    "steps": [
+      "旧版をGit履歴とGit外copyで保全",
+      "誤記はsourceとconsumerを同じ束で修正"
+    ],
+    "triggers": [
+      "仕様誤読・要求転嫁・出力不一致"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "元メール・manual・source・出力の整合",
+      "未実装・未受入の区別"
+    ],
+    "observation_period": "本再設計の検証時"
+  },
+  "approvals": [
+    {
+      "role": "scope",
+      "approved_by": "h@anshin.care",
+      "approved_at": "2026-10-29",
+      "approval_ref": "owner-current-chat-20261029-progress-own-standard-implementation-without-public-changes"
+    },
+    {
+      "role": "main-integration-standing-scope",
+      "approved_by": "h@anshin.care",
+      "approved_at": "2026-10-28",
+      "approval_ref": "owner-current-chat-integrate-all-implementation-and-documents"
+    }
+  ],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "f1b0ae6fbd92a6b528526492a33a4822e6aa5576"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/compose.phase1.mock.yaml",
+      "anshin-phone-infra/compose.phase1.yaml",
+      "anshin-phone-infra/deploy/asterisk/config/extensions.conf.template",
+      "anshin-phone-infra/deploy/asterisk/config/pjsip.conf.template",
+      "anshin-phone-infra/deploy/asterisk/scripts/pbx_management.py",
+      "anshin-phone-infra/deploy/asterisk/scripts/render_config.py",
+      "anshin-phone-infra/deploy/kamailio/config/kamailio.cfg.template",
+      "anshin-phone-infra/deploy/kamailio/scripts/render_config.py",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/vps-deployment-and-carrier-intake.md",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",
+      "anshin-phone-infra/scripts/softphone_sip_fixture.py",
+      "anshin-phone-infra/scripts/test_kamailio_render_config.py",
+      "anshin-phone-infra/scripts/test_pbx_event_pipeline.py",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
+      "anshin-phone-infra/scripts/verify_phase1.sh",
+      "anshin-phone-infra/tests/mock-sip/fax/pjsip.conf",
+      "anshin-phone-infra/tests/mock-sip/scenarios/carrier_inbound_uac.xml",
+      "anshin-phone-infra/tests/mock-sip/scenarios/registration_probe.py",
+      "anshin-phone-infra/docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra/compose.phase1.mock.yaml": "4337d4b20d34327b48d0562b284225877554b4b0",
+      "anshin-phone-infra/compose.phase1.yaml": "7914457ee08fcc34f88ec9a1bff9f53ddbaabd23",
+      "anshin-phone-infra/deploy/asterisk/config/extensions.conf.template": "7e2f11d6833388cd33b77fc06734b68ebf0937eb",
+      "anshin-phone-infra/deploy/asterisk/config/pjsip.conf.template": "a00aa227f47a7473600d7a663af52ce2b3e51d14",
+      "anshin-phone-infra/deploy/asterisk/scripts/pbx_management.py": "9f55328ee7457159128474dfd4e3e2d6c6598655",
+      "anshin-phone-infra/deploy/asterisk/scripts/render_config.py": "5f5228b3b0c26e7da0d1844192f34e810c7e958b",
+      "anshin-phone-infra/deploy/kamailio/config/kamailio.cfg.template": "a3e17ed90fc20d9c237249c27fc52ab9aea3edb4",
+      "anshin-phone-infra/deploy/kamailio/scripts/render_config.py": "c10fe7f1e2205873964577819ef04d545bc66872",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "93902ce9c5cca3de48a936012be72247f18893da",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md": "8bbd58f2832d6b9dfcd78dcad65f8415994a19aa",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/vps-deployment-and-carrier-intake.md": "76173006a50d3704e0e8302853262345c9f83095",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md": "c533a6658194306a4c618712ec01882391f77c69",
+      "anshin-phone-infra/scripts/softphone_sip_fixture.py": "047398fd5f82c75b82ce1d250e652f4151a5c087",
+      "anshin-phone-infra/scripts/test_kamailio_render_config.py": "50ed8fd4722405079947110e4e657fa18384d50f",
+      "anshin-phone-infra/scripts/test_pbx_event_pipeline.py": "37d0959a0fb82d0086d50e527335ba471018fefc",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py": "9163f211212fc2a0260a41cded21195ee65e4e5c",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py": "c495f5a556ca53722a58d79a989ce8ed349a98d0",
+      "anshin-phone-infra/scripts/verify_phase1.sh": "a16e2b760352fdefcff71f956b1282a89351017b",
+      "anshin-phone-infra/tests/mock-sip/fax/pjsip.conf": "e9fa6a18f87b5b9b19429b69b78160d2dfdaaefd",
+      "anshin-phone-infra/tests/mock-sip/scenarios/carrier_inbound_uac.xml": "1a6896bf10229103e23cd55b7976e8caa3ae7bd9",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio": "0e3da972d9a28c7b7d5ba69725bef8379621957b",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py": "833b07e27eef341eae8ee5a1f9180ea3afd0a8bb",
+      "anshin-phone-infra/tests/mock-sip/scenarios/registration_probe.py": null,
+      "anshin-phone-infra/docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml": null
+    },
+    "integration_order": [
+      "anshin-phone-infra"
+    ]
+  }
+}

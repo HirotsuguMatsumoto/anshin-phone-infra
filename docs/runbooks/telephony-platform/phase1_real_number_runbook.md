@@ -19,7 +19,7 @@ code_paths:
   - compose.phase1.mock.yaml
   - scripts/verify_phase1.sh
   - scripts/phase1_status.sh
-contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml]
 test_paths:
   - scripts/test_phase1_render_config.py
   - scripts/test_pbx_event_pipeline.py
@@ -218,3 +218,8 @@ Phase 1の外部SIPはKamailio SBCだけで受け、RTPはRTPengineへ固定し�
 計測fixture、同時通話数、FAX件数、継続時間、対象SHA及び対象環境を証跡へ固定する。実電話番号、SIP credential、相手先番号、録音又はFAX原本は証跡へ保存しない。計測中に音声品質低下、event欠落、OOM、予期しないrestart又はhost余白不足が一件でもあれば、有効化を停止する。
 
 計測結果からservice別のCPU、memory及びprocess数予算を決め、Compose上限、監視閾値、異常時停止条件及び切戻し手順を別の実装changeへ記録する。そのfixed SHAで隔離E2Eと同じ負荷条件を再実行し、上限内で品質と余白を維持できるまで顧客通信を有効化しない。未計測値又は過去の別環境の値を流用せず、この作業に伴ってCore又はAuthのresource若しくは配置を変更しない。
+
+
+### 2026-10-29 標準接続への当社側改修
+
+接続経路・未採用の本番口・Mac内試験の区別は `anshin.phone.cloco-sip-trunk-interface` §6.1を参照する。今回は管理API/DB・本番runtime・公開設定・実資格・実回線を変更しない。提供元向けの追加メールは送らない。Task専用bridge上でcarrier→Asterisk直接、端末側だけKamailio/RTPengineという構成を検証する。既存 `scripts/test_phase1_sip_e2e.py --fixture voice` とFAX fixtureを再利用する。source検査と実packet/音声の結果は既存Phone作業記録へ記載し、模擬結果を実回線合格へ読み替えない。

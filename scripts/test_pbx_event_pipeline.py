@@ -72,6 +72,17 @@ class EventHandler(BaseHTTPRequestHandler):
 
 
 class PbxEventPipelineTest(unittest.TestCase):
+    def test_carrier_did_uses_to_and_optional_consistent_alert_info(self):
+        for header, alert in [('<sip:0300000001@pbx.invalid>', ''),
+                              ('"Customer" <sip:+81300000001@pbx.invalid>;tag=abc', '0300000001')]:
+            self.assertEqual(management.inbound_did(header, alert), '0300000001')
+        for header, alert in [('', ''), ('<sip:registration-contact@pbx.invalid>', ''),
+                              ('<sip:0300000001@pbx.invalid>', '0300000002'),
+                              ('<sip:0300000001@pbx.invalid>', 'malformed'),
+                              ('<sip:0300000001@pbx.invalid>\r\nInjected: value', '')]:
+            with self.subTest(header=header, alert=alert), self.assertRaises(ValueError):
+                management.inbound_did(header, alert)
+
     def test_voice_route_captures_identity_before_dial_and_fax_stays_read_only(self):
         for mode, identity, extra in [("inbound", "0300000001", ["pbx-1"]),
                                       ("outbound", "2001", ["pbx-2"]),

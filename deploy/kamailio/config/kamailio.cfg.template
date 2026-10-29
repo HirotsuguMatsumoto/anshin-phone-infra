@@ -86,16 +86,6 @@ request_route {
         exit;
     }
 
-    if (src_ip __CARRIER_SOURCE_CONDITION__) {
-        if (!is_method("INVITE|ACK|BYE|CANCEL|OPTIONS|INFO|UPDATE|PRACK")) {
-            sl_send_reply("405", "Carrier Method Not Allowed");
-            exit;
-        }
-        append_hf("X-Anshin-Source: carrier\r\n");
-        route(TO_PBX);
-        exit;
-    }
-
     if (src_ip __SMARTPHONE_SOURCE_CONDITION__) {
         route(TO_PBX);
         exit;

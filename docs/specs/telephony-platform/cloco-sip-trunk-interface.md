@@ -13,7 +13,7 @@ risk_level: high
 source_doc_ids: [anshin.corporate.anshin-phone.cloco-response-2026-09-30, anshin.corporate.anshin-phone.notification-status, anshin.infrastructure.system-architecture]
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-corporate-strategy]
 code_paths: [compose.phase1.yaml, configs/carrier-intake.example.json]
-contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml]
 test_paths: [scripts/build_check.sh]
 last_reviewed: "2026-10-29"
 review_interval_days: 30
@@ -48,7 +48,7 @@ sensitivity: restricted
 
 根拠は[提供設備図](../../references/telephony-platform/SIPトランク設備構成図.pdf)（SHA-256 `bcdb481faa2d67e0337d35706ff56130b20bbfae5cef902b6c548452d1fed884`）、10/28 16:42の吉村様回答、[SIPトランク2 IP-PBX接続マニュアル Ver2.0.1](https://manual.cldpbx.com/wp-content/uploads/2026/09/siptrunk2_manual_Ver2.0.1.pdf)（2026-09-16、44頁）。10/29に元メールとマニュアル本文を再確認。PDF本文には一部文字抽出の乱れがあり、原PDF byte/hashと全頁画像は未取得。Cloco株式会社様の回答は責任分界の同意であり、当社全設備・機能の動作保証ではない。
 
-技術接続の詳細は本書に集約する。契約・番号制度・届出比較は `anshin.corporate.anshin-phone.cloco-architecture-comparison` を参照し、本書で法的適用を確定しない。既存文書のauthorityはreferenceのまま維持する。本改訂は再設計であり、製品実装・ネットワーク適用・回線受入の完了ではない。
+技術接続の詳細は本書に集約する。契約・番号制度・届出比較は `anshin.corporate.anshin-phone.cloco-architecture-comparison` を参照し、本書で法的適用を確定しない。既存文書のauthorityはreferenceのまま維持する。本改訂は当社側の実装とMac内の隔離検証を対象とする。ネットワーク適用・実回線受入の完了とは区別する。
 
 ## 2. 採用する論理構成と責任分界
 
@@ -64,7 +64,7 @@ RTP: Cloco株式会社様 ⇄ Asteriskのcarrier媒体口・PBX ⇄ RTPengine �
 管理: 管理API・DB ⇄ PBXの番号/内線/権限/履歴/FAX結果（音声経路外）
 ```
 
-Asterisk一つがcarrier接続とPBXを担うB2BUAとする。新しい中継製品又はPBX二重化を必要条件にしない。carrier legからKamailioの透過REGISTERとRTPengineを外す設計へ改め、両者は必要な端末側処理だけに用いる。現在の `compose.phase1.yaml` とテンプレートはこの目標に未対応で、適用してはならない。
+Asterisk一つがcarrier接続とPBXを担うB2BUAとする。新しい中継製品又はPBX二重化を必要条件にしない。carrier legからKamailioの透過REGISTERとRTPengineを外す設計へ改め、両者は必要な端末側処理だけに用いる。`compose.phase1.yaml` とテンプレートをこの終端構成へ改修する。本番の物理接続口は未採用のため、sourceの更新を本番適用の指示として扱わない。
 
 | 処理 | 当社側の担当・設計 |
 | --- | --- |
@@ -106,7 +106,7 @@ Asterisk 22.10.1/PJSIPは既存資産を使う当社保守候補とする。マ�
 | R5 音声/FAX | ulaw/alaw、T.38設定あり。実carrier未受入 | 初期PCMU音声の成立を優先。FAXは既存条件と実送達/失敗を別に確認。T.38又はPCMUの設定有無でFAX成立としない |
 | R6 容量・管理 | 模擬通話・管理経路の検証済み資産 | 実契約のチャネル/予約/番号関連付けへ当社が合わせる。社内試験期間に許された範囲だけで制限/履歴/再送を検証 |
 
-認証API・管理DB・本人履歴の受入済み経路は再利用する。carrier適合のための変更pathは既存 `deploy/asterisk/`、`deploy/kamailio/`、`compose.phase1.yaml`、firewall/intake renderer、既存SIP fixtureとする。本改訂ではこれらのruntime sourceを変更しない。実装時は当該変更のcontractと既存selectorで必要な検査を選ぶ。
+認証API・管理DB・本人履歴の受入済み経路は再利用する。carrier適合のための変更pathは既存 `deploy/asterisk/`、`deploy/kamailio/`、`compose.phase1.yaml`、firewall/intake renderer、既存SIP fixtureとする。今回のowner指示により、これらのうちPBX・端末SBC・隔離fixtureを改修する。管理API/DB・公開firewallは変更しない。検査は既存selectorと業務fixtureを使う。
 
 ## 5. 当社の検証順序と受入結果の扱い
 
@@ -131,3 +131,22 @@ FAX方式・制限・契約確認書類は未確認のまま当社内の後続�
 native認証・本人履歴の受入と、Cloco株式会社様との音声/FAX開通は別である。telephony_enabled=falseを維持し、今回のproduction mutationとメール送信は0件。source/consumer/change contractは本書metadata、検証は文書selector・図/返信/PDF同期とfixed SHA独立レビュー。管理runtimeの再配備は行わない。
 
 PDCA：前回は方針の語調修正にとどまり、技術正本と出力TXTを同期しなかった。今回はcarrier終端・番号変換・媒体・段階試験を当社責務で設計し、同じ正本からTXTとPDFを生成して出力実体を照合する。実接続・性能・業務効果は未計測。
+
+
+### 6.1 2026-10-29 当社接続経路の具体化と適用境界
+
+構成正本 `anshin.infrastructure.system-architecture` の通信境界では、Internet→MS-A2のpublic ingress、router port forwarding、EdgeへのSIP/RTP追加が禁止されている。既設Edge→WireGuard→Phoneの管理HTTPS経路をUDP音声へ流用しない。今回は本番hostへ接続して設定を変更せず、正本と既存実装の照合で判断した。
+
+| 区間 | 今回具体化する経路 | 適用状態 |
+| --- | --- | --- |
+| Mac内の模擬上流 | mock-carrier `10.254.250.10:5060/UDP` ⇄ Asteriskのcarrier口 `10.254.250.20:5060/UDP` | Task専用internal Docker bridge。host公開なし、実資格なし |
+| 上流音声 | mock-carrier ⇄ Asterisk `10.254.250.20:10000–10100/UDP` | AsteriskがSDP/音声を終端。上流にRTPengineを挟まない |
+| 端末SIP | 社内試験端末 `10.254.250.30:5060` ⇄ Kamailio `10.254.250.40:5060` ⇄ Asterisk `10.254.251.20:5060` | carrier資格を配らず、既存端末Digest認証を再利用 |
+| 端末音声 | 社内端末 ⇄ RTPengine `10.254.250.50:20000–20100` ⇄ Asterisk内部口 | 上流と別のdialog/媒体。管理DBは音声経路外 |
+| 実上流 | 提供された標準SIPトランク ⇄ 当社管理PBXの実到達口 | 未採用・未適用。現行制約下で到達保証できる本番経路は確認できていない |
+
+本番接続口に必要なのは、実在する当社SIP到達先、媒体到達先、提供元全VoIP送信元の許可と双方向経路である。マニュアルのUDP5060/10000–20000は先方の送信元条件であり、当社媒体受信範囲10000–10100と混同しない。REGISTER・keepaliveによる既存NATだけを採用根拠としない。
+
+本番の次判断は、先方の標準社内テスト案内を受領後、既存承認経路で実現可能かを当社が照合する。成立しなければ、当社管理PBXの配置・接続口、費用、届出差分を具体案としてownerへ示す。新規費用・公開設定変更・実回線接続の指示前には適用しない。先方へ当社都合のNAT保証・代替経路構築を求めない。
+
+現在の改修はTo主のDID、存在時のAlert-Info一致、許可番号別の実From、carrier認証と端末認証の分離を対象とする。複数DID、誤形式・不一致・未割当拒否と既存本人履歴を隔離環境で検証する。FAXは音声方式の回帰と実提供条件の確認を分け、T.38を無条件で有効にしない。実Google/native認証は受入済み結果を再利用し、Simulatorを再起動しない。

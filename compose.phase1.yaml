@@ -138,8 +138,12 @@ services:
       CARRIER_HOST: ${CARRIER_HOST:?set carrier SIP host}
       CARRIER_PORT: ${CARRIER_PORT:-5060}
       CARRIER_QUALIFY_FREQUENCY: ${CARRIER_QUALIFY_FREQUENCY:-30}
-      CARRIER_SOURCE_CIDRS: 172.31.251.40/32
+      CARRIER_SOURCE_CIDRS: ${CARRIER_SOURCE_CIDRS:?set carrier source addresses}
+      CARRIER_SIGNALING_ADDRESS: ${CARRIER_SIGNALING_ADDRESS:?set actual PBX carrier signaling address}
+      CARRIER_MEDIA_ADDRESS: ${CARRIER_MEDIA_ADDRESS:?set actual PBX carrier media address}
       CARRIER_SIP_USERNAME: ${CARRIER_SIP_USERNAME:?set carrier SIP username}
+      PBX_DEVICE_IP: 172.31.251.20
+      PBX_CARRIER_IP: 172.31.250.20
       SBC_HOST: kamailio
       SBC_PORT: "5060"
       TEL_DID: ${TEL_DID:?set carrier-issued TEL DID in digits}
@@ -178,6 +182,8 @@ services:
     logging: *default-logging
     networks:
       phone-data:
+      sip-edge:
+        ipv4_address: 172.31.250.20
       pbx-internal:
         ipv4_address: 172.31.251.20
 
