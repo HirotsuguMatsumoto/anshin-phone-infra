@@ -22,9 +22,9 @@ source_doc_ids:
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: [scripts/phone_postgresql_backup_adapter.py, scripts/production_runtime.py, compose.production.yaml]
-contract_paths: [docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml, docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml, docs/specs/changes/2026-10-22-own-call-history.change.yaml]
+contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml, docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml, docs/specs/changes/2026-10-22-own-call-history.change.yaml]
 test_paths: [scripts/build_check.sh]
-last_reviewed: "2026-10-22"
+last_reviewed: "2026-10-29"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -48,6 +48,10 @@ sensitivity: internal
 ownerの本番反映依頼と基礎開発指示に対する準備計画である。配置、費用、SDK採用、UI/UX又は商用提供の承認書ではない。本書をmain統合・releaseの追加開始条件にせず、正規check、Release Plan、既存runner及びgatewayを再利用する。
 
 事業・行政・契約は[Phone総合資料入口](https://github.com/HirotsuguMatsumoto/anshin-corporate-strategy/blob/main/documents/plans/anshin-phone/README.md)、機能・検証は[Backend運用契約](https://github.com/HirotsuguMatsumoto/anshin-phone-backend/blob/main/documents/specs/telephony-platform/foundation-runtime.md)と[UI資料入口](https://github.com/HirotsuguMatsumoto/anshin-frontend-monorepo/blob/main/apps/anshin-phone/documents/README.md)を参照する。
+
+## 2026-10-29 Cloco標準接続を先に成立させる再設計
+
+[Cloco接続仕様](../../specs/telephony-platform/cloco-sip-trunk-interface.md)を技術詳細の参照先とする。上流を当社暫定実装へ合わせる前提を廃し、最初はCloco標準トランク↔当社Asterisk↔社内SIP端末で確認する。製品段階でKamailio/RTPengineを端末側へ組み込み、上流はAsteriskで終端する目標へ変更する。物理接続口・到達経路は未選定で、現在のprivate VM・outbound REGISTERだけで成立するとしない。既存carrier用Composeは目標へ未対応で、後続実装・検査・実回線受入が必要。管理・native認証の受入済み経路は保全し、telephonyは無効のまま。既存ポート転送制約の無断解除、新調達・公開・Cloco特別対応の要求は行わない。
 
 ## 実装・検証・配備を分けた現在状態
 

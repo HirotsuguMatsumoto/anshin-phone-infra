@@ -13,9 +13,9 @@ risk_level: critical
 source_doc_ids: []
 consumers: [anshin-phone-infra]
 code_paths: [compose.phase1.yaml, scripts/render_phase1_firewall.py, scripts/validate_carrier_intake.py]
-contract_paths: [configs/carrier-intake.example.json]
+contract_paths: [configs/carrier-intake.example.json, docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml]
 test_paths: [scripts/test_carrier_and_firewall_tools.py]
-last_reviewed: "2026-09-30"
+last_reviewed: "2026-10-29"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -44,7 +44,9 @@ sensitivity: internal
 
 ## 接続情報の取込み
 
-2026年9月30日に確認したClocoの返信・添付図は[接続・責任分界の確認仕様](../../specs/telephony-platform/cloco-sip-trunk-interface.md)に記録した。インターネット経由SIPトランク接続と概略責任分界は確認済みだが、具体的な接続先、認証、SIP/RTP、FAX及びチャネル容量は未受領である。番号数の上限なしを同時通話容量の確定値として入力しない。物理配置先も当該添付図から確定しない。
+10/29の[接続・責任分界の確認仕様](../../specs/telephony-platform/cloco-sip-trunk-interface.md)を技術上の優先参照とする。Cloco原図・10/28回答・Ver2.0.1の既知条件は同仕様へ取り込んだ。To/Alert-Info、番号別From、標準認証方式と通信許可条件を再質問せず当社が実装する。個別トランクの値、既存FAX条件、試験利用条件は受領資料・管理画面・通常案内から確定する。
+
+carrierをAsteriskで終端し、まず社内端末だけをつなぐ最小試験へ変更する設計である。現在のPhase1 Composeは旧SBC透過接続の実装であり、新設計の配備手順としてそのまま使わない。接続口・物理配置未選定、private VMでの到達未証明を維持する。新しい公開・調達・ルーター変更、旧runtimeの適用は行わない。標準仕様へ当社が合わせ、先方へ特別構成を求めない。
 
 Cloco等から回答を受領したら、`configs/carrier-intake.example.json`をGit外へ複製し、SIP/RTP CIDR、認証方式、codec、DTMF、DID形式、FAX、チャネル、CPS、緊急通報条件を記録する。passwordは記録せず、外部secret保管先の識別子だけを設定する。
 

@@ -19,12 +19,12 @@ code_paths:
   - compose.phase1.mock.yaml
   - scripts/verify_phase1.sh
   - scripts/phase1_status.sh
-contract_paths: []
+contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml]
 test_paths:
   - scripts/test_phase1_render_config.py
   - scripts/test_pbx_event_pipeline.py
   - scripts/test_phase1_sip_e2e.py
-last_reviewed: "2026-08-22"
+last_reviewed: "2026-10-29"
 review_interval_days: 30
 sensitivity: internal
 ---
@@ -74,6 +74,8 @@ sensitivity: internal
 | OOM | Out Of Memory | 利用可能なmemoryを使い切り、OS等がprocessを強制終了する状態。 |
 
 ## 1. ゴール
+
+2026-10-29の接続再設計では[Cloco接続仕様](../../specs/telephony-platform/cloco-sip-trunk-interface.md)の段階0～4を優先する。本書の既存Compose・模擬試験は旧構成の履歴で、新設計の実接続受入ではない。まずCloco標準トランクと当社PBX・社内端末で接続を確認し、その後に端末側SBC/媒体中継と製品機能を組み込む。To/Alert-Infoの番号正規化・上流B-legのFrom・媒体口・到達性を修正/検証する前に、以下の既存手順で実回線を有効化しない。
 
 上位キャリアから払い出されたTEL番号とFAX番号をアンシンフォンへ収容し、次を実機で確認する。
 

@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin-phone-infra.cloco-provider-alignment.2026-10-29",
+  "title": "Cloco標準接続へ当社を合わせるcarrier終端・段階検証の再設計",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "high",
+  "production_change": false,
+  "spec_ids": [
+    "anshin.phone.cloco-sip-trunk-interface"
+  ],
+  "repositories": [
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md"
+  ],
+  "contract_paths": [
+    "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",
+    "anshin-phone-infra/docs/specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio",
+    "anshin-phone-infra/docs/runbooks/telephony-platform/vps-deployment-and-carrier-intake.md",
+    "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md",
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+    "anshin-phone-infra/docs/README.md",
+    "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml"
+  ],
+  "generated_artifacts": [
+    "既存drawioの2頁更新・Git外確認用PDF/TXT"
+  ],
+  "test_paths": [
+    "anshin-phone-infra/scripts/build_check.sh"
+  ],
+  "invariants": [
+    "Clocoへの仕様変更・追加処理・NAT保証・当社PJSIPサポート要求をしない",
+    "telephony=false、管理/native認証・backup・資格・他案件dirtyを保全",
+    "物理接続口未選定を保持しポート転送制約を勝手に解除しない",
+    "送付済み原図・行政原本は不変、秘密・実番号をGitへ記録しない"
+  ],
+  "acceptance_criteria": [
+    "carrierはAsteriskがSIP/登録/媒体を終端し端末SBC/媒体を分離",
+    "初期最小社内試験から製品組込みとFAXへ段階化",
+    "To主のDID正規化と音声/FAX別From実送出を当社受入項目へ固定",
+    "技術正本・diagram・runbook・corporate返信/PDFの整合",
+    "文書検査・fixed SHA別Sol/high review後に既存guarded mainへ統合"
+  ],
+  "out_of_scope": [
+    "runtime実装・ネットワーク適用・credential変更・実回線接続・課金申込",
+    "メール送信・行政提出・旧原本改変"
+  ],
+  "rollout": {
+    "strategy": "documents-only-no-runtime",
+    "steps": [
+      "最新main取り込み",
+      "仕様とconsumer同期",
+      "文書・図・出力の検証と独立review",
+      "guarded main統合とremote SHA読取"
+    ],
+    "triggers": [
+      "owner 2026-10-29 全て確認し直し徹底的に設計し直せ"
+    ]
+  },
+  "rollback": {
+    "strategy": "preserve-originals-correct-source",
+    "steps": [
+      "旧版をGit履歴とGit外copyで保全",
+      "誤記はsourceとconsumerを同じ束で修正"
+    ],
+    "triggers": [
+      "仕様誤読・要求転嫁・出力不一致"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "元メール・manual・source・出力の整合",
+      "未実装・未受入の区別"
+    ],
+    "observation_period": "本再設計の検証時"
+  },
+  "approvals": [
+    {
+      "role": "scope-redesign",
+      "approved_by": "h@anshin.care",
+      "approved_at": "2026-10-29",
+      "approval_ref": "owner-current-chat-thorough-redesign-align-with-cloco"
+    },
+    {
+      "role": "main-integration-standing-scope",
+      "approved_by": "h@anshin.care",
+      "approved_at": "2026-10-28",
+      "approval_ref": "owner-current-chat-integrate-all-implementation-and-documents"
+    }
+  ],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-production-20261016"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "a858e152c07d06f0250631cf8f79f5040a4282eb"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/vps-deployment-and-carrier-intake.md",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/README.md",
+      "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md": "88cb64503674e85febb2c63e524a24d485154552",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-anshin-phone-end-to-end.drawio": "bb6d3496ecbef17beedd20dcfd179edafeeff27b",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/vps-deployment-and-carrier-intake.md": "dc8d45936210e2af37e223ac9268f9af27ed3f0c",
+      "anshin-phone-infra/docs/runbooks/telephony-platform/phase1_real_number_runbook.md": "aef87f7d46f2bbd23b1b9dffc67e510a5a870bdc",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "e095818a20b00c86116443c191ae400fe7dff244",
+      "anshin-phone-infra/docs/README.md": "7fb668513666d6b2fffb0df066e65c998b2cec40",
+      "anshin-phone-infra/docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml": null
+    },
+    "integration_order": [
+      "anshin-phone-infra",
+      "anshin-corporate-strategy"
+    ]
+  }
+}
