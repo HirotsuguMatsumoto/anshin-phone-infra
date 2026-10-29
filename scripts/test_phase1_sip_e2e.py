@@ -312,10 +312,10 @@ def fixture_volume_observation(runtime, project, env):
 
 def run(command: list[str], *, env: dict[str, str], check: bool = True, input_text: str | None = None, timeout: float | None = None, cwd=None, stdin=None, text=True, termination_grace=0) -> subprocess.CompletedProcess[str]:
     manager = fixture_manager(env)
-    # Cold apt/pip downloads exceeded 600s at observed 65-87kB/s. Only build
-    # preparation gets 1800s; SIP, media and business deadlines are unchanged.
+    # Cold compile alone measured 1618s; subsequent FAX/fonts and SIPp prepare
+    # exceeded 1800s. Bound cold build at 45min; business deadlines stay fixed.
     return manager.fixture_command(command, cwd=cwd or ROOT, env=env, text=text, input=input_text, stdin=stdin,
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout if timeout is not None else 1800 if "--build" in command or "build" in command else 180,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=timeout if timeout is not None else 2700 if "--build" in command or "build" in command else 180,
         check=check, process_factory=fixture_process_factory, registered=fixture_process_registered,termination_grace=termination_grace)
 
 
@@ -1092,8 +1092,11 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     time.sleep(.1)
                 # Render the actual registration configuration after the peer
                 # is ready; do not depend on an earlier unanswered retry timer.
-                run(base + ["exec", "-T", "asterisk", "env", "CARRIER_AUTH_MODE=registration",
-                    "python3", "/opt/anshin-phone/render_config.py"], env=env)
+                rendered = run(base + ["exec", "-T", "--user", "10001:10001", "asterisk", "env", "CARRIER_AUTH_MODE=registration",
+                    "python3", "/opt/anshin-phone/render_config.py"], env=env, check=False)
+                if rendered.returncode:
+                    kind = re.findall(r"([A-Za-z]+Error):", rendered.stdout)
+                    raise RuntimeError("phase=carrier-registration state=render-failed error=" + (kind[-1] if kind else "native-error"))
                 run(base + ["exec", "-T", "asterisk", "asterisk", "-rx",
                     "module reload res_pjsip_outbound_registration.so"], env=env)
                 deadline = time.monotonic() + 15
@@ -1259,6 +1262,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                         "sipp",
                         "-nostdin",
                         carrier_target,
+                        "-mp", "15000",
                         "-sf",
                         scenario,
                         "-i",
@@ -1302,6 +1306,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     "-nostdin",
                     "-sf",
                     "/scenarios/carrier_outbound_uas.xml",
+                    "-mp", "15000",
                     "-trace_msg", "-message_file", "/tmp/carrier-outbound.log",
                     "-i",
                     "10.254.250.10",
