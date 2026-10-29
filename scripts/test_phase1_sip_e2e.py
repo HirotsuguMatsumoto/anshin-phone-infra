@@ -1106,6 +1106,11 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     time.sleep(.5)
                 run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "pjsip send unregister carrier-registration"], env=env)
                 finish(registrar, "synthetic carrier registration")
+                registered_contact = json.loads(run(base + ["exec", "-T", "mock-carrier", "cat", "/tmp/registered-contact.json"], env=env).stdout)
+                carrier_target = f"{registered_contact['host']}:{registered_contact['port']}"
+            else:
+                registered_contact = {"user": "0300000001"}
+                carrier_target = "10.254.250.20:5060"
             tel_number = backend_request(
                 base,
                 env,
@@ -1217,7 +1222,13 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 "from pathlib import Path;p=Path('/scenarios/carrier_inbound_uac.xml');"
                 "s=chr(10).join(line for line in p.read_text().splitlines() if not line.strip().startswith('Alert-Info:')).replace('To: <sip:0300000001@','To: <sip:+81300000001@');"
                 "Path('/tmp/carrier-inbound-no-alert.xml').write_text(s)"], env=env)
-            for scenario in ("/scenarios/carrier_inbound_uac.xml", "/tmp/carrier-inbound-no-alert.xml"):
+            contact_call = (ROOT / "tests/mock-sip/scenarios/carrier_inbound_uac.xml").read_text().replace(
+                "INVITE sip:registration-contact@", "INVITE sip:" + registered_contact["user"] + "@")
+            run(base + ["exec", "-T", "mock-carrier", "sh", "-c", "cat > /tmp/carrier-inbound-contact.xml"], env=env, input_text=contact_call)
+            # The synthetic registrar has closed to release the peer socket.
+            # This checks the recorded Contact value and its local reachability,
+            # not a provider's live registration routing or NAT lifetime.
+            for scenario in ("/tmp/carrier-inbound-contact.xml", "/tmp/carrier-inbound-no-alert.xml"):
                 smartphone = exec_background(
                     base,
                     "mock-smartphone",
@@ -1247,7 +1258,7 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                         "mock-carrier",
                         "sipp",
                         "-nostdin",
-                        "10.254.250.20:5060",
+                        carrier_target,
                         "-sf",
                         scenario,
                         "-i",

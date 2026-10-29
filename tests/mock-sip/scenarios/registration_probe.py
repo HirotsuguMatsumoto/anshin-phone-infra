@@ -1,6 +1,7 @@
 """Synthetic Digest registrar for the existing isolated carrier fixture only."""
 import hashlib
 import hmac
+import json
 from pathlib import Path
 import re
 import socket
@@ -45,6 +46,11 @@ def main():
                 ha2 = md5("REGISTER:" + values["uri"])
                 expected = md5(":".join([ha1, nonce, values["nc"], values["cnonce"], "auth", ha2]))
                 assert hmac.compare_digest(values["response"], expected), "invalid synthetic Digest"
+                contact = re.search(r"<sip:([^@;>]+)@([0-9.]+):([0-9]+)(?:;[^>]*)?>", headers["contact"])
+                assert contact and contact[1] == "0300000001", "REGISTER Contact identity mismatch"
+                assert (contact[2], int(contact[3])) == source, "REGISTER Contact must advertise the PBX carrier socket"
+                Path("/tmp/registered-contact.json").write_text(json.dumps({
+                    "user": contact[1], "host": contact[2], "port": int(contact[3])}))
                 authenticated = True
                 status = "200 OK"
                 extra = "Contact: " + headers["contact"] + "\r\nExpires: " + headers.get("expires", "300") + "\r\n"
