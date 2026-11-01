@@ -10,26 +10,313 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+import fnmatch
 import hashlib
 import json
 import os
 import platform
 import re
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
 import tempfile
+import time
+import uuid
+from contextlib import contextmanager
+from datetime import datetime, timezone
 from collections import defaultdict
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
+
+
+def _timing_emit(value: dict[str, Any]) -> None:
+    """Best-effort observations in the owner's log, never qualification evidence."""
+    try:
+        try:
+            metadata = json.loads(
+                (Path(__file__).parent / "document_governance_contract.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            owner = next(
+                item["id"]
+                for item in metadata["roots"]
+                if item["documents_path"] == "documents"
+            )
+            if re.fullmatch(r"[a-z0-9][a-z0-9-]{0,99}", owner):
+                value = {**value, "owner_root_id": owner}
+        except (OSError, ValueError, KeyError, TypeError, StopIteration):
+            pass
+        line = json.dumps(value, sort_keys=True, separators=(",", ":")) + "\n"
+        try:
+            descriptor = sys.stderr.fileno()
+        except (AttributeError, OSError, ValueError):
+            descriptor = None
+        if descriptor is None:
+            sys.stderr.write(line)
+            sys.stderr.flush()
+        else:
+            os.write(descriptor, line.encode("utf-8"))
+    except Exception:
+        pass
+
+
+def timing_start(phase: str, check_ids: list[str], *, context=None):
+    """A small token for native shell owners which already capture command rc."""
+    try:
+        identity = {
+            "event": "execution-timing.v1",
+            "span_id": uuid.uuid4().hex,
+            "phase": (
+                phase if re.fullmatch(r"[a-zA-Z0-9:_.-]{1,120}", phase) else "unknown"
+            ),
+            "check_ids": [
+                value
+                for value in check_ids
+                if re.fullmatch(r"[a-zA-Z0-9:_.-]{1,160}", value)
+            ],
+            "pid": os.getpid(),
+        }
+        if isinstance(context, dict):
+            for name in ("plan_sha256", "tree", "release_id", "parent_span_id"):
+                value = context.get(name)
+                if isinstance(value, str) and re.fullmatch(
+                    r"(?:release-)?[a-f0-9]{24,64}", value
+                ):
+                    identity[name] = value
+        token = {"identity": identity, "started_ns": time.monotonic_ns()}
+        _timing_emit(
+            {**identity, "state": "start", "at": datetime.now(timezone.utc).isoformat()}
+        )
+        return token
+    except Exception:
+        return None
+
+
+def timing_end(token, outcome):
+    try:
+        if token is not None:
+            duration_ms = round(
+                (time.monotonic_ns() - token["started_ns"]) / 1_000_000, 3
+            )
+            _timing_emit(
+                {
+                    **token["identity"],
+                    **outcome,
+                    "state": "end",
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "duration_ms": duration_ms,
+                }
+            )
+            return duration_ms
+    except Exception:
+        pass
+
+
+@contextmanager
+def execution_timing(phase: str, check_ids: list[str], *, context=None):
+    """Observe one boundary without changing command behavior or qualification.
+
+    Logs contain no argv, environment, paths or exception messages. Missing end
+    events remain incomplete. Do not sum nested/batch spans as elapsed time.
+    """
+    token = timing_start(phase, check_ids, context=context)
+    outcome = {"status": "incomplete", "returncode": None}
+    if token is not None:
+        outcome["span_id"] = token["identity"]["span_id"]
+    try:
+        yield outcome
+    except BaseException as exc:
+        outcome.update(
+            status="interrupted" if isinstance(exc, KeyboardInterrupt) else "failed"
+        )
+        if isinstance(exc, subprocess.CalledProcessError):
+            outcome["returncode"] = exc.returncode
+            if exc.returncode < 0:
+                outcome["status"] = "signalled"
+        elif isinstance(exc, SystemExit) and isinstance(exc.code, int):
+            outcome["returncode"] = exc.code
+        raise
+    finally:
+        timing_end(token, outcome)
+
+
+def observed_run(command, *, check_ids, phase="build.check", context=None, **kwargs):
+    with execution_timing(phase, check_ids, context=context) as outcome:
+        completed = subprocess.run(command, **kwargs)
+        outcome.update(
+            returncode=completed.returncode,
+            status=(
+                "passed"
+                if completed.returncode == 0
+                else "signalled" if completed.returncode < 0 else "failed"
+            ),
+        )
+        return completed
+
+
+def timing_context_from_files(plan_path=None, parent=None):
+    context = {}
+    if plan_path:
+        try:
+            value = json.loads(Path(plan_path).read_text(encoding="utf-8"))
+            if isinstance(value, dict):
+                context = value
+        except (OSError, ValueError):
+            pass
+    if parent:
+        try:
+            context = {
+                **context,
+                "parent_span_id": json.loads(base64.urlsafe_b64decode(parent))[
+                    "identity"
+                ]["span_id"],
+            }
+        except (ValueError, KeyError, TypeError):
+            pass
+    return context
+
+
+def timing_reuse(selection, *, context=None, phase="build.check"):
+    """Reuse is a provenance decision, not a newly executed zero-second check."""
+    try:
+        assignments = selection.get("reuse_assignments", [])
+        if assignments:
+            _timing_emit(
+                {
+                    "event": "execution-timing.v1",
+                    "state": "reused",
+                    "phase": phase,
+                    "plan_sha256": (context or {}).get("plan_sha256"),
+                    "checks": [
+                        {
+                            key: item[key]
+                            for key in ("name", "source_result_sha256")
+                            if key in item
+                        }
+                        for item in assignments
+                    ],
+                }
+            )
+    except Exception:
+        pass
+
+
+def timing_not_run(phase, check_ids, *, reason, context=None):
+    try:
+        record = {
+            "event": "execution-timing.v1",
+            "state": "not_run",
+            "phase": phase,
+            "check_ids": check_ids,
+            "reason": reason,
+            "at": datetime.now(timezone.utc).isoformat(),
+        }
+        for key in ("plan_sha256", "release_id", "parent_span_id"):
+            value = (context or {}).get(key)
+            if isinstance(value, str) and re.fullmatch(
+                r"(?:release-)?[a-f0-9]{24,64}", value
+            ):
+                record[key] = value
+        _timing_emit(record)
+    except Exception:
+        pass
+
+
+def summarize_timing_logs(paths):
+    """Read observations without deriving success, critical path or missing time."""
+    starts, ends, reused, not_run = {}, {}, [], []
+    fields = {
+        "span_id",
+        "parent_span_id",
+        "phase",
+        "check_ids",
+        "at",
+        "duration_ms",
+        "status",
+        "returncode",
+        "signal",
+        "plan_sha256",
+        "tree",
+        "release_id",
+        "pid",
+        "mode",
+        "owner_root_id",
+        "inputs_sha256",
+    }
+    for path in paths:
+        with Path(path).open(encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                try:
+                    row = json.loads(line)
+                except ValueError:
+                    continue
+                if (
+                    not isinstance(row, dict)
+                    or row.get("event") != "execution-timing.v1"
+                ):
+                    continue
+                if row.get("state") == "reused":
+                    reused.append(
+                        {
+                            key: row[key]
+                            for key in (
+                                "checks",
+                                "phase",
+                                "plan_sha256",
+                                "owner_root_id",
+                            )
+                            if key in row
+                        }
+                    )
+                elif row.get("state") == "not_run":
+                    not_run.append(
+                        {
+                            key: row[key]
+                            for key in (
+                                "phase",
+                                "check_ids",
+                                "reason",
+                                "at",
+                                "owner_root_id",
+                                "plan_sha256",
+                                "release_id",
+                                "parent_span_id",
+                            )
+                            if key in row
+                        }
+                    )
+                elif isinstance(row.get("span_id"), str) and re.fullmatch(
+                    r"[a-f0-9]{32}", row["span_id"]
+                ):
+                    if row.get("state") == "start":
+                        starts[row["span_id"]] = {
+                            key: value for key, value in row.items() if key in fields
+                        }
+                    elif row.get("state") == "end":
+                        ends[row["span_id"]] = {
+                            key: value for key, value in row.items() if key in fields
+                        }
+    return {
+        "observation_only": True,
+        "nested_intervals_are_not_additive": True,
+        "completed_spans": [ends[key] for key in starts if key in ends],
+        "incomplete_spans": [starts[key] for key in starts if key not in ends],
+        "orphan_end_count": len(set(ends) - set(starts)),
+        "reuse_decisions": reused,
+        "not_run_decisions": not_run,
+    }
+
 
 CONTRACT_VERSION = "2026-09-03.1"
 BUILD_CHECK_MARKER = "anshin-document-governance-build-check:v1"
 BUILD_CHECK_COMMAND = "bash scripts/run_document_governance_guard.sh"
 QUALITY_PLAN_MARKER = "anshin-quality-plan-handoff:v1"
 QUALITY_PLAN_SCHEMA = "anshin.repository-quality-plan.v1"
+CHECK_INPUT_MARKER = b"\n# anshin-check-inputs:v1\n"
 AI_POLICY_MARKER = "anshin-ai-driven-development-policy:v1"
 AI_POLICY_DOC_ID = "anshin.governance.ai-driven-development"
 DISTRIBUTION_PATHS = frozenset(
@@ -65,6 +352,8 @@ if [[ "${1:-}" == "--auto" && "${2:-}" == "--plan" ]]; then
   DISTRIBUTION_PLAN_PATH="$3"
   DISTRIBUTION_RESULT_PATH="${5:-${ANSHIN_BUILD_CHECK_RESULT_PATH:-}}"
   DISTRIBUTION_RESULT_WRITTEN=0
+  DISTRIBUTION_FAILED_CHECK_IDS=()
+  DISTRIBUTION_TIMING_TOKEN="$(python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-plan "$DISTRIBUTION_PLAN_PATH" --timing-start build.canonical)" || true
   write_distribution_failure_result() {
     local distribution_rc=$?
     if [[ $distribution_rc -eq 0 && "${DISTRIBUTION_CORE_STORED_PLAN:-0}" == "1" && "$DISTRIBUTION_RESULT_WRITTEN" -eq 0 ]]; then
@@ -84,12 +373,19 @@ if [[ "${1:-}" == "--auto" && "${2:-}" == "--plan" ]]; then
       for completed_id in "${DISTRIBUTION_COMPLETED_CHECK_IDS[@]:-}"; do
         [[ -n "$completed_id" ]] && DISTRIBUTION_FAILURE_ARGS+=(--completed-check "$completed_id")
       done
-      [[ -n "${DISTRIBUTION_CURRENT_CHECK_ID:-}" ]] && DISTRIBUTION_FAILURE_ARGS+=(--failed-check "$DISTRIBUTION_CURRENT_CHECK_ID")
+      if [[ ${#DISTRIBUTION_FAILED_CHECK_IDS[@]} -gt 0 ]]; then
+        for failed_id in "${DISTRIBUTION_FAILED_CHECK_IDS[@]}"; do DISTRIBUTION_FAILURE_ARGS+=(--failed-check "$failed_id"); done
+      elif [[ -n "${DISTRIBUTION_CURRENT_CHECK_ID:-}" ]]; then DISTRIBUTION_FAILURE_ARGS+=(--failed-check "$DISTRIBUTION_CURRENT_CHECK_ID"); fi
+      if [[ -n "${DISTRIBUTION_EXECUTION_SELECTION:-}" ]]; then
+        DISTRIBUTION_FAILURE_ARGS+=(--expected-check-inputs-sha256 "$(node -e 'console.log(JSON.parse(process.argv[1]).inputs_sha256 || "")' "$DISTRIBUTION_EXECUTION_SELECTION")")
+      fi
       python3 scripts/document_governance_portable.py \
         "${DISTRIBUTION_FAILURE_ARGS[@]}" \
         --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" failed \
         >/dev/null 2>&1 || true
     fi
+    python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-end "${DISTRIBUTION_CHECK_TOKEN:-}" "$distribution_rc" || true
+    python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-end "${DISTRIBUTION_TIMING_TOKEN:-}" "$distribution_rc" || true
     exit "$distribution_rc"
   }
   trap write_distribution_failure_result EXIT
@@ -101,13 +397,14 @@ if [[ "${1:-}" == "--auto" && "${2:-}" == "--plan" ]]; then
   else
     python3 scripts/document_governance_portable.py \
       --repository-root "$ROOT_DIR" \
-      --execute-build-check-plan "$3"
+      --timing-parent "${DISTRIBUTION_TIMING_TOKEN:-}" --execute-build-check-plan "$3"
     if [[ -n "${DISTRIBUTION_RESULT_PATH:-}" ]]; then
       python3 scripts/document_governance_portable.py \
         --repository-root "$ROOT_DIR" \
         --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
       DISTRIBUTION_RESULT_WRITTEN=1
     fi
+    python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-end "${DISTRIBUTION_TIMING_TOKEN:-}" 0 || true
     trap - EXIT
     echo "[build_check] OK profile=$DISTRIBUTION_PROFILE"
     exit 0
@@ -139,6 +436,7 @@ if [[ "${1:-}" == "--document-distribution" ]]; then
       --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
     DISTRIBUTION_RESULT_WRITTEN=1
   fi
+  python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-end "${DISTRIBUTION_TIMING_TOKEN:-}" 0 || true
   trap - EXIT
   echo "[build_check] OK profile=document-distribution"
   exit 0
@@ -866,7 +1164,48 @@ def _strip_generated_build_blocks(base: bytes) -> bytes:
 
 
 def _strip_core_native_handoff(base: bytes) -> bytes:
+    base = base.replace(
+        b'--execute-business "${BUSINESS_CHECK_IDS[@]}" --timing-plan "${DISTRIBUTION_PLAN_PATH:-/dev/null}" --timing-parent "${DISTRIBUTION_TIMING_TOKEN:-}"',
+        b'--execute-business "${BUSINESS_CHECK_IDS[@]}"',
+    )
     # Frontend stored-plan shims retain the existing native commands as anchors.
+    base = re.sub(
+        rb"(?ms)^check_is_pending\(\) \{\n.*?^\}\n\n",
+        b"",
+        base,
+    )
+    base = base.replace(
+        b"if check_is_pending root-local-quality-policy; then\n"
+        b'  if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_CURRENT_CHECK_ID="root-local-quality-policy"; fi\n',
+        b"",
+    ).replace(
+        b"PY\nfi\n\n# anshin-frontend-stored-plan-policy:v1\n",
+        b"PY\n\n# anshin-frontend-stored-plan-policy:v1\n",
+    )
+    base = base.replace(b'    check_is_pending "$selected_id" || continue\n', b"")
+    base = (
+        base.replace(
+            b"const selection = JSON.parse(process.argv[2]);\n"
+            b"const completed = process.argv.slice(3).filter(Boolean);\n"
+            b"const reused = selection.reuse_assignments.map(({ name }) => name);\n"
+            b"const covered = [...completed, ...reused];\n"
+            b"if (covered.length !== selected.length || new Set(covered).size !== covered.length ||\n"
+            b"    !selected.every((id) => covered.includes(id)) ||\n"
+            b"    completed.length !== selection.run_checks.length ||\n"
+            b"    !selection.run_checks.every((id) => completed.includes(id))) {",
+            b"const completed = process.argv.slice(2);\n"
+            b"if (completed.length !== selected.length || new Set(completed).size !== completed.length ||\n"
+            b"    !selected.every((id) => completed.includes(id))) {",
+        )
+        .replace(
+            b'console.log(JSON.stringify({event: "build-check-coverage", selected, executed: completed, completed, reused}));',
+            b'console.log(JSON.stringify({event: "build-check-coverage", selected, completed}));',
+        )
+        .replace(
+            b'\' "$AUTO_PLAN_FILE" "$DISTRIBUTION_EXECUTION_SELECTION" "${DISTRIBUTION_COMPLETED_CHECK_IDS[@]:-}"',
+            b'\' "$AUTO_PLAN_FILE" "${DISTRIBUTION_COMPLETED_CHECK_IDS[@]}"',
+        )
+    )
     front_init = b"""    AUTO_PLAN_FILE="$(mktemp)"
     trap 'rm -f "${AUTO_PLAN_FILE:-}"' EXIT
     node apps/anshin-frontend/scripts/select-build-check.js --root-quality-plan > "$AUTO_PLAN_FILE"
@@ -876,16 +1215,24 @@ def _strip_core_native_handoff(base: bytes) -> bytes:
         lambda _m: front_init,
         base,
     )
+
+    def original_frontend_execution(match: re.Match[bytes]) -> bytes:
+        if b"$selected_id" in match[0]:
+            return b'      *) node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$selected_id" ;;\n'
+        command = re.search(
+            rb'(?m)^( *)(?:node apps/anshin-frontend/scripts/select-build-check.js --execute-root|run_root_check) "\$root_check"\n',
+            match[0],
+        )
+        if command is None:
+            raise ContractError("Frontend native execution context anchor differs")
+        return (
+            command[1]
+            + b'node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$root_check"\n'
+        )
+
     base = re.sub(
         rb"(?ms)^# anshin-frontend-stored-plan-execution:v1\n.*?^# /anshin-frontend-stored-plan-execution:v1\n",
-        lambda m: (
-            b'      *) node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$selected_id" ;;\n'
-            if b"$selected_id" in m[0]
-            else re.search(
-                rb"(?m)^ *node apps/anshin-frontend/scripts/select-build-check.js --execute-root [^\n]+\n",
-                m[0],
-            )[0]
-        ),
+        original_frontend_execution,
         base,
     )
     base = re.sub(
@@ -1105,6 +1452,32 @@ def repository_adapter_spec(
         javascript_selector_paths[selector_path].append(argv)
 
     def validate_javascript_invocations(invocations: list[list[str]]) -> None:
+        # Generated observation context does not change the native selector
+        # signature or command identity. Keep unknown/partial flags rejected.
+        invocations = [
+            (
+                argv[:-4]
+                if argv
+                and argv[0] in {"--execute-root", "--execute-business"}
+                and argv[-4:]
+                in (
+                    [
+                        "--timing-plan",
+                        "$DISTRIBUTION_PLAN_PATH",
+                        "--timing-parent",
+                        "${DISTRIBUTION_TIMING_TOKEN:-}",
+                    ],
+                    [
+                        "--timing-plan",
+                        "${DISTRIBUTION_PLAN_PATH:-/dev/null}",
+                        "--timing-parent",
+                        "${DISTRIBUTION_TIMING_TOKEN:-}",
+                    ],
+                )
+                else argv
+            )
+            for argv in invocations
+        ]
         planner = [argv for argv in invocations if argv == ["--root-quality-plan"]]
         executor = [
             argv
@@ -1114,8 +1487,15 @@ def repository_adapter_spec(
             and argv[1]
             and not argv[1].startswith("--")
         ]
+        diagnostic = [argv for argv in invocations if argv == ["--preflight-tools"]]
+        batches = [
+            argv
+            for argv in invocations
+            if argv == ["--execute-business", "${BUSINESS_CHECK_IDS[@]}"]
+        ]
         if (
-            len(planner) + len(executor) != len(invocations)
+            len(planner) + len(executor) + len(diagnostic) + len(batches)
+            != len(invocations)
             or not planner
             or not executor
         ):
@@ -1179,6 +1559,37 @@ def repository_adapter_spec(
                         [
                             "apps/anshin-frontend/scripts/build-check.config.json",
                             "apps/anshin-frontend/scripts/build-check-plan.js",
+                            *(
+                                [
+                                    "apps/anshin-frontend/scripts/run-team-care-proxy-business.js",
+                                    "config/release-impact.json",
+                                    "scripts/vercel-release-plan.mjs",
+                                    *[
+                                        f"apps/anshin-{app}/package.json"
+                                        for app in (
+                                            "frontend",
+                                            "study",
+                                            "vulne",
+                                            "admin",
+                                            "customer",
+                                            "phone",
+                                            "reserve",
+                                            "services",
+                                        )
+                                    ],
+                                    *[
+                                        f"{package}/package.json"
+                                        for package in (
+                                            "packages/ui",
+                                            "app-platform",
+                                            "domain",
+                                            "design-tokens",
+                                        )
+                                    ],
+                                ]
+                                if "--execute-business" in text
+                                else []
+                            ),
                         ]
                         if frontend_invocations
                         else []
@@ -1222,14 +1633,23 @@ def _frontend_stored_plan_adapter(generated: bytes) -> bytes:
     if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then
       trap 'frontend_rc=$?; rm -f "${AUTO_PLAN_FILE:-}"; write_distribution_failure_result "$frontend_rc"' EXIT
       python3 - "$DISTRIBUTION_PLAN_PATH" > "$AUTO_PLAN_FILE" <<'PY'
-import json,subprocess,sys
+import json,os,subprocess,sys
+from pathlib import Path
+sys.dont_write_bytecode=True
+sys.path.insert(0,str(Path.cwd()/"scripts"))
+from document_governance_portable import canonical_execution_base
 p=json.load(open(sys.argv[1],encoding="utf-8"))
 tree=subprocess.check_output(["git","write-tree"],text=True).strip()
 clean=subprocess.run(["git","diff","--quiet","--"],check=False).returncode==0 and not subprocess.check_output(["git","ls-files","--others","--exclude-standard","-z"])
-print(json.dumps({"checks":p["selected_checks"],"rootFullRisk":p["requires_full"],"candidate":{"exactCandidate":clean,"executableTree":tree if clean else None,"qualification":False}}))
+prior=os.environ.get("ANSHIN_BUILD_CHECK_PRIOR_RESULT_PATH")
+prior_data=json.load(open(prior,encoding="utf-8")) if prior else None
+staged=os.environ.get("ANSHIN_BUILD_CHECK_CALLER")=="pre-commit" and os.environ.get("ANSHIN_BUILD_CHECK_CHANGE_SCOPE")=="staged"
+base=canonical_execution_base(Path.cwd(),prior_data,staged=staged) if prior_data is not None else subprocess.check_output(["git","merge-base","HEAD","origin/main"],text=True).strip()
+app_mode="full" if any(check in p["selected_checks"] for check in ("frontend:app-full","frontend:app-static-full")) else "fast"
+print(json.dumps({"checks":p["selected_checks"],"files":p["paths"],"base":base,"changeScope":os.environ.get("ANSHIN_BUILD_CHECK_CHANGE_SCOPE","branch"),"appMode":app_mode,"rootFullRisk":p["requires_full"],"candidate":{"exactCandidate":clean,"executableTree":tree if clean else None,"qualification":False}}))
 PY
       DISTRIBUTION_COMPLETED_CHECK_IDS=()
-      DISTRIBUTION_CURRENT_CHECK_ID="root-local-quality-policy"
+      DISTRIBUTION_CURRENT_CHECK_ID=""
     else
       trap 'rm -f "${AUTO_PLAN_FILE:-}"' EXIT
       node apps/anshin-frontend/scripts/select-build-check.js --root-quality-plan > "$AUTO_PLAN_FILE"
@@ -1237,16 +1657,37 @@ PY
 # /anshin-frontend-stored-plan-init:v1
 """
     replace_once(initialization, replacement)
+    pending_helper = rb"""check_is_pending() {
+  [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" != "1" ]] ||
+    [[ $'\n'"${DISTRIBUTION_RUN_CHECK_IDS:-}"$'\n' == *$'\n'"$1"$'\n'* ]]
+}
+
+"""
+    replace_once(
+        b"# anshin-local-quality-check-contract:v1\n",
+        pending_helper
+        + b"# anshin-local-quality-check-contract:v1\n"
+        + b"if check_is_pending root-local-quality-policy; then\n"
+        + b'  if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_CURRENT_CHECK_ID="root-local-quality-policy"; fi\n',
+    )
     policy_end = b"PY\n\nfor root_check in root-workflow-policy"
     policy_state = rb"""# anshin-frontend-stored-plan-policy:v1
-if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then
+run_root_check() {
+  if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then
+    ANSHIN_BUILD_CHECK_EXECUTION_CONTEXT="$AUTO_PLAN_FILE" node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$1" --timing-plan "$DISTRIBUTION_PLAN_PATH" --timing-parent "${DISTRIBUTION_TIMING_TOKEN:-}"
+  else
+    env -u ANSHIN_BUILD_CHECK_EXECUTION_CONTEXT node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$1"
+  fi
+}
+if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]] && check_is_pending root-local-quality-policy; then
   DISTRIBUTION_COMPLETED_CHECK_IDS+=("root-local-quality-policy")
   DISTRIBUTION_CURRENT_CHECK_ID=""
 fi
 # /anshin-frontend-stored-plan-policy:v1
 """
     replace_once(
-        policy_end, b"PY\n\n" + policy_state + b"for root_check in root-workflow-policy"
+        policy_end,
+        b"PY\nfi\n\n" + policy_state + b"for root_check in root-workflow-policy",
     )
     execution = rb'(?m)^([ ]*)node apps/anshin-frontend/scripts/select-build-check.js --execute-root "\$(root_check)"\n'
 
@@ -1255,10 +1696,15 @@ fi
         return (
             b"# anshin-frontend-stored-plan-execution:v1\n"
             + indent
+            + b'check_is_pending "$root_check" || continue\n'
+            + indent
             + b'if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_CURRENT_CHECK_ID="$'
             + variable
             + b'"; fi\n'
-            + match[0]
+            + indent
+            + b'run_root_check "$'
+            + variable
+            + b'"\n'
             + indent
             + b'if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_COMPLETED_CHECK_IDS+=("$'
             + variable
@@ -1272,19 +1718,53 @@ fi
     selected = b'      *) node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$selected_id" ;;\n'
     selected_state = b"""# anshin-frontend-stored-plan-execution:v1
       *) if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_CURRENT_CHECK_ID="$selected_id"; fi;
-         node apps/anshin-frontend/scripts/select-build-check.js --execute-root "$selected_id";
+         run_root_check "$selected_id";
          if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then DISTRIBUTION_COMPLETED_CHECK_IDS+=("$selected_id"); DISTRIBUTION_CURRENT_CHECK_ID=""; fi ;;
 # /anshin-frontend-stored-plan-execution:v1
 """
     replace_once(selected, selected_state)
+    replace_once(
+        b"  while IFS= read -r selected_id; do\n",
+        b"  while IFS= read -r selected_id; do\n"
+        b'    check_is_pending "$selected_id" || continue\n',
+    )
+    # Older native adapters use only the writer's coverage validation.
+    if b"const completed = process.argv.slice(2);\n" in generated:
+        replace_once(
+            b"const completed = process.argv.slice(2);\n"
+            b"if (completed.length !== selected.length || new Set(completed).size !== completed.length ||\n"
+            b"    !selected.every((id) => completed.includes(id))) {",
+            b"const selection = JSON.parse(process.argv[2]);\n"
+            b"const completed = process.argv.slice(3).filter(Boolean);\n"
+            b"const reused = selection.reuse_assignments.map(({ name }) => name);\n"
+            b"const covered = [...completed, ...reused];\n"
+            b"if (covered.length !== selected.length || new Set(covered).size !== covered.length ||\n"
+            b"    !selected.every((id) => covered.includes(id)) ||\n"
+            b"    completed.length !== selection.run_checks.length ||\n"
+            b"    !selection.run_checks.every((id) => completed.includes(id))) {",
+        )
+        replace_once(
+            b'console.log(JSON.stringify({event: "build-check-coverage", selected, completed}));',
+            b'console.log(JSON.stringify({event: "build-check-coverage", selected, executed: completed, completed, reused}));',
+        )
+        replace_once(
+            b'\' "$AUTO_PLAN_FILE" "${DISTRIBUTION_COMPLETED_CHECK_IDS[@]}"',
+            b'\' "$AUTO_PLAN_FILE" "$DISTRIBUTION_EXECUTION_SELECTION" "${DISTRIBUTION_COMPLETED_CHECK_IDS[@]:-}"',
+        )
     success = rb"""# anshin-frontend-stored-plan-success:v1
   if [[ "${DISTRIBUTION_FRONTEND_STORED_PLAN:-0}" == "1" ]]; then
     if [[ -n "${DISTRIBUTION_RESULT_PATH:-}" ]]; then
-      python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
+      DISTRIBUTION_SUCCESS_ARGS=(--repository-root "$ROOT_DIR")
+      for completed_id in "${DISTRIBUTION_COMPLETED_CHECK_IDS[@]:-}"; do
+        [[ -n "$completed_id" ]] && DISTRIBUTION_SUCCESS_ARGS+=(--completed-check "$completed_id")
+      done
+      DISTRIBUTION_SUCCESS_ARGS+=(--expected-check-inputs-sha256 "$(node -e 'console.log(JSON.parse(process.argv[1]).inputs_sha256 || "")' "$DISTRIBUTION_EXECUTION_SELECTION")")
+      python3 scripts/document_governance_portable.py "${DISTRIBUTION_SUCCESS_ARGS[@]}" --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
       DISTRIBUTION_RESULT_WRITTEN=1
     fi
     rm -f "${AUTO_PLAN_FILE:-}"
-    trap - EXIT
+    python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-end "${DISTRIBUTION_TIMING_TOKEN:-}" 0 || true
+  trap - EXIT
   fi
 # /anshin-frontend-stored-plan-success:v1
 """
@@ -1313,12 +1793,14 @@ def distribution_adapter(base: bytes, base_hook: bytes | None = None) -> bytes:
     native_branch = ""
     internal_guard = ""
     if spec["kind"] == "frontend-root" and spec["plan_args"] == ["--root-quality-plan"]:
-        internal_guard = """if [[ -n "${DISTRIBUTION_FRONTEND_STORED_PLAN+x}${DISTRIBUTION_PLAN_PATH+x}${DISTRIBUTION_COMPLETED_CHECK_IDS+x}${DISTRIBUTION_CURRENT_CHECK_ID+x}" ]]; then
+        internal_guard = """if [[ -n "${DISTRIBUTION_FRONTEND_STORED_PLAN+x}${DISTRIBUTION_PLAN_PATH+x}${DISTRIBUTION_COMPLETED_CHECK_IDS+x}${DISTRIBUTION_CURRENT_CHECK_ID+x}${DISTRIBUTION_EXECUTION_SELECTION+x}${DISTRIBUTION_RUN_CHECK_IDS+x}" ]]; then
   printf '%s\\n' "[build_check:auto] ERROR: internal stored-plan state was supplied by the caller" >&2
   exit 2
 fi
 """
         native_branch = """  elif [[ "$DISTRIBUTION_PROFILE" == "repository-native" ]]; then
+    DISTRIBUTION_EXECUTION_SELECTION="$(python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --build-check-execution-selection "$DISTRIBUTION_PLAN_PATH")"
+    DISTRIBUTION_RUN_CHECK_IDS="$(node -e 'for(const id of JSON.parse(process.argv[1]).run_checks) console.log(id)' "$DISTRIBUTION_EXECUTION_SELECTION")"
     DISTRIBUTION_FRONTEND_STORED_PLAN=1
     set -- --auto
 """
@@ -1369,6 +1851,7 @@ fi
     DISTRIBUTION_CURRENT_CHECK_ID="core-full-static"
     set --
   fi
+  DISTRIBUTION_CHECK_TOKEN="$(python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-plan "$DISTRIBUTION_PLAN_PATH" --timing-parent "${DISTRIBUTION_TIMING_TOKEN:-}" --timing-start "$DISTRIBUTION_CURRENT_CHECK_ID")" || true
 fi
 """
             + b"# /anshin-core-stored-plan-init:v1\n"
@@ -1391,6 +1874,8 @@ fi
                 + b'    DISTRIBUTION_COMPLETED_CHECK_IDS+=("'
                 + check_id
                 + b'")\n'
+                + b'    python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-end "${DISTRIBUTION_CHECK_TOKEN:-}" 0 || true\n'
+                + b'    DISTRIBUTION_CHECK_TOKEN=""\n'
                 + b'    DISTRIBUTION_CURRENT_CHECK_ID=""\n'
                 + b"  fi\n"
                 + b"# /anshin-core-stored-plan-completion:v1\n"
@@ -1400,7 +1885,7 @@ fi
         execution_with_state = (
             b"# anshin-core-stored-plan-execution:v1\n"
             + b'        DISTRIBUTION_CURRENT_CHECK_ID="$check_id"\n'
-            + execution
+            + b'        "$PREFLIGHT_PYTHON" scripts/select_ai_targeted_tests.py --timing-plan "$DISTRIBUTION_PLAN_PATH" --timing-parent "${DISTRIBUTION_TIMING_TOKEN:-}" --execution "$check_id"\n'
             + b'        DISTRIBUTION_COMPLETED_CHECK_IDS+=("$check_id")\n'
             + b'        DISTRIBUTION_CURRENT_CHECK_ID=""\n'
             + b"# /anshin-core-stored-plan-execution:v1\n"
@@ -1418,6 +1903,7 @@ if [[ "${DISTRIBUTION_CORE_STORED_PLAN:-0}" == "1" ]]; then
     python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --write-build-check-result "$DISTRIBUTION_PLAN_PATH" "$DISTRIBUTION_RESULT_PATH" passed
     DISTRIBUTION_RESULT_WRITTEN=1
   fi
+  python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --timing-end "${DISTRIBUTION_TIMING_TOKEN:-}" 0 || true
   trap - EXIT
   printf '%s\n' "[build_check] OK mode=--auto"
 else
@@ -1430,6 +1916,10 @@ fi
         generated = generated.replace(success, success_replacement, 1)
     if spec["kind"] == "frontend-root" and spec["plan_args"] == ["--root-quality-plan"]:
         generated = _frontend_stored_plan_adapter(generated)
+        generated = generated.replace(
+            b'--execute-business "${BUSINESS_CHECK_IDS[@]}"',
+            b'--execute-business "${BUSINESS_CHECK_IDS[@]}" --timing-plan "${DISTRIBUTION_PLAN_PATH:-/dev/null}" --timing-parent "${DISTRIBUTION_TIMING_TOKEN:-}"',
+        )
     return generated
 
 
@@ -1904,12 +2394,112 @@ def _quality_plan_json(value: dict[str, Any]) -> bytes:
     ).encode("utf-8")
 
 
-def _distribution_changed_paths(repository_root: Path) -> list[str]:
+def canonical_execution_base(
+    repository_root: Path,
+    prior: dict[str, Any],
+    *,
+    staged: bool = False,
+    head: str | None = None,
+) -> str:
+    """Resolve current scope only; recorded historical source bases stay exact."""
+    candidate = head or "HEAD"
+    aware = bool(prior.get("identities", {}).get("check_inputs"))
+    if not aware:
+        try:
+            blob = distribution_git(
+                repository_root,
+                "show",
+                (
+                    ":scripts/document_governance_portable.py"
+                    if staged
+                    else f"{candidate}:scripts/document_governance_portable.py"
+                ),
+            )
+            aware = CHECK_INPUT_MARKER in blob
+        except ContractError:
+            pass  # Legacy producers need not distribute this optional contract.
+    base = (
+        distribution_git(repository_root, "merge-base", candidate, "origin/main")
+        .decode()
+        .strip()
+        if aware
+        else prior.get("revision")
+    )
+    if not isinstance(base, str) or re.fullmatch(r"[0-9a-f]{40}", base) is None:
+        raise ContractError("current execution base is invalid")
+    return base
+
+
+def prior_quality_scope(
+    repository_root: Path, *, governance_root: Path | None = None
+) -> tuple[str, dict[str, Any]] | None:
+    """Use the existing prior-result verifier before accepting a delta scope."""
+    supplied = os.environ.get("ANSHIN_BUILD_CHECK_PRIOR_RESULT_PATH")
+    if not supplied:
+        return None
+    authority = governance_root or (
+        Path(os.environ["ANSHIN_GOVERNANCE_ROOT"])
+        if os.environ.get("ANSHIN_GOVERNANCE_ROOT")
+        else None
+    )
+    if authority is None:
+        raise ContractError("prior-result validation requires ANSHIN_GOVERNANCE_ROOT")
+    selector = authority / "sh/change_check.py"
+    if not selector.is_file() or selector.is_symlink():
+        raise ContractError("prior-result verifier is unavailable")
+    try:
+        prior = json.loads(Path(supplied).read_text(encoding="utf-8"))
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        raise ContractError("prior check result is unavailable or invalid") from exc
+    staged = (
+        os.environ.get("ANSHIN_BUILD_CHECK_CALLER") == "pre-commit"
+        and os.environ.get("ANSHIN_BUILD_CHECK_CHANGE_SCOPE") == "staged"
+    )
+    head = distribution_git(repository_root, "rev-parse", "HEAD").decode().strip()
+    base = canonical_execution_base(repository_root, prior, staged=staged, head=head)
+    command = [
+        sys.executable,
+        str(selector),
+        "--repo",
+        str(repository_root),
+        "--prior-result",
+        supplied,
+        "--base",
+        base,
+    ]
+    command += ["--staged"] if staged else ["--head", head]
+    completed = subprocess.run(
+        command, cwd=repository_root, text=True, capture_output=True, check=False
+    )
+    if completed.returncode:
+        raise ContractError(
+            completed.stderr.strip() or "prior check result was rejected"
+        )
+    try:
+        value = json.loads(completed.stdout)
+        plan = value if staged else value["execution_plan"]
+        paths = plan["paths"]
+        if (
+            not isinstance(paths, list)
+            or paths != sorted(set(paths))
+            or any(not isinstance(path, str) for path in paths)
+            or not staged
+            and (value["base_revision"] != base or value["revision"] != head)
+        ):
+            raise ValueError("invalid prior scope")
+    except (ValueError, KeyError, TypeError) as exc:
+        raise ContractError("prior-result verifier returned an invalid scope") from exc
+    return base, plan
+
+
+def _distribution_changed_paths(
+    repository_root: Path, *, accepted_base: str | None = None
+) -> list[str]:
     # The native commit hook has already rejected partial staging and emits
     # exact index paths. Its stored plan must be validated against that same
     # index, including GIT_INDEX_FILE, rather than earlier branch commits or
     # unrelated working files. Direct/branch qualification keeps all inputs.
-    if (
+    if accepted_base is None and (
         os.environ.get("ANSHIN_BUILD_CHECK_CALLER") == "pre-commit"
         and os.environ.get("ANSHIN_BUILD_CHECK_CHANGE_SCOPE") == "staged"
     ):
@@ -1931,22 +2521,42 @@ def _distribution_changed_paths(repository_root: Path) -> list[str]:
                 if path
             }
         )
-    target = (
+    target = accepted_base or (
         distribution_git(repository_root, "rev-parse", "--verify", "origin/main")
         .strip()
         .decode("ascii")
     )
+    if accepted_base is not None and (
+        os.environ.get("ANSHIN_BUILD_CHECK_CALLER") == "pre-commit"
+        and os.environ.get("ANSHIN_BUILD_CHECK_CHANGE_SCOPE") == "staged"
+    ):
+        return sorted(
+            {
+                os.fsdecode(path)
+                for path in distribution_git(
+                    repository_root,
+                    "diff",
+                    "--cached",
+                    "--name-only",
+                    "--no-renames",
+                    "-z",
+                    accepted_base,
+                    "--",
+                ).split(b"\0")
+                if path
+            }
+        )
     head = (
         distribution_git(repository_root, "rev-parse", "HEAD").strip().decode("ascii")
     )
-    base = (
+    base = accepted_base or (
         distribution_git(repository_root, "merge-base", target, head)
         .strip()
         .decode("ascii")
     )
     values: set[str] = set()
     for arguments in (
-        ("diff", "--name-only", "--no-renames", "-z", f"{base}...{head}", "--"),
+        ("diff", "--name-only", "--no-renames", "-z", base, head, "--"),
         ("diff", "--cached", "--name-only", "--no-renames", "-z", "--"),
         ("diff", "--name-only", "--no-renames", "-z", "--"),
         ("ls-files", "--others", "--exclude-standard", "-z"),
@@ -2293,8 +2903,17 @@ def distribution_quality_plan(
     repository_root: Path, paths: list[str] | None = None
 ) -> dict[str, Any]:
     """Return the exact local plan for the existing distribution profile."""
+    prior_scope = prior_quality_scope(repository_root) if paths is None else None
+    if prior_scope:
+        if prior_scope[1]["paths"] != _distribution_changed_paths(
+            repository_root, accepted_base=prior_scope[0]
+        ):
+            raise ContractError("prior quality plan does not match current paths")
+        return prior_scope[1]
     selected_paths = (
-        _distribution_changed_paths(repository_root)
+        _distribution_changed_paths(
+            repository_root, accepted_base=prior_scope[0] if prior_scope else None
+        )
         if paths is None
         else sorted(set(paths))
     )
@@ -2353,19 +2972,28 @@ def distribution_quality_plan(
     return value
 
 
-def execute_distribution_quality_plan(repository_root: Path, plan_path: Path) -> None:
+def execute_distribution_quality_plan(
+    repository_root: Path, plan_path: Path, *, timing_parent=None
+) -> None:
     validate_distribution_quality_plan(repository_root, plan_path)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     if plan["profile"] == "document-distribution":
         raise ContractError("document-distribution is executed by the shell adapter")
     spec = _adapter_spec(repository_root)
+    timing_context = {**plan, "parent_span_id": timing_parent}
     if plan["profile"] == "repository-canonical":
         if spec["kind"] != "legacy" or plan["selected_checks"] != [
             "repository-canonical"
         ]:
             raise ContractError("repository canonical plan does not match its adapter")
         command = ["bash", "scripts/build_check.sh", *spec["invocation"]]
-        completed = subprocess.run(command, cwd=repository_root, check=False)
+        completed = observed_run(
+            command,
+            check_ids=plan["selected_checks"],
+            context=timing_context,
+            cwd=repository_root,
+            check=False,
+        )
         if completed.returncode:
             raise ContractError("repository canonical build check failed")
         return
@@ -2412,12 +3040,20 @@ def execute_distribution_quality_plan(repository_root: Path, plan_path: Path) ->
                 raise ContractError(f"repository-native check is unknown: {check_id}")
         else:
             raise ContractError("repository-native execution kind is unsupported")
-        completed = subprocess.run(command, cwd=repository_root, check=False)
+        completed = observed_run(
+            command,
+            check_ids=[check_id],
+            context=timing_context,
+            cwd=repository_root,
+            check=False,
+        )
         if completed.returncode:
             raise ContractError(f"repository-native check failed: {check_id}")
 
 
-def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -> None:
+def validate_distribution_quality_plan(
+    repository_root: Path, plan_path: Path
+) -> str | None:
     if not plan_path.is_file() or plan_path.is_symlink():
         raise ContractError("quality plan is missing or is not a regular file")
     if stat.S_IMODE(plan_path.stat().st_mode) != 0o600:
@@ -2426,6 +3062,8 @@ def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -
         actual = json.loads(plan_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ContractError("quality plan is not valid JSON") from exc
+    prior_scope = prior_quality_scope(repository_root)
+    accepted_base = prior_scope[0] if prior_scope else None
     required_keys = {
         "schema",
         "profile",
@@ -2450,7 +3088,9 @@ def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -
         set(actual) != required_keys
         or actual.get("schema") != QUALITY_PLAN_SCHEMA
         or actual_hash != hashlib.sha256(_quality_plan_json(unsigned)).hexdigest()
-        or actual.get("paths") != _distribution_changed_paths(repository_root)
+        or (prior_scope is not None and actual != prior_scope[1])
+        or actual.get("paths")
+        != _distribution_changed_paths(repository_root, accepted_base=accepted_base)
         or actual.get("selected_checks")
         != sorted(set(actual.get("selected_checks", [])))
         or not actual.get("selected_checks")
@@ -2462,6 +3102,7 @@ def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -
         or not isinstance(actual.get("requires_full"), bool)
     ):
         raise ContractError("quality plan does not match the current repository input")
+
     spec = _adapter_spec(repository_root)
     dependencies = _plan_dependencies(repository_root, spec)
     digest = hashlib.sha256()
@@ -2494,6 +3135,672 @@ def validate_distribution_quality_plan(repository_root: Path, plan_path: Path) -
     ):
         raise ContractError("quality plan does not match the current repository input")
 
+    return accepted_base
+
+
+# anshin-check-inputs:v1
+def _runtime_read_declaration(value: Any) -> dict[str, list[str]] | None:
+    """Use one owner declaration for tracked and actual filesystem reads."""
+    if not isinstance(value, dict) or set(value) != {"paths", "globs"}:
+        return None
+    for kind, items in value.items():
+        if not isinstance(items, list) or any(
+            not isinstance(item, str)
+            or not item
+            or Path(item).is_absolute()
+            or ".." in Path(item).parts
+            or "\\" in item
+            or "\x00" in item
+            or (kind == "paths" and any(char in item for char in "*?[]"))
+            or (
+                kind == "globs"
+                and any("**" in part and part != "**" for part in Path(item).parts)
+            )
+            for item in items
+        ):
+            return None
+    return value
+
+
+def _runtime_glob_paths(directory: Path, parts: tuple[str, ...]) -> set[Path]:
+    """Expand only the declared glob, propagating filesystem read failures."""
+    if not parts:
+        return {directory}
+    component, remaining = parts[0], parts[1:]
+    if "**" in component and component != "**":
+        raise ValueError("recursive wildcard must be a complete path component")
+    if not any(character in component for character in "*?["):
+        # Native glob resolves literal components through the filesystem. On
+        # case-insensitive Mac volumes a differently cased alias can still read
+        # a file; case-sensitive fnmatch alone would miss that actual input.
+        source = directory / component
+        try:
+            mode = source.lstat().st_mode
+        except FileNotFoundError:
+            return set()
+        if stat.S_ISLNK(mode):
+            raise OSError("unresolved runtime glob branch")
+        if not remaining:
+            return {source}
+        return _runtime_glob_paths(source, remaining) if stat.S_ISDIR(mode) else set()
+    # Path.glob can suppress scandir errors. An unreadable branch must not be
+    # mistaken for an empty read inventory that would authorize reuse.
+    with os.scandir(directory) as iterator:
+        entries = list(iterator)
+    matches: set[Path] = set()
+    if component == "**":
+        matches.update(_runtime_glob_paths(directory, remaining))
+        for entry in entries:
+            if entry.is_symlink():
+                raise OSError("unresolved runtime glob branch")
+            if entry.is_dir(follow_symlinks=False):
+                matches.update(_runtime_glob_paths(Path(entry.path), parts))
+    else:
+        for entry in entries:
+            if not fnmatch.fnmatchcase(entry.name, component):
+                continue
+            source = Path(entry.path)
+            if entry.is_symlink():
+                raise OSError("unresolved runtime glob branch")
+            if not remaining:
+                matches.add(source)
+            elif entry.is_dir(follow_symlinks=False):
+                matches.update(_runtime_glob_paths(source, remaining))
+    return matches
+
+
+def _runtime_read_inventory(repository_root: Path, declaration: Any) -> str | None:
+    reads = _runtime_read_declaration(declaration)
+    if reads is None:
+        return None
+    try:
+        files = {repository_root / relative for relative in reads["paths"]}
+        for pattern in reads["globs"]:
+            files.update(_runtime_glob_paths(repository_root, Path(pattern).parts))
+        digest = {}
+        for source in sorted(files):
+            relative = source.relative_to(repository_root)
+            current = repository_root
+            for part in relative.parts:
+                current /= part
+                if stat.S_ISLNK(current.lstat().st_mode):
+                    raise OSError("unresolved runtime read")
+            source.resolve().relative_to(repository_root.resolve())
+            if not source.is_file():
+                raise OSError("unresolved runtime read")
+            digest[relative.as_posix()] = hashlib.sha256(
+                source.read_bytes()
+            ).hexdigest()
+        return hashlib.sha256(_quality_plan_json(digest)).hexdigest()
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def check_input_definitions(
+    repository_root: Path,
+    checks: list[str],
+    paths: list[str],
+    *,
+    revision: str | None = None,
+) -> dict[str, dict[str, str]]:
+    """Fingerprint existing owners' exact source, without changing selection.
+
+    Git mode/blob records include additions and deletions. Undeclared owners
+    conservatively depend on the complete tree; aggregates keep their original
+    granularity. No historical producer is assigned new evidence retroactively.
+    """
+
+    def git(*args: str) -> bytes:
+        return distribution_git(repository_root, *args)
+
+    records: dict[str, tuple[str, str]] = {}
+    raw = (
+        git("ls-tree", "-rz", revision)
+        if revision
+        else git("ls-files", "--stage", "-z")
+    )
+    for item in raw.split(b"\0"):
+        if not item:
+            continue
+        meta, name = item.split(b"\t", 1)
+        mode, middle, last = meta.decode().split()
+        if revision:
+            oid = last
+            regular = middle == "blob"
+        else:
+            oid = middle
+            regular = last == "0"
+        if not regular or mode not in {"100644", "100755"}:
+            return {}
+        records[os.fsdecode(name)] = (mode, oid)
+
+    def read(relative: str) -> bytes:
+        return git("show", f"{revision}:{relative}" if revision else f":{relative}")
+
+    portable = "scripts/document_governance_portable.py"
+    if portable not in records or CHECK_INPUT_MARKER not in read(portable):
+        return {}
+    common = {
+        p
+        for p in records
+        if p
+        in {
+            "scripts/build_check.sh",
+            portable,
+            "scripts/quality_gate_plan.py",
+            "scripts/run_unittest_shards.py",
+            "config/quality-gate-test-ownership.json",
+            "pnpm-lock.yaml",
+            "package-lock.json",
+            "uv.lock",
+            "pyproject.toml",
+            ".node-version",
+            ".python-version",
+            "apps/anshin-frontend/scripts/select-build-check.js",
+            "apps/anshin-frontend/scripts/build-check-plan.js",
+            "apps/anshin-frontend/scripts/build-check.config.json",
+        }
+    }
+    owned: dict[str, set[str]] = {}
+    runtime_reads: dict[str, Any] = {}
+    catalog = "config/quality-gate-test-ownership.json"
+    if catalog in records:
+        ownership = json.loads(read(catalog))
+        domains = ownership["domains"]
+        runtime_reads = ownership.get("runtime_reads", {})
+        if not isinstance(runtime_reads, dict):
+            runtime_reads = {}
+        # This is the same impact owner catalogue used by the canonical selector.
+        # Unowned support code remains common rather than being silently omitted.
+        for relative in records:
+            owners = [
+                d
+                for d in domains
+                if relative in d["exact_paths"]
+                or relative.startswith(tuple(d["prefix_paths"]))
+            ]
+            if owners:
+                for domain in owners:
+                    for test in domain["tests"]:
+                        owned.setdefault(test, set()).add(relative)
+            elif (
+                not relative.startswith("tests/test_")
+                and (
+                    "/" not in relative
+                    or relative.startswith(("scripts/", "sh/", "config/", "deploy/"))
+                )
+                and Path(relative).suffix
+                in {".py", ".sh", ".json", ".yaml", ".yml", ".toml", ".lock"}
+            ):
+                common.add(relative)
+    else:
+        selector = "apps/anshin-frontend/scripts/select-build-check.js"
+        if selector in records and b"--check-input-owners" in read(selector):
+            # The existing pure selector runs once from exact declared blobs.
+            with tempfile.TemporaryDirectory(prefix="anshin-check-owners-") as tmp:
+                root = Path(tmp)
+                spec = repository_adapter_spec(read("scripts/build_check.sh"))
+                dependencies = set(spec.get("dependencies", [])) | {selector}
+                for relative in dependencies:
+                    if relative in records:
+                        target = root / relative
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        target.write_bytes(read(relative))
+                completed = subprocess.run(
+                    ["node", str(root / selector), "--check-input-owners"],
+                    input=json.dumps(sorted(records)),
+                    text=True,
+                    capture_output=True,
+                    cwd=root,
+                    check=False,
+                )
+                if completed.returncode:
+                    raise ContractError("check input owner metadata failed")
+                metadata = json.loads(completed.stdout)
+                owned = {name: set(items) for name, items in metadata["checks"].items()}
+                complete = set(metadata.get("complete_checks", []))
+                # Change ownership is not a proof of a leaf's dependencies.
+                # Only complete consumer declarations may narrow the closure.
+                owned = {
+                    name: items for name, items in owned.items() if name in complete
+                }
+    definitions = {}
+
+    def imported_sources(sources: set[str]) -> set[str]:
+        # Dependency fingerprinting only: no AST rule, new gate or code execution.
+        # Dynamic imports cannot prove a narrow closure and retain the whole tree.
+        pending = [p for p in sources if p.endswith(".py")]
+        seen: set[str] = set()
+        while pending:
+            relative = pending.pop()
+            if relative in seen:
+                continue
+            seen.add(relative)
+            try:
+                tree = ast.parse(read(relative), filename=relative)
+            except (SyntaxError, UnicodeError):
+                return set(records)
+            for node in ast.walk(tree):
+                # Loader references may be aliased before they are called.
+                # Their unresolved source closure stays conservative as well.
+                if (
+                    isinstance(node, ast.Import)
+                    and any(
+                        item.name.split(".")[0] in {"importlib", "runpy"}
+                        for item in node.names
+                    )
+                    or isinstance(node, ast.ImportFrom)
+                    and (
+                        (node.module or "").split(".")[0] in {"importlib", "runpy"}
+                        or any(
+                            item.name in {"__import__", "exec", "eval"}
+                            for item in node.names
+                        )
+                    )
+                    or isinstance(node, ast.Name)
+                    and node.id in {"__import__", "exec", "eval"}
+                    or isinstance(node, ast.Attribute)
+                    and node.attr
+                    in {
+                        "import_module",
+                        "spec_from_file_location",
+                        "run_path",
+                        "run_module",
+                        "SourceFileLoader",
+                    }
+                ):
+                    return set(records)
+                modules: list[str] = []
+                if isinstance(node, ast.Import):
+                    modules = [item.name for item in node.names]
+                elif isinstance(node, ast.ImportFrom):
+                    base = node.module or ""
+                    if node.level:
+                        parent = relative.split("/")[: -node.level]
+                        base = ".".join([*parent, *([base] if base else [])])
+                    modules = [
+                        base,
+                        *(
+                            base + "." + item.name
+                            for item in node.names
+                            if item.name != "*"
+                        ),
+                    ]
+                for module in modules:
+                    pieces = module.split(".")
+                    candidates = ["/".join(pieces) + ".py"] + [
+                        "/".join(pieces[:length]) + "/__init__.py"
+                        for length in range(1, len(pieces) + 1)
+                    ]
+                    candidates += [
+                        str(Path(relative).parent / ("/".join(pieces) + ".py"))
+                    ]
+                    for dependency in candidates:
+                        if dependency in records and dependency not in sources:
+                            sources.add(dependency)
+                            pending.append(dependency)
+        return sources
+
+    for name in checks:
+        module = (
+            "/".join(name.split(".")[:2]) + ".py" if name.startswith("tests.") else ""
+        )
+        sources = {
+            p
+            for owner, items in owned.items()
+            if owner == name
+            or owner.startswith(name + ".")
+            or name.startswith(owner + ".")
+            for p in items
+        }
+        if module in records:
+            sources.add(module)
+        reads = _runtime_read_declaration(runtime_reads.get(name))
+        if reads is not None:
+            sources.update(
+                relative
+                for relative in records
+                if relative in reads["paths"]
+                or any(Path(relative).match(pattern) for pattern in reads["globs"])
+            )
+        if name in {"repository-static", "root-diff"}:
+            # Whitespace/document/static scanners must inspect the current scope.
+            sources = set(records)
+        elif (
+            not sources
+            or name in {"frontend:app-full", "frontend:app-fast"}
+            or name.startswith("frontend:business:")
+            or name == "frontend:test:team-care-proxy-business"
+        ):
+            sources = set(records)
+        if name.startswith("tests."):
+            roots = {module} if module in records else set(sources)
+            roots.update(
+                str(parent / "__init__.py")
+                for parent in Path(module).parents
+                if str(parent) != "." and str(parent / "__init__.py") in records
+            )
+            sources |= imported_sources(roots)
+        selected = sorted(sources | common)
+        command = {
+            "check": name,
+            "runner": {
+                p: records[p]
+                for p in sorted(common)
+                if p
+                in {
+                    "scripts/build_check.sh",
+                    portable,
+                    "scripts/quality_gate_plan.py",
+                    "scripts/run_unittest_shards.py",
+                    "apps/anshin-frontend/scripts/select-build-check.js",
+                }
+            },
+        }
+        dependency: dict[str, Any] = {p: records[p] for p in selected}
+        if name == "root-vercel-release-plan":
+            dependency["$tracked_paths"] = {p: records[p][0] for p in sorted(records)}
+        if (
+            name in {"repository-static", "root-diff"}
+            or "affected" in name
+            or "app-" in name
+        ):
+            dependency["$context_paths"] = paths
+        definitions[name] = {
+            "command_sha256": hashlib.sha256(_quality_plan_json(command)).hexdigest(),
+            "dependency_sha256": hashlib.sha256(
+                _quality_plan_json(dependency)
+            ).hexdigest(),
+        }
+    return definitions
+
+
+def check_runtime_inputs(
+    repository_root: Path,
+    plan: dict[str, Any],
+    *,
+    toolchain: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    with execution_timing(
+        "build.inputs", plan["selected_checks"], context=plan
+    ) as observation:
+        result = _check_runtime_inputs(repository_root, plan, toolchain=toolchain)
+        observation.update(status="returned", returncode=None)
+        try:
+            observation["inputs_sha256"] = hashlib.sha256(
+                _quality_plan_json(result)
+            ).hexdigest()
+        except Exception:
+            pass  # Missing measurement cannot change the input observer's result.
+        return result
+
+
+def _check_runtime_inputs(
+    repository_root: Path,
+    plan: dict[str, Any],
+    *,
+    toolchain: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Observe current inputs; missing external closure never enables reuse."""
+    import importlib.metadata
+
+    definitions = check_input_definitions(
+        repository_root, plan["selected_checks"], plan["paths"]
+    )
+    tools = dict(toolchain or {"python": platform.python_version()})
+    if not definitions:
+        return {
+            "policy_revision": "AI-DD-20261101.1",
+            "toolchain": tools,
+            "image": "none",
+            "environment": platform.system().lower(),
+            "command_sha256": plan["command_sha256"],
+            "dependency_sha256": plan["dependency_sha256"],
+        }
+    frontend = (
+        repository_root / "apps/anshin-frontend/scripts/select-build-check.js"
+    ).is_file()
+    if frontend:
+        for tool in ("node", "pnpm"):
+            try:
+                tools[tool] = subprocess.check_output(
+                    [tool, "--version"], text=True, stderr=subprocess.DEVNULL
+                ).strip()
+                executable = shutil.which(tool)
+                tools[tool + "_executable"] = (
+                    hashlib.sha256(Path(executable).resolve().read_bytes()).hexdigest()
+                    if executable
+                    else "unknown"
+                )
+            except (OSError, subprocess.CalledProcessError):
+                tools[tool] = "unknown"
+    else:
+        for package in ("jsonschema", "PyYAML", "cryptography"):
+            try:
+                tools[package] = importlib.metadata.version(package)
+            except importlib.metadata.PackageNotFoundError:
+                tools[package] = "not-installed"
+    try:
+        # Include transitive packages as well as direct imports. A new/missing
+        # distribution is an input change, even when its parent version is fixed.
+        packages = sorted(
+            (distribution.metadata["Name"], distribution.version)
+            for distribution in importlib.metadata.distributions()
+        )
+        tools["python_packages"] = (
+            hashlib.sha256(_quality_plan_json(packages)).hexdigest()
+            if all(name and version for name, version in packages)
+            else "unknown"
+        )
+    except (OSError, ValueError, TypeError, KeyError):
+        tools["python_packages"] = "unknown"
+    for tool in ("git", "bash"):
+        executable = shutil.which(tool)
+        try:
+            tools[tool] = (
+                hashlib.sha256(Path(executable).resolve().read_bytes()).hexdigest()
+                if executable
+                else "unknown"
+            )
+        except OSError:
+            tools[tool] = "unknown"
+    try:
+        tools["git_version"] = subprocess.check_output(
+            ["git", "--version"], text=True, stderr=subprocess.DEVNULL
+        ).strip()
+        if platform.system() == "Darwin":
+            # Apple's /usr/bin/git is a launcher; xcode-select chooses its backend.
+            backend = subprocess.check_output(
+                ["/usr/bin/xcrun", "--find", "git"],
+                text=True,
+                stderr=subprocess.DEVNULL,
+            ).strip()
+            tools["effective_git_executable"] = hashlib.sha256(
+                Path(backend).resolve().read_bytes()
+            ).hexdigest()
+    except (OSError, subprocess.CalledProcessError):
+        tools["effective_git_executable"] = "unknown"
+    tools["os_release"] = platform.platform()
+    tools["python_executable"] = hashlib.sha256(
+        Path(sys.executable).resolve().read_bytes()
+    ).hexdigest()
+    if Path("/usr/bin/git").is_file():
+        tools["system_git_executable"] = hashlib.sha256(
+            Path("/usr/bin/git").read_bytes()
+        ).hexdigest()
+    runtime_declarations = {}
+    declarations = {}
+    ownership = repository_root / "config/quality-gate-test-ownership.json"
+    if ownership.is_file():
+        catalog = json.loads(ownership.read_text())
+        runtime_declarations = catalog.get("reuse_runtime", {})
+        declarations = catalog.get("runtime_reads", {})
+        if not isinstance(runtime_declarations, dict):
+            runtime_declarations = {}
+        if not isinstance(declarations, dict):
+            declarations = {}
+    if frontend and set(definitions) & {
+        "root-local-quality-policy",
+        "root-generated-url-glossary",
+    }:
+        try:
+            frontend_reads = json.loads(
+                subprocess.check_output(
+                    [
+                        "node",
+                        "apps/anshin-frontend/scripts/select-build-check.js",
+                        "--check-input-owners",
+                    ],
+                    input="[]",
+                    text=True,
+                    cwd=repository_root,
+                    stderr=subprocess.DEVNULL,
+                )
+            ).get("runtime_reads", {})
+            if not isinstance(frontend_reads, dict):
+                frontend_reads = {}
+            declarations = {
+                **declarations,
+                **{
+                    name: frontend_reads.get(name)
+                    for name in (
+                        "root-local-quality-policy",
+                        "root-generated-url-glossary",
+                    )
+                },
+            }
+        except (OSError, ValueError, TypeError, subprocess.CalledProcessError):
+            pass  # Unknown reads leave only their own owner non-reusable.
+    read_inputs = {}
+    for name in definitions:
+        digest = _runtime_read_inventory(repository_root, declarations.get(name))
+        if digest is not None:
+            read_inputs[name] = digest
+    observed = {}
+    for name, definition in definitions.items():
+        # Hash inherited controls, including unknown ambient overrides. Only
+        # canonical routing/output and process-location values are excluded;
+        # source/tree/scope and result provenance bind those separately.
+        routing = {
+            "ANSHIN_BUILD_CHECK_PRIOR_RESULT_PATH",
+            "ANSHIN_BUILD_CHECK_RESULT_PATH",
+            "ANSHIN_BUILD_CHECK_CALLER",
+            "ANSHIN_BUILD_CHECK_CHANGE_SCOPE",
+            "ANSHIN_BUILD_CHECK_EXPECTED_PROFILE",
+            "GIT_INDEX_FILE",
+            "GIT_PREFIX",
+            "PWD",
+            "OLDPWD",
+            "SHLVL",
+            "_",
+            "PYTHONPYCACHEPREFIX",
+            "PYTHONDONTWRITEBYTECODE",
+            "CODEX_TOOL_CALL_ID",
+        }
+        env = {
+            k: hashlib.sha256(v.encode()).hexdigest()
+            for k, v in os.environ.items()
+            if k not in routing
+        }
+        reusable = (
+            "unknown" not in tools.values()
+            and name in read_inputs
+            and (
+                runtime_declarations.get(name) == "local-process"
+                or frontend
+                and name in {"root-local-quality-policy", "root-generated-url-glossary"}
+            )
+        )
+        # External business images/DB/source are not inferable from a local
+        # source plan. Until their owner records complete immutable inputs, run.
+        if (
+            name.startswith("frontend:business:")
+            or name == "frontend:test:team-care-proxy-business"
+        ):
+            reusable = False
+        if name in {"root-document-governance", "document-governance-distribution"}:
+            reusable = False  # foreign live document inputs are a separate owner
+        if name in read_inputs:
+            env["owner_read_inputs"] = read_inputs[name]
+        if name == "repository-static" and plan.get("document_repository_inputs"):
+            # The native static owner also consumes foreign document snapshots.
+            env["document_repository_inputs"] = hashlib.sha256(
+                _quality_plan_json(plan["document_repository_inputs"])
+            ).hexdigest()
+        observed[name] = dict(
+            definition,
+            toolchain=tools,
+            image="none",
+            environment=hashlib.sha256(
+                _quality_plan_json({"os": platform.system(), "env": env})
+            ).hexdigest(),
+            reusable=reusable,
+        )
+    value = {
+        "policy_revision": "AI-DD-20261101.1",
+        "toolchain": tools,
+        "image": "none",
+        "environment": platform.system().lower(),
+        "command_sha256": plan["command_sha256"],
+        "dependency_sha256": plan["dependency_sha256"],
+    }
+    if observed:
+        value["check_inputs"] = observed
+    return value
+
+
+def check_execution_start(
+    repository_root: Path,
+    plan: dict[str, Any],
+    *,
+    toolchain: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Observe fresh execution inputs once and select checks from that snapshot."""
+    current_inputs = check_runtime_inputs(repository_root, plan, toolchain=toolchain)
+    selection = _check_execution_selection(repository_root, plan, current_inputs)
+    timing_reuse(selection, context=plan)
+    return {"runtime_inputs": current_inputs, "execution": selection}
+
+
+def check_execution_selection(
+    repository_root: Path,
+    plan: dict[str, Any],
+    *,
+    toolchain: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    # Retain the selection-only API used by portable/distribution consumers.
+    if not os.environ.get("ANSHIN_BUILD_CHECK_PRIOR_RESULT_PATH"):
+        return {"run_checks": plan["selected_checks"], "reuse_assignments": []}
+    return check_execution_start(repository_root, plan, toolchain=toolchain)[
+        "execution"
+    ]
+
+
+def _check_execution_selection(
+    repository_root: Path, plan: dict[str, Any], current_inputs: dict[str, Any]
+) -> dict[str, Any]:
+    supplied = os.environ.get("ANSHIN_BUILD_CHECK_PRIOR_RESULT_PATH")
+    if not supplied:
+        return {"run_checks": plan["selected_checks"], "reuse_assignments": []}
+    authority = Path(os.environ.get("ANSHIN_GOVERNANCE_ROOT", str(repository_root)))
+    # Reuse the existing authority and prior-source reconstruction, never a
+    # caller-supplied list of check IDs or an unauthenticated result header.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "_check_reuse_authority", authority / "sh/change_check.py"
+    )
+    if spec is None or spec.loader is None:
+        raise ContractError("check reuse authority is unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    prior = module.load_prior_result(repository_root, Path(supplied))
+    return module.gateway_evidence.select_check_reuse(
+        prior,
+        current_inputs=current_inputs,
+        required_checks=plan["selected_checks"],
+    )
+
 
 def write_distribution_check_result(
     repository_root: Path,
@@ -2502,12 +3809,13 @@ def write_distribution_check_result(
     status: str,
     *,
     completed_checks: list[str] | None = None,
-    failed_check: str | None = None,
+    failed_check: str | list[str] | None = None,
+    expected_check_inputs_sha256: str | None = None,
 ) -> None:
     """Write the existing v2 check-result family for one direct or staged run."""
     if status not in {"passed", "failed"}:
         raise ContractError("quality result status is invalid")
-    validate_distribution_quality_plan(repository_root, plan_path)
+    accepted_base = validate_distribution_quality_plan(repository_root, plan_path)
     plan = json.loads(plan_path.read_text(encoding="utf-8"))
     revision = distribution_git(repository_root, "rev-parse", "HEAD").decode().strip()
     tree = distribution_git(repository_root, "write-tree").decode().strip()
@@ -2517,29 +3825,44 @@ def write_distribution_check_result(
     )
     if staged.returncode not in {0, 1}:
         raise ContractError("unable to inspect staged distribution input")
-    base_revision = revision
-    if staged.returncode == 0:
+    base_revision = accepted_base or revision
+    if accepted_base is None and staged.returncode == 0:
         base_revision = (
             distribution_git(repository_root, "merge-base", "HEAD", "origin/main")
             .decode()
             .strip()
         )
     completed = completed_checks or []
+    failed = ([failed_check] if isinstance(failed_check, str) else failed_check) or []
     if (
         len(completed) != len(set(completed))
         or not set(completed).issubset(plan["selected_checks"])
-        or failed_check in completed
-        or (failed_check is not None and failed_check not in plan["selected_checks"])
+        or len(failed) != len(set(failed))
+        or set(failed).intersection(completed)
+        or not set(failed).issubset(plan["selected_checks"])
     ):
         raise ContractError("quality result check status is invalid")
+    selection = check_execution_selection(repository_root, plan)
+    current_inputs = check_runtime_inputs(repository_root, plan)
+    if (
+        expected_check_inputs_sha256
+        and expected_check_inputs_sha256
+        != hashlib.sha256(_quality_plan_json(current_inputs)).hexdigest()
+    ):
+        raise ContractError("quality execution inputs changed during verification")
+    run_checks = set(selection["run_checks"])
+    if not set(completed).issubset(run_checks) or not set(failed).issubset(run_checks):
+        raise ContractError("quality result includes a reused check as executed")
     statuses = []
     for name in plan["selected_checks"]:
         check_status = status
-        if status == "failed" and completed_checks is not None:
+        if name not in run_checks:
+            check_status = "not_run"
+        elif status == "failed" and completed_checks is not None:
             check_status = (
                 "passed"
                 if name in completed
-                else "failed" if name == failed_check else "not_run"
+                else "failed" if name in failed else "not_run"
             )
         statuses.append({"name": name, "status": check_status})
     result: dict[str, Any] = {
@@ -2553,7 +3876,7 @@ def write_distribution_check_result(
             "base_revision": base_revision,
             "tree": tree,
             "paths": plan["paths"],
-            "policy_revision": "AI-DD-20261024.1",
+            "policy_revision": "AI-DD-20261101.1",
             "plan_sha256": plan["plan_sha256"],
             "command_sha256": plan["command_sha256"],
             "dependency_sha256": plan["dependency_sha256"],
@@ -2562,6 +3885,14 @@ def write_distribution_check_result(
             "environment": platform.system().lower(),
         },
     }
+    if current_inputs.get("check_inputs"):
+        result["identities"].update(current_inputs)
+        result["execution"] = selection
+        if (
+            os.environ.get("ANSHIN_BUILD_CHECK_CALLER") == "pre-commit"
+            or staged.returncode == 1
+        ):
+            result["identities"]["source_kind"] = "index"
     result["result_sha256"] = hashlib.sha256(
         json.dumps(
             result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
@@ -3037,12 +4368,20 @@ def main() -> int:
     parser.add_argument("--repository-root", type=Path, required=True)
     parser.add_argument("--contract-metadata", type=Path)
     parser.add_argument("--completed-check", action="append", default=[])
-    parser.add_argument("--failed-check")
+    parser.add_argument("--failed-check", action="append")
+    parser.add_argument("--expected-check-inputs-sha256")
+    parser.add_argument("--timing-plan", type=Path)
+    parser.add_argument("--timing-parent")
+    parser.add_argument("--timing-elapsed", action="store_true")
     mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--timing-start", nargs="+")
+    mode.add_argument("--timing-end", nargs=2)
+    mode.add_argument("--summarize-timing", nargs="+", type=Path)
     mode.add_argument("--build-check-profile", action="store_true")
     mode.add_argument("--test-build-check-profile", action="store_true")
     mode.add_argument("--build-check-plan", action="store_true")
     mode.add_argument("--build-check-plan-profile", type=Path)
+    mode.add_argument("--build-check-execution-selection", type=Path)
     mode.add_argument("--validate-build-check-plan", type=Path)
     mode.add_argument("--execute-build-check-plan", type=Path)
     mode.add_argument(
@@ -3053,11 +4392,61 @@ def main() -> int:
     parser.add_argument("plan_paths", nargs="*")
     args = parser.parse_args()
     repository_root = args.repository_root.resolve()
+    if args.summarize_timing is not None:
+        print(
+            json.dumps(
+                summarize_timing_logs(args.summarize_timing), sort_keys=True, indent=2
+            )
+        )
+        return 0
+    timing_parent = None
+    if args.timing_parent:
+        try:
+            timing_parent = json.loads(base64.urlsafe_b64decode(args.timing_parent))[
+                "identity"
+            ]["span_id"]
+        except (ValueError, TypeError, KeyError):
+            pass
+    if args.timing_start is not None or args.timing_end is not None:
+        # Observations cannot block native work, even when output is unavailable.
+        try:
+            if args.timing_start is not None:
+                context = None
+                if args.timing_plan:
+                    try:
+                        context = json.loads(args.timing_plan.read_text())
+                    except (OSError, ValueError):
+                        pass
+                context = context if isinstance(context, dict) else {}
+                token = timing_start(
+                    (
+                        "build.canonical"
+                        if args.timing_start == ["build.canonical"]
+                        else "build.check"
+                    ),
+                    args.timing_start,
+                    context={**context, "parent_span_id": timing_parent},
+                )
+                print(base64.urlsafe_b64encode(json.dumps(token).encode()).decode())
+            else:
+                token = json.loads(base64.urlsafe_b64decode(args.timing_end[0]))
+                rc = int(args.timing_end[1])
+                elapsed = timing_end(
+                    token,
+                    {"returncode": rc, "status": "passed" if rc == 0 else "failed"},
+                )
+                if args.timing_elapsed:
+                    print(int(elapsed) if elapsed is not None else "unmeasured")
+        except Exception:
+            if args.timing_end is not None and args.timing_elapsed:
+                print("unmeasured")
+        return 0
     if (
         args.build_check_profile
         or args.test_build_check_profile
         or args.build_check_plan
         or args.build_check_plan_profile is not None
+        or args.build_check_execution_selection is not None
         or args.validate_build_check_plan is not None
         or args.execute_build_check_plan is not None
         or args.write_build_check_result is not None
@@ -3077,6 +4466,18 @@ def main() -> int:
                     ).encode("utf-8")
                     + b"\n"
                 )
+            elif args.build_check_execution_selection is not None:
+                validate_distribution_quality_plan(
+                    repository_root, args.build_check_execution_selection
+                )
+                plan = json.loads(
+                    args.build_check_execution_selection.read_text(encoding="utf-8")
+                )
+                selection = check_execution_selection(repository_root, plan)
+                selection["inputs_sha256"] = hashlib.sha256(
+                    _quality_plan_json(check_runtime_inputs(repository_root, plan))
+                ).hexdigest()
+                print(json.dumps(selection, sort_keys=True))
             elif args.build_check_plan_profile is not None:
                 validate_distribution_quality_plan(
                     repository_root, args.build_check_plan_profile
@@ -3091,7 +4492,9 @@ def main() -> int:
                 )
             elif args.execute_build_check_plan is not None:
                 execute_distribution_quality_plan(
-                    repository_root, args.execute_build_check_plan
+                    repository_root,
+                    args.execute_build_check_plan,
+                    timing_parent=timing_parent,
                 )
             elif args.write_build_check_result is not None:
                 write_distribution_check_result(
@@ -3099,6 +4502,7 @@ def main() -> int:
                     Path(args.write_build_check_result[0]),
                     Path(args.write_build_check_result[1]),
                     args.write_build_check_result[2],
+                    expected_check_inputs_sha256=args.expected_check_inputs_sha256,
                     completed_checks=(
                         args.completed_check
                         if args.write_build_check_result[2] == "failed"
