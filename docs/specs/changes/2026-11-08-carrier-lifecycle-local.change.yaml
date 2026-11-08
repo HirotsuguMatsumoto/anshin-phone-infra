@@ -44,7 +44,7 @@
     "各carrier dialogのreINVITE/CSeq2/同一tag/200/ACK、更新SDPと前後の両leg双方向PCMUをwire観測する",
     "Kamailio/RTPengine未起動・PBX内部socketと端末の直結をwireと実runtimeでassertする",
     "通常構成へfixture限定overrideが漏れないnegativeと既存cleanup suite、canonical --fast、fixed SHA独立review",
-    "既存owner anshin-phone-infraのsource writerが、carrier登録・Contact・再INVITE・媒体・relayなしfixtureの実行入力を変更した場合又は当該残件の個別受入時に、登録済みTask worktree rootからfocused commandを選ぶ: ANSHIN_PHONE_BACKEND_DIR=\"$(python3 scripts/resolve_phone_backend.py --infra-root \"$PWD\" --override ${WORKSPACE_ROOT:?}/anshin-phone-backend)\" python3 -B scripts/test_phase1_sip_e2e.py --fixture carrier-lifecycle",
+    "既存owner anshin-phone-infraのsource writerが、carrier登録・Contact・再INVITE・媒体・relayなしfixtureの実行入力を変更した場合又は当該残件の個別受入時に、登録済みTask worktree rootからfocused commandを選ぶ: ANSHIN_PHONE_BACKEND_DIR=\"$(python3 scripts/resolve_phone_backend.py --infra-root \"$PWD\" --override \"${WORKSPACE_ROOT}/anshin-phone-backend\")\" python3 -B scripts/test_phase1_sip_e2e.py --fixture carrier-lifecycle",
     "通常repository-canonicalは既存source/cheap regression検査であり、このwire caseは含まない。既存RUN_PHASE1_SIP_E2E=1の引数なしfull経路にも自動追加せず、上記focused commandの失敗は非zeroで返す。今回のwire実行はr4であり、入力不変の既受入voice/FAXやwireを重複実行しない"
   ],
   "out_of_scope": [
@@ -56,8 +56,8 @@
     "strategy": "local-source-only-no-production",
     "steps": [
       "最新main取込み済みworktreeでfixture拡張",
-      "owner anshin-phone-infra/source writerが本contractの条件で明示focused commandを実行: ANSHIN_PHONE_BACKEND_DIR=\"$(python3 scripts/resolve_phone_backend.py --infra-root \"$PWD\" --override ${WORKSPACE_ROOT:?}/anshin-phone-backend)\" python3 -B scripts/test_phase1_sip_e2e.py --fixture carrier-lifecycle",
-      "通常canonicalはwireを含まない既存source/cheap regression集合。source/inputが同一ならr4と3a9c843の既存canonicalを再利用し、文書だけの補足には既存selectorが選ぶ文書検査を適用する",
+      "owner anshin-phone-infra/source writerが本contractの条件で明示focused commandを実行: ANSHIN_PHONE_BACKEND_DIR=\"$(python3 scripts/resolve_phone_backend.py --infra-root \"$PWD\" --override \"${WORKSPACE_ROOT}/anshin-phone-backend\")\" python3 -B scripts/test_phase1_sip_e2e.py --fixture carrier-lifecycle",
+      "通常canonicalはwireを含まない既存source/cheap regression集合。wire実入力が同一ならr4を再試験せず、既存selectorのrepository-canonicalはreusable=falseのため最終fixed SHAで実行する",
       "fixed SHA独立reviewは親chat、統合は親chat所有"
     ],
     "triggers": [

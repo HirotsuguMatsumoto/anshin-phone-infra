@@ -182,7 +182,8 @@ PDCA：初回cold buildは依存downloadとcompileで600/1800秒の旧準備期�
 実行ownerは既存の `anshin-phone-infra` source writerとする。carrier登録・Contact・再INVITE・媒体・relayなしfixtureの実行入力を変更した場合、又はこの残件の個別受入時に、change contractが指定するfocused commandを選ぶ。このMacの登録済みTask worktree rootでの再実行は次とする。WORKSPACE_ROOTは既存workspace resolverで解決済みのinstruction-origin登録値を入力する。Backend rootはそのprimaryを既存resolverに明示して検証し、隔離worktreeの親から推測しない。
 
 ```sh
-ANSHIN_PHONE_BACKEND_DIR="$(python3 scripts/resolve_phone_backend.py --infra-root "$PWD" --override ${WORKSPACE_ROOT:?}/anshin-phone-backend)" \
+: "${WORKSPACE_ROOT:?instruction-origin workspace resolver input is required}"
+ANSHIN_PHONE_BACKEND_DIR="$(python3 scripts/resolve_phone_backend.py --infra-root "$PWD" --override "${WORKSPACE_ROOT}/anshin-phone-backend")" \
   python3 -B scripts/test_phase1_sip_e2e.py --fixture carrier-lifecycle
 ```
 
