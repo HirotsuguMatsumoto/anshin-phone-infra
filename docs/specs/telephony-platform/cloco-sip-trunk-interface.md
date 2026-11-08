@@ -179,6 +179,15 @@ PDCA：初回cold buildは依存downloadとcompileで600/1800秒の旧準備期�
 - 2つの着信dialogで、同Call-ID/From・To tagを保ったCSeq2の再INVITE、SDPのsession版1→2、200応答・ACK2とBYE3を確認した。初回ACK→再INVITEと再INVITEのACK→BYEの時間窓ごとに、carrier legと端末legの各双方向で75〜76の異なるPCMU RTP packetを実観測した。通話全体のrx/tx値だけを再INVITE前後の継続証拠としない。媒体転送先の変更、hold/resume、音質・長時間継続は本caseの対象外である。
 - carrier SIPは `10.254.250.10:5062 → 10.254.250.20:5060`、端末SIPは `10.254.251.20:5060 → 10.254.251.30:5060`。PBXがcarrier側と端末側で別dialogとそれぞれのSDP口を生成することを確認した。RTPはcarrier15000/端末16000とPBX10000–10100の間で送受信し、端末側SBC/媒体relayを通していないことを実socketと未起動serviceからassertした。relayなし構成の新しい実通信は着信2件であり、発信・FAXは10/29の既受入source/inputを再利用する。
 
+実行ownerは既存の `anshin-phone-infra` source writerとする。carrier登録・Contact・再INVITE・媒体・relayなしfixtureの実行入力を変更した場合、又はこの残件の個別受入時に、change contractが指定するfocused commandを選ぶ。このMacの登録済みTask worktree rootでの再実行は次とする。Backend rootは指示済みprimaryを既存resolverに明示して検証し、隔離worktreeの親から推測しない。
+
+```sh
+ANSHIN_PHONE_BACKEND_DIR="$(python3 scripts/resolve_phone_backend.py --infra-root "$PWD" --override /Users/matsumotoyuuji/dev/anshin-phone-backend)" \
+  python3 -B scripts/test_phase1_sip_e2e.py --fixture carrier-lifecycle
+```
+
+通常の `repository-canonical` は既存source検査と、socket/tag/ACK/media故障を拒否するcheap regressionを実行する。この新wire caseは上の明示commandから実行し、失敗は非zeroで返す。既存 `RUN_PHASE1_SIP_E2E=1` の引数なしfull経路へheavy caseを追加する変更は行わない。入力不変のwire・既受入voice/FAXを文書補足のために反復せず、選択条件とexact commandは本変更contractへ対応付ける。
+
 合格attemptはGit外 `carrier-resume-20261108/carrier-lifecycle-r4.log`、実行sourceのhashは同 `carrier-lifecycle-r4-inputs.log`。最終fixed SHA・canonical・独立review・main統合は既存作業記録へ追跡する。実Cloco株式会社様・Google/native・Simulator・既受入voice/FAXは再試験していない。telephony_enabled=falseを維持し、本番適用・公開設定変更・追加費用・実回線接続・追加メールは0件である。
 
 PDCA：初回はBackend rootの相対解決がworktree配置で不成立のため起動前に停止し、既存resolverが検証する明示rootへ修正した。r2はnative再登録の追加unregisterを総event3件というfixture想定で拒否し、r3はinbound専用packet tapがoutgoingを拾わない観測不備で停止した。両FAILを保全し、実event列・双方向tap・assert前のsanitized metadata保存へ修正した。製品runtime不具合とは扱わない。bootstrapはr2のcold準備276.145秒、r4のcache利用33.779秒であり、異なる準備条件の単発値である。継続的な速度・品質改善の効果は未計測。
