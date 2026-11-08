@@ -179,10 +179,10 @@ PDCA：初回cold buildは依存downloadとcompileで600/1800秒の旧準備期�
 - 2つの着信dialogで、同Call-ID/From・To tagを保ったCSeq2の再INVITE、SDPのsession版1→2、200応答・ACK2とBYE3を確認した。初回ACK→再INVITEと再INVITEのACK→BYEの時間窓ごとに、carrier legと端末legの各双方向で75〜76の異なるPCMU RTP packetを実観測した。通話全体のrx/tx値だけを再INVITE前後の継続証拠としない。媒体転送先の変更、hold/resume、音質・長時間継続は本caseの対象外である。
 - carrier SIPは `10.254.250.10:5062 → 10.254.250.20:5060`、端末SIPは `10.254.251.20:5060 → 10.254.251.30:5060`。PBXがcarrier側と端末側で別dialogとそれぞれのSDP口を生成することを確認した。RTPはcarrier15000/端末16000とPBX10000–10100の間で送受信し、端末側SBC/媒体relayを通していないことを実socketと未起動serviceからassertした。relayなし構成の新しい実通信は着信2件であり、発信・FAXは10/29の既受入source/inputを再利用する。
 
-実行ownerは既存の `anshin-phone-infra` source writerとする。carrier登録・Contact・再INVITE・媒体・relayなしfixtureの実行入力を変更した場合、又はこの残件の個別受入時に、change contractが指定するfocused commandを選ぶ。このMacの登録済みTask worktree rootでの再実行は次とする。Backend rootは指示済みprimaryを既存resolverに明示して検証し、隔離worktreeの親から推測しない。
+実行ownerは既存の `anshin-phone-infra` source writerとする。carrier登録・Contact・再INVITE・媒体・relayなしfixtureの実行入力を変更した場合、又はこの残件の個別受入時に、change contractが指定するfocused commandを選ぶ。このMacの登録済みTask worktree rootでの再実行は次とする。WORKSPACE_ROOTは既存workspace resolverで解決済みのinstruction-origin登録値を入力する。Backend rootはそのprimaryを既存resolverに明示して検証し、隔離worktreeの親から推測しない。
 
 ```sh
-ANSHIN_PHONE_BACKEND_DIR="$(python3 scripts/resolve_phone_backend.py --infra-root "$PWD" --override /Users/matsumotoyuuji/dev/anshin-phone-backend)" \
+ANSHIN_PHONE_BACKEND_DIR="$(python3 scripts/resolve_phone_backend.py --infra-root "$PWD" --override ${WORKSPACE_ROOT:?}/anshin-phone-backend)" \
   python3 -B scripts/test_phase1_sip_e2e.py --fixture carrier-lifecycle
 ```
 
