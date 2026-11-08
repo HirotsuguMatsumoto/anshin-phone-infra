@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "change_id": "anshin-phone-infra.carrier-lifecycle-local.2026-11-08",
+  "title": "登録継続・12秒idle・再登録後着信とrelayなし再INVITEの隔離wire回帰",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "high",
+  "production_change": false,
+  "spec_ids": [
+    "anshin.phone.cloco-sip-trunk-interface"
+  ],
+  "repositories": [
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
+    "anshin-phone-infra/tests/mock-sip/scenarios/registration_probe.py",
+    "anshin-phone-infra/tests/mock-sip/scenarios/carrier_lifecycle_uac.xml",
+    "anshin-phone-infra/tests/mock-sip/scenarios/lifecycle_wire_probe.py"
+  ],
+  "contract_paths": [
+    "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",
+    "anshin-phone-infra/docs/specs/changes/2026-11-08-carrier-lifecycle-local.change.yaml"
+  ],
+  "generated_artifacts": [
+    "Git外 carrier-resume-20261108/carrier-lifecycle-r*.log、canonical log、Task/review evidence (AI-DD-20261101.1)"
+  ],
+  "test_paths": [
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+    "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
+    "anshin-phone-infra/scripts/build_check.sh"
+  ],
+  "invariants": [
+    "追加費用・公開設定変更・本番操作・実回線接続・追加メールなし",
+    "telephony_enabled=false、既受入voice/FAX/native/Google/Simulator入力を再試験しない",
+    "既存shared lease、native cleanup、foreign資産とcache保全",
+    "通常production renderer・API/DB sourceは変更しない"
+  ],
+  "acceptance_criteria": [
+    "登録用5060を生存させ、実DigestとContactから合成UAC5062の着信宛先を取得する",
+    "12秒以上の実測carrier SIP無通信idle後に実着信・双方向PCMUを確認する",
+    "実unregisterで旧bindingをinactiveにし、新REGISTER event/Contactを再取得して2回目の実着信を送る",
+    "各carrier dialogのreINVITE/CSeq2/同一tag/200/ACK、更新SDPと前後の両leg双方向PCMUをwire観測する",
+    "Kamailio/RTPengine未起動・PBX内部socketと端末の直結をwireと実runtimeでassertする",
+    "通常構成へfixture限定overrideが漏れないnegativeと既存cleanup suite、canonical --fast、fixed SHA独立review"
+  ],
+  "out_of_scope": [
+    "実providerの送信元UDP5060・長時間idle・NAT寿命保証",
+    "既存管理業務/voice/FAX/Google/native/Simulator受入の重複試験",
+    "production・STG・MS-A2・公開設定・実キャリア接続・費用・外部メール"
+  ],
+  "rollout": {
+    "strategy": "local-source-only-no-production",
+    "steps": [
+      "最新main取込み済みworktreeでfixture拡張",
+      "focused検査、新case実通信、canonical --fast",
+      "fixed SHA独立reviewは親chat、統合は親chat所有"
+    ],
+    "triggers": [
+      "owner-current-chat-20261108-resume-carrier-internal-tests-after-preceding-production"
+    ]
+  },
+  "rollback": {
+    "strategy": "correct-source-preserve-evidence",
+    "steps": [
+      "失敗logをGit外保全",
+      "fixture/specを同じ束で修正し変化した入力だけ検証"
+    ],
+    "triggers": [
+      "wire不一致・既存fixture互換性逸脱・外部受入への誤拡張"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin-phone-infra",
+    "signals": [
+      "実binding・dialog・media・cleanupのassert",
+      "未受入事項と本番未適用の正確な表記"
+    ],
+    "observation_period": "本隔離試験とcanonical検査時"
+  },
+  "approvals": [
+    {
+      "role": "scope",
+      "approved_by": "h@anshin.care",
+      "approved_at": "2026-11-08",
+      "approval_ref": "owner-current-chat-20261108-resume-carrier-internal-tests-after-preceding-production"
+    }
+  ],
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "task/phone-carrier-resume-20261108"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "5a4dca8aaad68adf0dab2d76f95a00d1fdc6cf34"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py",
+      "anshin-phone-infra/tests/mock-sip/scenarios/registration_probe.py",
+      "anshin-phone-infra/tests/mock-sip/scenarios/carrier_lifecycle_uac.xml",
+      "anshin-phone-infra/tests/mock-sip/scenarios/lifecycle_wire_probe.py",
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md",
+      "anshin-phone-infra/docs/specs/changes/2026-11-08-carrier-lifecycle-local.change.yaml"
+    ],
+    "integration_order": [
+      "anshin-phone-infra"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e.py": "3c688ca67fbff527c1bd815c28727db0f4c273ec",
+      "anshin-phone-infra/scripts/test_phase1_sip_e2e_cleanup.py": "f23052a0dced98f3af1aa2e8c99a18c8093e1763",
+      "anshin-phone-infra/tests/mock-sip/scenarios/registration_probe.py": "b62adf70d54b1f4a4948294f9ad1eff0fb2e9378",
+      "anshin-phone-infra/tests/mock-sip/scenarios/carrier_lifecycle_uac.xml": null,
+      "anshin-phone-infra/tests/mock-sip/scenarios/lifecycle_wire_probe.py": null,
+      "anshin-phone-infra/docs/specs/telephony-platform/cloco-sip-trunk-interface.md": "ad5dcca1e8f365c9cf7ff3131530507e82b6024a",
+      "anshin-phone-infra/docs/specs/changes/2026-11-08-carrier-lifecycle-local.change.yaml": null
+    }
+  }
+}

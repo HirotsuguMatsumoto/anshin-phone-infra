@@ -14,6 +14,88 @@ import test_phase1_sip_e2e
 
 
 class Phase1SipE2ECleanupTest(unittest.TestCase):
+    def test_carrier_binding_rejects_removed_and_stale_contact(self):
+        value = {"user": "0300000001", "host": "10.254.250.20", "port": 5060,
+                 "active": True, "events": [{"expires": 300}]}
+        self.assertEqual(test_phase1_sip_e2e.active_carrier_binding(value, 1), "10.254.250.20:5060")
+        for replacement in ({"active": False}, {"events": [{"expires": 0}]}, {"port": 5062}):
+            with self.subTest(replacement=replacement), self.assertRaises(RuntimeError):
+                test_phase1_sip_e2e.active_carrier_binding({**value, **replacement}, 1)
+        with self.assertRaisesRegex(RuntimeError, "stale"):
+            test_phase1_sip_e2e.active_carrier_binding(value, 2)
+
+    def test_carrier_direct_override_leaves_production_relay_dependency(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as raw:
+            directory = Path(raw)
+            env = {**os.environ, 'ANSHIN_PHONE_SECRET_DIR': raw, 'ANSHIN_PHONE_BACKEND_DIR': raw,
+                   'PUBLIC_SIP_IP': '192.0.2.1', 'PUBLIC_RTP_IP': '192.0.2.2',
+                   'CARRIER_SIGNALING_ADDRESS': '10.254.250.20', 'CARRIER_MEDIA_ADDRESS': '10.254.250.20',
+                   'CARRIER_AUTH_MODE': 'ip', 'CARRIER_HOST': 'mock-carrier',
+                   'CARRIER_SOURCE_CIDRS': '10.254.250.10/32', 'SMARTPHONE_SOURCE_CIDRS': '10.254.250.30/32',
+                   'CARRIER_SIP_USERNAME': 'fixture', 'TEL_DID': '0300000001', 'FAX_DID': '0300000002'}
+            def compile_recipe(files):
+                result = subprocess.run(['docker', 'compose', *files, 'config', '--format', 'json'],
+                                        env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                return json.loads(result.stdout)['services']
+            production = compile_recipe(['-f', str(test_phase1_sip_e2e.ROOT / 'compose.phase1.yaml')])
+            direct = compile_recipe(['-f', str(test_phase1_sip_e2e.ROOT / 'compose.phase1.yaml'),
+                                     '-f', str(test_phase1_sip_e2e.ROOT / 'compose.phase1.mock.yaml'),
+                                     '-f', str(test_phase1_sip_e2e.lifecycle_override(directory))])
+            self.assertIn('kamailio', production['asterisk']['depends_on'])
+            self.assertEqual(set(direct['asterisk']['depends_on']), {'backend'})
+            self.assertEqual(set(direct['mock-smartphone']['networks']), {'pbx-internal'})
+            self.assertEqual(direct['mock-smartphone']['networks']['pbx-internal']['ipv4_address'], '10.254.251.30')
+            self.assertFalse(any(direct[service].get('ports') for service in direct))
+
+    def test_lifecycle_wire_rejects_wrong_socket_dialog_and_post_reinvite_media_loss(self):
+        import copy
+        binding = {'user': '0300000001', 'host': '10.254.250.20', 'port': 5060, 'active': True,
+                   'events': [{'call_id': 'reg', 'cseq': str(i) + ' REGISTER', 'at': at, 'expires': expiry}
+                              for i, at, expiry in ((1, 0, 300), (2, 20, 0), (3, 21, 300))]}
+        carrier, device = {'sip': [], 'rtp': []}, {'sip': [], 'rtp': []}
+        for number, start in enumerate((13, 22)):
+            for offset, first, cseq in ((0, 'INVITE sip:pbx SIP/2.0', '1 INVITE'),
+                                       (.05, 'SIP/2.0 200 OK', '1 INVITE'),
+                                       (.1, 'ACK sip:pbx SIP/2.0', '1 ACK'),
+                                       (1.5, 'INVITE sip:pbx SIP/2.0', '2 INVITE'),
+                                       (1.6, 'SIP/2.0 200 OK', '2 INVITE'),
+                                       (1.7, 'ACK sip:pbx SIP/2.0', '2 ACK'),
+                                       (3.1, 'BYE sip:pbx SIP/2.0', '3 BYE'),
+                                       (3.2, 'SIP/2.0 200 OK', '3 BYE')):
+                reply = first.startswith('SIP/2.0')
+                carrier['sip'].append({'at': start + offset, 'first': first, 'cseq': cseq,
+                    'call_id': str(number), 'from_tag': 'caller', 'to_tag': 'pbx',
+                    'source': '10.254.250.20' if reply else '10.254.250.10', 'sport': 5060 if reply else 5062,
+                    'target': '10.254.250.10' if reply else '10.254.250.20', 'dport': 5062 if reply else 5060,
+                    'sdp': 'c=IN IP4 10.254.250.20\nm=audio 10000 RTP/AVP 0' if reply else
+                           'o=sipp 1 2 IN IP4 10.254.250.10'})
+            device['sip'].append({'at': start + .02, 'first': 'INVITE sip:device SIP/2.0',
+                'call_id': 'device-' + str(number), 'source': '10.254.251.20', 'sport': 5060,
+                'target': '10.254.251.30', 'dport': 5060, 'sdp': 'c=IN IP4 10.254.251.20'})
+            for observed, addresses in ((carrier, ('10.254.250.10', '10.254.250.20')),
+                                        (device, ('10.254.251.30', '10.254.251.20'))):
+                for phase in (.2, 1.8):
+                    for source in addresses:
+                        observed['rtp'].extend({'at': start + phase + i * .02, 'source': source,
+                            'ssrc': number, 'sequence': i, 'octets': 160,
+                            'sport': (15000 if observed is carrier else 16000) if source == addresses[0] else 10000,
+                            'dport': 10000 if source == addresses[0] else (15000 if observed is carrier else 16000)} for i in range(25))
+        self.assertEqual(test_phase1_sip_e2e.assert_lifecycle_wire(carrier, device, binding, 12)['registrations'], 2)
+        native_binding = copy.deepcopy(binding)
+        native_binding['events'].insert(2, {'call_id': 'reg', 'cseq': 'native-extra-unregister', 'at': 20.5, 'expires': 0})
+        self.assertEqual(test_phase1_sip_e2e.assert_lifecycle_wire(carrier, device, native_binding, 12)['unregistrations'], 2)
+        for fault, expected in (('socket', 'actual-caller-socket'), ('tags', 'dialog-tags'),
+                                ('ack', 'invite-ack'), ('rtp', 'carrier-after-to-pbx-pcmu')):
+            altered = copy.deepcopy(carrier)
+            if fault == 'socket': altered['sip'][0]['sport'] = 5064
+            if fault == 'tags': altered['sip'][3]['to_tag'] = 'different-dialog'
+            if fault == 'ack': altered['sip'] = [v for v in altered['sip'] if v['cseq'] != '2 ACK']
+            if fault == 'rtp': altered['rtp'] = [v for v in altered['rtp'] if v['at'] < 14.7]
+            with self.subTest(fault=fault), self.assertRaisesRegex(RuntimeError, expected):
+                test_phase1_sip_e2e.assert_lifecycle_wire(altered, device, binding, 12)
+
     def test_simulator_control_ignores_proxy_and_rejects_redirect(self):
         import softphone_sip_fixture as sdk
         import http.server,threading,os,urllib.error

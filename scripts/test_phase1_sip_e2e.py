@@ -973,6 +973,178 @@ print('PASS: actual PBX snapshots and PostgreSQL migration -> own-history query;
         time.sleep(.5)
 
 
+def lifecycle_override(directory: Path) -> Path:
+    """The direct endpoint topology is test-only; production recipes stay intact."""
+    path = directory / "carrier-lifecycle.yaml"
+    path.write_text("""services:
+  asterisk:
+    depends_on: !override
+      backend:
+        condition: service_healthy
+  mock-smartphone:
+    networks: !override
+      pbx-internal:
+        ipv4_address: 10.254.251.30
+""")
+    return path
+
+
+def active_carrier_binding(value: dict, registrations: int) -> str:
+    events = value.get("events", [])
+    if (not value.get("active") or not events or events[-1]["expires"] <= 0
+            or sum(event["expires"] > 0 for event in events) != registrations):
+        raise RuntimeError("phase=carrier-binding state=inactive-or-stale")
+    if (value["user"], value["host"], value["port"]) != ("0300000001", "10.254.250.20", 5060):
+        raise RuntimeError("phase=carrier-binding state=unexpected-contact")
+    return f"{value['host']}:{value['port']}"
+
+
+def assert_lifecycle_wire(carrier: dict, device: dict, binding: dict, idle_seconds: float) -> dict:
+    """Check actual socket paths, dialog identity and RTP on both sides of reINVITE."""
+    def require(condition, label):
+        if not condition:
+            raise RuntimeError("phase=carrier-lifecycle state=failed assertion=" + label)
+    events = binding["events"]
+    require(len(events) >= 3 and events[0]["expires"] > 0 and events[-1]["expires"] > 0
+            and all(event["expires"] == 0 for event in events[1:-1]), "binding-lifecycle")
+    require(len({(event["call_id"], event["cseq"]) for event in events}) == len(events), "fresh-register-events")
+    active_carrier_binding(binding, 2)
+    wire = carrier["sip"]
+    starts = [v for v in wire if v["first"].startswith("INVITE ") and v["cseq"] == "1 INVITE"]
+    # UDP retransmits can repeat a request; the two distinct dialogs are the cases.
+    starts = list({v["call_id"]: v for v in reversed(starts)}.values())
+    starts.sort(key=lambda v: v["at"])
+    require(len(starts) == 2, "two-inbound-dialogs")
+    require(starts[0]["at"] - events[0]["at"] >= idle_seconds, "observed-idle")
+    require(starts[0]["at"] < events[1]["at"] < events[-1]["at"] < starts[1]["at"], "reregister-before-second-call")
+    require(not any(v["at"] > events[0]["at"] + .2 and v["at"] < starts[0]["at"]
+                    for v in wire), "idle-without-carrier-sip")
+    downstream = [v for v in device["sip"] if v["first"].startswith("INVITE ")]
+    require(len({v["call_id"] for v in downstream}) == 2, "two-direct-endpoint-dialogs")
+    require(all((v["source"], v["sport"], v["target"], v["dport"]) ==
+                ("10.254.251.20", 5060, "10.254.251.30", 5060) for v in downstream), "direct-endpoint-socket")
+    require(all("c=IN IP4 10.254.251.20" in v["sdp"] for v in downstream), "direct-endpoint-sdp")
+    require(all(v["call_id"] not in {s["call_id"] for s in starts} for v in downstream), "pbx-separate-legs")
+    summary = []
+    for start in starts:
+        dialog = [v for v in wire if v["call_id"] == start["call_id"]]
+        reinvites = [v for v in dialog if v["first"].startswith("INVITE ") and v["cseq"] == "2 INVITE"]
+        require(bool(reinvites), "reinvite-request")
+        reinvite = reinvites[0]
+        replies = {seq: [v for v in dialog if v["first"] == "SIP/2.0 200 OK" and v["cseq"] == seq]
+                   for seq in ("1 INVITE", "2 INVITE", "3 BYE")}
+        require(all(replies.values()), "invite-reinvite-bye-success")
+        initial, updated = replies["1 INVITE"][0], replies["2 INVITE"][0]
+        require((initial["from_tag"], initial["to_tag"]) == (updated["from_tag"], updated["to_tag"])
+                == (reinvite["from_tag"], reinvite["to_tag"]), "dialog-tags")
+        require("o=sipp 1 2 IN IP4 10.254.250.10" in reinvite["sdp"], "updated-offer")
+        for reply in (initial, updated):
+            require("c=IN IP4 10.254.250.20" in reply["sdp"]
+                    and "RTP/AVP 0" in reply["sdp"], "pbx-carrier-sdp")
+        for seq in ("1 ACK", "2 ACK"):
+            require(any(v["first"].startswith("ACK ") and v["cseq"] == seq for v in dialog), "invite-ack")
+        requests = [v for v in dialog if not v["first"].startswith("SIP/2.0")]
+        require(all((v["source"], v["sport"], v["target"], v["dport"]) ==
+                    ("10.254.250.10", 5062, "10.254.250.20", 5060) for v in requests), "actual-caller-socket")
+        before = next(v["at"] for v in dialog if v["cseq"] == "1 ACK")
+        after = next(v["at"] for v in dialog if v["cseq"] == "2 ACK")
+        ended = next(v["at"] for v in dialog if v["cseq"] == "3 BYE")
+        counts = {}
+        for role, observed in (("carrier", carrier), ("device", device)):
+            for phase, lower, upper in (("before", before, reinvite["at"]), ("after", after, ended)):
+                for direction, source in (("to-pbx", "10.254.250.10" if role == "carrier" else "10.254.251.30"),
+                                          ("from-pbx", "10.254.250.20" if role == "carrier" else "10.254.251.20")):
+                    media = [v for v in observed["rtp"] if lower < v["at"] < upper and v["source"] == source]
+                    peer_port = 15000 if role == "carrier" else 16000
+                    require(all((v["sport"] == peer_port and 10000 <= v["dport"] <= 10100)
+                                if direction == "to-pbx" else
+                                (10000 <= v["sport"] <= 10100 and v["dport"] == peer_port) for v in media),
+                            role + "-" + phase + "-" + direction + "-rtp-ports")
+                    require(len({(v["ssrc"], v["sequence"]) for v in media if v["octets"] >= 160}) >= 20,
+                            role + "-" + phase + "-" + direction + "-pcmu")
+                    counts[f"{role}-{phase}-{direction}"] = len(media)
+        summary.append(counts)
+    return {"observed_idle_seconds": round(starts[0]["at"] - events[0]["at"], 3),
+            "registrations": 2, "unregistrations": sum(event["expires"] == 0 for event in events), "dialogs": summary,
+            "binding_events": [{"cseq": event["cseq"], "expires": event["expires"],
+                                "seconds_since_initial": round(event["at"] - events[0]["at"], 3)} for event in events],
+            "contact_socket": f"{binding['host']}:{binding['port']}",
+            "direct_endpoint_sip": "10.254.251.20:5060 -> 10.254.251.30:5060",
+            "caller_socket": "10.254.250.10:5062", "registrar_socket": "10.254.250.10:5060",
+            "relay_services_started": False, "provider_nat_accepted": False}
+
+
+def run_carrier_lifecycle(base, env, registrar):
+    def contact():
+        return json.loads(run(base + ["exec", "-T", "mock-carrier", "cat", "/tmp/registered-contact.json"], env=env).stdout)
+    def wait_binding(active, count):
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            value = contact()
+            if value["active"] == active and len(value["events"]) >= count:
+                print("phase=carrier-binding " + json.dumps({"active": active,
+                    "events": [{"cseq": e["cseq"], "expires": e["expires"]} for e in value["events"]]}), flush=True)
+                return value
+            if registrar.poll() is not None:
+                raise RuntimeError("phase=carrier-binding state=registrar-exited")
+            time.sleep(.2)
+        print("phase=carrier-binding last_observation=" + json.dumps({"active": value["active"],
+            "events": [{"cseq": e["cseq"], "expires": e["expires"]} for e in value["events"]]}), flush=True)
+        raise RuntimeError("phase=carrier-binding state=timeout")
+    running = run(base + ["ps", "--services", "--status", "running"], env=env).stdout.split()
+    if set(running) & {"kamailio", "rtpengine"}:
+        raise RuntimeError("phase=carrier-direct state=relay-present")
+    # Change the synthetic endpoint only, after its managed configuration is
+    # applied. The unchanged backend revision keeps the existing poller stable.
+    run(base + ["exec", "-T", "--user", "10001:10001", "asterisk", "python3", "-c",
+        "from pathlib import Path;p=Path('/etc/asterisk/managed-endpoints.conf');"
+        "s=p.read_text();assert 'outbound_proxy=' in s;"
+        "p.write_text('\\n'.join(v for v in s.splitlines() if not v.startswith('outbound_proxy='))+'\\n')"], env=env)
+    run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "module reload res_pjsip.so"], env=env)
+    run(base + ["exec", "-T", "mock-smartphone", "sipp", "-nostdin", "10.254.251.20:5060",
+        "-sf", "/scenarios/smartphone_register.xml", "-inf", "/tmp/device.csv", "-i", "10.254.251.30",
+        "-p", "5060", "-m", "1", "-timeout", "15s"], env=env)
+    initial = wait_binding(True, 1)
+    idle_seconds = 12
+    print("phase=carrier-idle state=started configured_seconds=12", flush=True)
+    time.sleep(idle_seconds)
+    for index in (1, 2):
+        current = contact()
+        target = active_carrier_binding(current, index)
+        scenario = (ROOT / "tests/mock-sip/scenarios/carrier_lifecycle_uac.xml").read_text().replace(
+            "INVITE sip:registration-contact@", "INVITE sip:" + current["user"] + "@")
+        run(base + ["exec", "-T", "mock-carrier", "sh", "-c", "cat > /tmp/carrier-lifecycle.xml"],
+            env=env, input_text=scenario)
+        smartphone = exec_background(base, "mock-smartphone", ["sipp", "-nostdin", "-sf",
+            "/scenarios/smartphone_inbound_uas.xml", "-i", "10.254.251.30", "-p", "5060", "-mp", "16000",
+            "-m", "1", "-timeout", "20s", "-recv_timeout", "15000"], env)
+        time.sleep(.5)
+        run(base + ["exec", "-T", "mock-carrier", "sipp", "-nostdin", target, "-sf", "/tmp/carrier-lifecycle.xml",
+            "-i", "10.254.250.10", "-p", "5062", "-mp", "15000", "-m", "1", "-timeout", "20s"], env=env)
+        finish(smartphone, "direct PBX endpoint lifecycle")
+        if index == 1:
+            run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "pjsip send unregister carrier-registration"], env=env)
+            removed = wait_binding(False, 2)
+            try:
+                active_carrier_binding(removed, 1)
+            except RuntimeError:
+                pass
+            else:
+                raise RuntimeError("phase=carrier-binding state=unregistered-contact-accepted")
+            # Native `send register` queues its own unregister before register;
+            # retain that extra wire event rather than assuming exactly 3 events.
+            reply = run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "pjsip send register carrier-registration"], env=env)
+            if re.search(r"Failed|Unable|No such command", reply.stdout):
+                raise RuntimeError("phase=carrier-binding state=native-register-rejected")
+            replacement = wait_binding(True, 3)
+            if replacement["events"][0] != initial["events"][0]:
+                raise RuntimeError("phase=carrier-binding state=initial-event-replaced")
+    binding = contact()
+    run(base + ["exec", "-T", "mock-carrier", "touch", "/tmp/registration-probe-stop"], env=env)
+    finish(registrar, "persistent synthetic registrar")
+    return binding, idle_seconds
+
+
 def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None = None) -> int:
     if shutil.which("docker") is None:
         raise RuntimeError("docker is required")
@@ -1033,6 +1205,8 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             }
         )
         base = compose_args(project)
+        if fixture_only == "carrier-lifecycle":
+            base += ["--file", str(lifecycle_override(secret_path))]
         if fixture_only == "softphone":
             from softphone_sip_fixture import prepare_softphone_override
             base += ["--file", str(prepare_softphone_override(ROOT, secret_path, env, run))]
@@ -1060,31 +1234,38 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                 run(base + ["wait", "backend-migrate"], env=env)
                 print(f"phase=database-fixture state=completed wall_seconds={time.monotonic() - bootstrap_started:.3f} integration=not-run", flush=True)
                 return 0
+            services = (["mock-carrier", "mock-smartphone", "postgres", "backend", "asterisk"]
+                        if fixture_only == "carrier-lifecycle" else
+                        ["mock-carrier", "mock-smartphone", "postgres", "backend", "pbx-event-forwarder", "rtpengine", "kamailio", "asterisk"])
             result = run(
                 base
                 + [
                     "up",
                     "--detach",
                     "--build",
-                    "mock-carrier",
-                    "mock-smartphone",
-                    "postgres",
-                    "backend",
-                    "pbx-event-forwarder",
-                    "rtpengine",
-                    "kamailio",
-                    "asterisk",
+                    *services,
                 ],
                 env=env,
             )
             print(result.stdout, end="")
             print(f"phase=compose-bootstrap state=completed wall_seconds={time.monotonic() - bootstrap_started:.3f}", flush=True)
-            wait_for_sbc(base, env)
+            if fixture_only != "carrier-lifecycle":
+                wait_for_sbc(base, env)
             wait_for_asterisk(base, env)
             wait_for_backend(base, env)
-            if fixture_only == "voice":
+            probes = []
+            if fixture_only == "carrier-lifecycle":
+                for service, role in (("mock-carrier", "carrier"), ("mock-smartphone", "device")):
+                    process = exec_background(base, service, ["python3", "/scenarios/lifecycle_wire_probe.py", role], env)
+                    probes.append((service, role, process))
+                    deadline = time.monotonic() + 10
+                    while run(base + ["exec", "-T", service, "test", "-f", f"/tmp/lifecycle-wire-{role}-ready"], env=env, check=False).returncode:
+                        if process.poll() is not None or time.monotonic() > deadline:
+                            raise RuntimeError("phase=lifecycle-wire state=not-ready")
+                        time.sleep(.1)
+            if fixture_only in ("voice", "carrier-lifecycle"):
                 registrar = exec_background(base, "mock-carrier",
-                    ["python3", "/scenarios/registration_probe.py"], env)
+                    ["python3", "/scenarios/registration_probe.py"] + (["--persistent"] if fixture_only == "carrier-lifecycle" else []), env)
                 deadline = time.monotonic() + 10
                 while run(base + ["exec", "-T", "mock-carrier", "test", "-f", "/tmp/registration-probe-ready"], env=env, check=False).returncode:
                     if registrar.poll() is not None or time.monotonic() >= deadline:
@@ -1107,8 +1288,9 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
                     if registrar.poll() is not None or time.monotonic() >= deadline:
                         raise RuntimeError("phase=carrier-registration state=failed")
                     time.sleep(.5)
-                run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "pjsip send unregister carrier-registration"], env=env)
-                finish(registrar, "synthetic carrier registration")
+                if fixture_only != "carrier-lifecycle":
+                    run(base + ["exec", "-T", "asterisk", "asterisk", "-rx", "pjsip send unregister carrier-registration"], env=env)
+                    finish(registrar, "synthetic carrier registration")
                 registered_contact = json.loads(run(base + ["exec", "-T", "mock-carrier", "cat", "/tmp/registered-contact.json"], env=env).stdout)
                 carrier_target = f"{registered_contact['host']}:{registered_contact['port']}"
             else:
@@ -1166,6 +1348,25 @@ def run_isolated_e2e(*, preflight_only: bool = False, fixture_only: str | None =
             else:
                 raise RuntimeError("phase=endpoint-provisioning state=timeout")
             print("PASS: backend active endpoint -> actual PBX configuration")
+
+            if fixture_only == "carrier-lifecycle":
+                binding, idle_seconds = run_carrier_lifecycle(base, env, registrar)
+                observations = {}
+                for service, role, process in probes:
+                    run(base + ["exec", "-T", service, "touch", "/tmp/lifecycle-wire-stop"], env=env)
+                    finish(process, "lifecycle wire " + role)
+                    observations[role] = json.loads(run(base + ["exec", "-T", service, "cat", f"/tmp/lifecycle-wire-{role}.json"], env=env).stdout)
+                # Keep sanitized metadata before asserting, so assertion failures
+                # retain the exact observation through the existing temp owner.
+                (secret_path / "lifecycle-wire.json").write_text(json.dumps({
+                    "observations": observations, "binding": binding, "idle_seconds": idle_seconds}))
+                print("phase=lifecycle-wire observations=" + json.dumps({role: {
+                    "sip": len(value["sip"]), "rtp": len(value["rtp"]),
+                    "requests": sum(not v["first"].startswith("SIP/2.0") for v in value["sip"])}
+                    for role, value in observations.items()}), flush=True)
+                summary = assert_lifecycle_wire(observations["carrier"], observations["device"], binding, idle_seconds)
+                print("phase=carrier-lifecycle state=passed " + json.dumps(summary, sort_keys=True), flush=True)
+                return 0
 
             if fixture_only == "softphone":
                 if env.get('PHONE_SOFTPHONE_SIMULATOR'):
@@ -1818,7 +2019,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--preflight", action="store_true", help="validate fixture inputs without build or container startup")
-    modes.add_argument("--fixture", choices=("database", "management", "voice", "fax", "production", "softphone"), help="diagnose a minimal real runtime")
+    modes.add_argument("--fixture", choices=("database", "management", "voice", "fax", "production", "softphone", "carrier-lifecycle"), help="diagnose a minimal real runtime")
     parser.add_argument('--backend-image', help='immutable published image for production fixture')
     parser.add_argument('--backend-sha', help='published Backend source for production fixture')
     args = parser.parse_args(argv)

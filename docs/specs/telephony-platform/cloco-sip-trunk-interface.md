@@ -13,9 +13,9 @@ risk_level: high
 source_doc_ids: [anshin.corporate.anshin-phone.cloco-response-2026-09-30, anshin.corporate.anshin-phone.notification-status, anshin.infrastructure.system-architecture]
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-corporate-strategy]
 code_paths: [compose.phase1.yaml, compose.phase1.mock.yaml, configs/carrier-intake.example.json, deploy/asterisk/config/pjsip.conf.template, deploy/asterisk/config/extensions.conf.template, deploy/asterisk/scripts/render_config.py, deploy/asterisk/scripts/pbx_management.py, deploy/kamailio/config/kamailio.cfg.template, deploy/kamailio/scripts/render_config.py]
-contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml]
-test_paths: [scripts/build_check.sh, scripts/test_phase1_render_config.py, scripts/test_kamailio_render_config.py, scripts/test_pbx_event_pipeline.py, scripts/test_phase1_sip_e2e.py]
-last_reviewed: "2026-10-29"
+contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-29-carrier-standard-local.change.yaml, docs/specs/changes/2026-11-08-carrier-lifecycle-local.change.yaml]
+test_paths: [scripts/build_check.sh, scripts/test_phase1_render_config.py, scripts/test_kamailio_render_config.py, scripts/test_pbx_event_pipeline.py, scripts/test_phase1_sip_e2e.py, scripts/test_phase1_sip_e2e_cleanup.py]
+last_reviewed: "2026-11-08"
 review_interval_days: 30
 sensitivity: restricted
 ---
@@ -113,7 +113,7 @@ Asterisk 22.10.1/PJSIPは既存資産を使う当社保守候補とする。マ�
 | 段階 | 当社が用意する検証 | 現在状態 |
 | --- | --- | --- |
 | 0 資料・接続口 | manualへの要求対応、接続口/経路/提供資格/試験許可の具体化 | Mac内経路は具体化・隔離受入済み。本番接続口・提供条件は未確定 |
-| 1 標準音声 | PBXと社内試験端末のみ。登録・アイドル後着信・再登録、双方発信/切断、再INVITE、双方向音声、許可番号のFrom | REGISTER/Digest・発着信/切断・双方向PCMU・FromをMac内で確認。アイドル後・carrier再登録後着信・再INVITE・relayなし試験は未確認。実回線未受入 |
+| 1 標準音声 | PBXと社内試験端末のみ。登録・アイドル後着信・再登録、双方発信/切断、再INVITE、双方向音声、許可番号のFrom | REGISTER/Digest・発着信/切断・双方向PCMU・Fromは既受入。11/08に12秒設定idle（実測18.413秒）後着信、carrier再登録後着信、再INVITE前後の双方向PCMU、relayなしの着信を隔離確認。長時間idle・実provider/NAT・実回線は未受入 |
 | 2 製品接続 | 端末側SBC/媒体中継、組織/内線権限、複数DID、ToとRequest-URIが異なる着信、Alert-Info有無/不一致/未知番号、番号別From、履歴 | relay経由の発着信・端末停止/回復、TEL/FAXの2DID、To/Alert-Info、From、本人履歴を隔離確認。全組織条件・実機・実回線は未確認 |
 | 3 FAX・容量 | 方式回答に従うFAX実送受信/対向結果/失敗、契約上限と当社制限、ログ切分け | Mac内G.711 FAX回帰済み。実提供方式・実回線FAX・契約容量は未確認 |
 | 4 顧客提供 | 番号制度・契約・所在/設備手続・品質・告知・実機等の必要条件 | 未完了。社内試験の成功で顧客提供可としない |
@@ -145,6 +145,8 @@ PDCA：前回は方針の語調修正にとどまり、技術正本と出力TXT�
 | 端末音声 | 社内端末 ⇄ RTPengine `10.254.250.50:20000–20100` ⇄ Asterisk内部口 | 上流と別のdialog/媒体。管理DBは音声経路外 |
 | 実上流 | 提供された標準SIPトランク ⇄ 当社管理PBXの実到達口 | 未採用・未適用。現行制約下で到達保証できる本番経路は確認できていない |
 
+2026-11-08の正本source inventoryでも、現行の承認済み経路にcarrier用SIP/RTP到達口の割当は確認できていない。MS-A2-1 private口からの既存outboundは、NAT寿命・carrierからの着信が未確認であり採用根拠にしない。既存Edge/Vulneの流用は規定とowner境界のため採用しない。候補は当社独立PBXへのpublic IPv4直接割当とし、SIP受信5060/UDP、RTP受信候補10000–10100/UDPを実提供標準条件で確定する。所在地・host・IP・owner・費用は未選定で、未調達・未公開・未適用である。管理API/DBとの連携経路も採用前の確認事項であり、DBは公開しない。経済・手続・配置の三者比較は `anshin.corporate.anshin-phone.cloco-architecture-comparison` に集約する。この結論は本番hostのlive inspectを伴わない。
+
 本番接続口に必要なのは、実在する当社SIP到達先、媒体到達先、提供元全VoIP送信元の許可と双方向経路である。マニュアルのUDP5060/10000–20000は先方の送信元条件であり、当社媒体受信範囲10000–10100と混同しない。REGISTER・keepaliveによる既存NATだけを採用根拠としない。
 
 本番の次判断は、先方の標準社内テスト案内を受領後、既存承認経路で実現可能かを当社が照合する。成立しなければ、当社管理PBXの配置・接続口、費用、届出差分を具体案としてownerへ示す。新規費用・公開設定変更・実回線接続の指示前には適用しない。先方へ当社都合のNAT保証・代替経路構築を求めない。
@@ -165,3 +167,18 @@ PDCA：前回は方針の語調修正にとどまり、技術正本と出力TXT�
 結果はPhone既存作業記録の `maintenance_current_20261022.carrier_standard_local_20261029`、Git外 `carrier-standard-local-20261029/voice-r4.log`・`fax-r1.log`。source検査・独立review・main統合の最終SHAは同記録へ分けて記録する。
 
 PDCA：初回cold buildは依存downloadとcompileで600/1800秒の旧準備期限を超過し、通話処理前に停止した。実測compile stage1617.9秒と後続のFAX/font準備を根拠にbuild準備だけ2700秒へ変更した。SIP/媒体/業務の期限と合格条件は不変。完了済みbuild cacheを再利用した後のbootstrapはvoice49.910秒・FAX48.321秒であり、cold全体や本番性能の改善効果とはしない。所有UIDでの設定再生成、Contactの証拠範囲を修正して実通信を確認した。同じ成功入力のnative/Simulator試験は反復していない。
+
+
+### 6.3 2026-11-08 登録継続・再登録・再INVITE・relayなしの隔離結果
+
+既存 `scripts/test_phase1_sip_e2e.py --fixture carrier-lifecycle` を追加し、当社合成carrierと実Asterisk/SIPpだけで以下を回帰固定した。管理API・DBは既存sourceを使い、音声経路はcarrier ⇄ PBX ⇄ 社内端末とする。Kamailio/RTPengineは実containerを起動せず、端末をinternal bridgeへ配置し、生成済み端末設定からfixture内でのみoutbound proxyを除いてreloadする。通常production renderer・Composeは変更せず、通常構成にrelay依存が残るnegative検査も既存suiteへ固定した。これはrelayなしの実本番設定又は外線開通の完了ではない。
+
+- 登録用模擬registrar `10.254.250.10:5060/UDP` を生存させ、実DigestとPBXのcarrier口からのREGISTERを確認する。合成着信UACは同IPの`5062/UDP`を使う。先方の標準送信元5060を試験済みとせず、REGISTER成功をNAT越えの証拠にしない。
+- 初回認証済REGISTERを模擬registrarが受理したmonotonic時刻から、初回着信INVITEの送信packetまでを実測し、18.413秒で成立した。明示idle待機は12秒であり、観測区間にはcarrier SIP通信がないことをassertした。長時間idle・実providerの登録中ルーティング・NAT寿命は未確認である。
+- 実unregister後、旧bindingをinactiveとして模擬経路選択から拒否した。nativeの再登録commandが追加unregisterを行う実挙動も保持し、CSeq `10811 → 10813 → 10815 → 10817` の正REGISTER・expiry0・expiry0・新しい正REGISTERを確認した。再取得した有効Contact `0300000001@10.254.250.20:5060` が2回目INVITEの実送信先と対応する。新旧Contactのsocket値は同一であり、旧socketへのPBX着信拒否・資格失効の検証ではない。
+- 2つの着信dialogで、同Call-ID/From・To tagを保ったCSeq2の再INVITE、SDPのsession版1→2、200応答・ACK2とBYE3を確認した。初回ACK→再INVITEと再INVITEのACK→BYEの時間窓ごとに、carrier legと端末legの各双方向で75〜76の異なるPCMU RTP packetを実観測した。通話全体のrx/tx値だけを再INVITE前後の継続証拠としない。媒体転送先の変更、hold/resume、音質・長時間継続は本caseの対象外である。
+- carrier SIPは `10.254.250.10:5062 → 10.254.250.20:5060`、端末SIPは `10.254.251.20:5060 → 10.254.251.30:5060`。PBXがcarrier側と端末側で別dialogとそれぞれのSDP口を生成することを確認した。RTPはcarrier15000/端末16000とPBX10000–10100の間で送受信し、端末側SBC/媒体relayを通していないことを実socketと未起動serviceからassertした。relayなし構成の新しい実通信は着信2件であり、発信・FAXは10/29の既受入source/inputを再利用する。
+
+合格attemptはGit外 `carrier-resume-20261108/carrier-lifecycle-r4.log`、実行sourceのhashは同 `carrier-lifecycle-r4-inputs.log`。最終fixed SHA・canonical・独立review・main統合は既存作業記録へ追跡する。実Cloco株式会社様・Google/native・Simulator・既受入voice/FAXは再試験していない。telephony_enabled=falseを維持し、本番適用・公開設定変更・追加費用・実回線接続・追加メールは0件である。
+
+PDCA：初回はBackend rootの相対解決がworktree配置で不成立のため起動前に停止し、既存resolverが検証する明示rootへ修正した。r2はnative再登録の追加unregisterを総event3件というfixture想定で拒否し、r3はinbound専用packet tapがoutgoingを拾わない観測不備で停止した。両FAILを保全し、実event列・双方向tap・assert前のsanitized metadata保存へ修正した。製品runtime不具合とは扱わない。bootstrapはr2のcold準備276.145秒、r4のcache利用33.779秒であり、異なる準備条件の単発値である。継続的な速度・品質改善の効果は未計測。
