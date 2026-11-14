@@ -14,6 +14,8 @@ services:
     build: !reset null
     image: ${ANSHIN_PHONE_BACKEND_IMAGE:?set the fixed digest-pinned backend image}
     platform: linux/amd64
+    volumes:
+      - operations-events:/var/lib/anshin/operations
     environment:
       ANSHIN_PHONE_ENVIRONMENT: production
       ANSHIN_PHONE_NATIVE_AUTH_ENABLED: "true"
@@ -61,6 +63,7 @@ secrets:
     file: ${ANSHIN_PHONE_SECRET_DIR:?set absolute external secret directory}/internal_api_token
 
 volumes:
+  operations-events:
   postgres-data:
   fax-protected-storage:
 
