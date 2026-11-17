@@ -309,6 +309,8 @@ def credential_canary(runtime, public, work):
             '--cli-connect-timeout', '5', '--cli-read-timeout', '30', '--region', 'ap-northeast-1',
             '--profile', profile, service, *arguments], env=environment, timeout=60)
         return json.loads(value.stdout)
+    callers = {}
+    certificates = {}
     for data, product in (('db', 'postgresql'), ('fax', 'fax')):
         for purpose in ('writer', 'restore'):
             stem = 'phone-' + data + '-' + purpose
@@ -323,10 +325,23 @@ def credential_canary(runtime, public, work):
                 raise RuntimeFailure('phone_backup_update_certificate_pair_invalid')
             identity = aws(data, purpose, 'sts', 'get-caller-identity')
             prefix = 'arn:aws:sts::691862619128:assumed-role/anshin-prod-phone-' + product + '-backup-' + purpose + '/'
-            if identity.get('Account') != '691862619128' or not str(identity.get('Arn', '')).startswith(prefix):
+            observed = runtime.command(['openssl', 'x509', '-in', str(certificate), '-noout', '-serial', '-enddate'], timeout=10).stdout.splitlines()
+            fields = dict(line.split('=', 1) for line in observed)
+            serial = fields['serial']
+            try:
+                same_serial = int(str(identity.get('Arn', '')).rsplit('/', 1)[-1], 16) == int(serial, 16)
+            except ValueError:
+                same_serial = False
+            if identity.get('Account') != '691862619128' or not str(identity.get('Arn', '')).startswith(prefix) or not same_serial:
                 raise RuntimeFailure('phone_backup_update_role_canary_failed')
+            callers[data + '-' + purpose] = identity['Arn']
+            import ssl
+            from datetime import datetime, timezone
+            certificates[data + '-' + purpose] = {'serial': format(int(serial, 16), 'x'),
+                'expires_at': datetime.fromtimestamp(ssl.cert_time_to_seconds(fields['notAfter']), timezone.utc).isoformat(),
+                'sha256': hashlib.sha256(owned_bytes(certificate)).hexdigest()}
     if not (STATE / 'latest-success.json').exists():
-        return {'authenticated_roles': 4, 'retained_generation_read': False}
+        return {'authenticated_roles': 4, 'authenticated_callers': callers, 'certificates': certificates, 'retained_generation_read': False}
     latest = latest_backup()
     manifest = work / 'retained-manifest.json'
     fetched = aws('db', 'restore', 's3api', 'get-object', '--expected-bucket-owner', '691862619128',
@@ -345,7 +360,7 @@ def credential_canary(runtime, public, work):
             if (value.get('VersionId') != version or value.get('ChecksumSHA256') != checksum
                     or value.get('ServerSideEncryption') != 'AES256'):
                 raise RuntimeFailure('phone_backup_update_generation_canary_failed')
-    return {'authenticated_roles': 4, 'retained_generation_read': True}
+    return {'authenticated_roles': 4, 'authenticated_callers': callers, 'certificates': certificates, 'retained_generation_read': True}
 
 
 def restore_schedule(runtime, schedule):
@@ -360,7 +375,7 @@ def restore_schedule(runtime, schedule):
             raise RuntimeFailure('phone_backup_update_schedule_readback_failed')
 
 
-def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime):
+def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime, acceptance=None):
     """Update a qualified installation under its existing lock and preimages."""
     import base64
     if not isinstance(assets, dict) or not assets or installation_state(assets, runtime=runtime) != expected:
@@ -430,9 +445,12 @@ def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime)
                     raise RuntimeFailure('phone_backup_update_readback_failed')
             runtime.health(runtime.profile())
         restore_schedule(runtime, schedule)
-        return {'status': 'installed', 'updated': True, 'source_sha': source_sha, 'infra_sha': infra_sha, 'canary': canary}
+        accepted = acceptance(canary) if acceptance is not None else None
+        return {'status': 'installed', 'updated': True, 'source_sha': source_sha, 'infra_sha': infra_sha,
+                'canary': canary, **({'acceptance': accepted} if acceptance is not None else {})}
     except BaseException as error:
-        if str(error) == 'phone_command_children_unknown' or stopped and not locked:
+        if str(error) in {'phone_command_children_unknown', 'phone_restore_cleanup_unconfirmed',
+                          'phone_backup_update_cleanup_unconfirmed'} or stopped and not locked:
             safe_cleanup = False
         if stopped and safe_cleanup:
             try:
@@ -466,6 +484,176 @@ def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime)
         raise
     finally:
         if safe_cleanup: shutil.rmtree(work)
+
+
+LEAF_KEYS = {f'phone-{data}-{purpose}-{kind}.pem'
+    for data in ('db', 'fax') for purpose in ('writer', 'restore') for kind in ('certificate', 'private-key')}
+
+
+def _key_metadata_locked(assets, runtime):
+    runtime.health(runtime.profile())
+    isolation = STATE / 'isolation'
+    unknown = (os.path.lexists(RESTORE_INPUT) or isolation.is_symlink()
+        or isolation.exists() and (not isolation.is_dir() or any(isolation.iterdir()))
+        or any(STATE.glob('*.attention-required')))
+    return {'public': backup_public(read_profile(CONFIG)['public']),
+            'installation': installation_state(assets, runtime=runtime), 'unknown_references': bool(unknown)}
+
+
+def key_metadata(assets, *, runtime):
+    """Current public pins and the existing owner's preimages, never key bytes."""
+    with runtime.exclusive():
+        return _key_metadata_locked(assets, runtime)
+
+
+def _leaf_material(material, names):
+    import base64
+    if not isinstance(material, dict) or set(material) != {'public', 'keys'} or set(material['keys']) != names:
+        raise RuntimeFailure('phone_key_material_scope_invalid')
+    public = backup_public(material['public'])
+    try:
+        decoded = {name: base64.b64decode(value, validate=True) for name, value in material['keys'].items()}
+    except (ValueError, TypeError):
+        raise RuntimeFailure('phone_key_material_invalid') from None
+    if any(not body or len(body) > 16384 for body in decoded.values()):
+        raise RuntimeFailure('phone_key_material_invalid')
+    return public, decoded
+
+
+def _key_snapshot(public, decoded, assets, canary, runtime):
+    with runtime.exclusive():
+        metadata = _key_metadata_locked(assets, runtime)
+        if metadata['public'] != public:
+            raise RuntimeFailure('phone_key_public_preimage_changed')
+        pairs = {}
+        for data in ('db', 'fax'):
+            for purpose in ('writer', 'restore'):
+                stem = f'phone-{data}-{purpose}'
+                certificate = decoded[stem + '-certificate.pem']
+                private = decoded[stem + '-private-key.pem']
+                if purpose == 'writer' and (owned_bytes(KEYS / (stem + '-certificate.pem')) != certificate
+                        or owned_bytes(KEYS / (stem + '-private-key.pem')) != private):
+                    raise RuntimeFailure('phone_key_live_pair_changed')
+                observed = canary['certificates'][data + '-' + purpose]
+                caller = canary['authenticated_callers'][data + '-' + purpose]
+                if (int(caller.rsplit('/', 1)[-1], 16) != int(observed['serial'], 16)
+                        or observed['sha256'] != hashlib.sha256(certificate).hexdigest()):
+                    raise RuntimeFailure('phone_key_serial_readback_failed')
+                cid = 'anshin.production.phone.' + data + '-backup-' + purpose + '-'
+                pairs[data + '-' + purpose] = {
+                    'versions': {cid + kind: public['credential_versions'][cid + kind]
+                                 for kind in ('certificate', 'private-key')},
+                    'certificate': observed,
+                    'sha256': {'certificate': observed['sha256'], 'private_key': hashlib.sha256(private).hexdigest()}}
+        return {**metadata, 'pairs': pairs, 'callers': canary['authenticated_callers'], 'health': 'healthy'}
+
+
+def observe_keys(material, *, assets, runtime=None):
+    runtime = runtime or Runtime()
+    public, decoded = _leaf_material(material, LEAF_KEYS)
+    work = Path(tempfile.mkdtemp(prefix='anshin-phone-key-canary-', dir='/run'))
+    preserve = False
+    try:
+        for name, body in decoded.items(): write_private(work / name, body)
+        with runtime.exclusive():
+            runtime.health(runtime.profile())
+            if read_profile(CONFIG)['public'] != public:
+                raise RuntimeFailure('phone_key_public_preimage_changed')
+            canary = credential_canary(runtime, public, work)
+        # The second read takes the existing lock and detects an intervening
+        # release; a result is published only for the same fixed numeric pins.
+        return _key_snapshot(public, decoded, assets, canary, runtime)
+    except BaseException as error:
+        preserve = str(error) == 'phone_command_children_unknown'
+        if preserve: error.retained_private_configuration = str(work)
+        raise
+    finally:
+        if not preserve: shutil.rmtree(work)
+
+
+def rotate_keys(material, *, assets, expected, runtime=None, capture=None, recover_only=False,
+                source_versions=None, source_sha256=None):
+    """Keep the current producer source; extend its one compensation owner."""
+    import base64
+    runtime = runtime or Runtime()
+    capture = capture or (lambda: scheduled_backup(runtime=runtime))
+    public, decoded = _leaf_material(material, LEAF_KEYS | {'phone-age-identity.txt', 'phone-fax-storage-key.hex'})
+    current = read_profile(CONFIG)
+    retained_assets = {name: owned_bytes(INSTALL / name) for name in assets}
+    producer_keys = {name: (decoded[name] if '-writer-' in name else owned_bytes(KEYS / name))
+                     for name in PRODUCER_KEYS}
+    update_material = {'public': public, 'keys': {name: base64.b64encode(body).decode()
+        for name, body in {**producer_keys, **{name: decoded[name] for name in LEAF_KEYS if '-restore-' in name}}.items()}}
+    restore_material = {'public': public, 'keys': {name: base64.b64encode(decoded[name]).decode() for name in RESTORE_KEYS}}
+
+    def accept(canary):
+        wanted_writer = canary['authenticated_callers']['db-writer']
+        wanted_restore = canary['authenticated_callers']['db-restore']
+        backup = latest_backup() if (STATE / 'latest-success.json').exists() else {}
+        receipt = STATE / ('restore-' + backup.get('artifact_sha256', 'none') + '.json')
+        prior = json.loads(owned_bytes(receipt)) if receipt.exists() else None
+        if (backup.get('caller_arn') != wanted_writer
+                or prior is not None and prior.get('caller_arn') != wanted_restore):
+            if recover_only: raise RuntimeFailure('phone_key_terminal_unconfirmed')
+            capture()
+            backup = latest_backup()
+            receipt = STATE / ('restore-' + backup['artifact_sha256'] + '.json')
+        if not receipt.exists():
+            if recover_only: raise RuntimeFailure('phone_key_terminal_unconfirmed')
+            restore_backup(restore_material, runtime=runtime)
+        restored = json.loads(owned_bytes(receipt))
+        fields = ('artifact_key', 'artifact_version_id', 'artifact_sha256', 'manifest_key',
+                  'manifest_version_id', 'manifest_sha256', 'source_fixed_sha', 'production_runtime_sha256')
+        assertion = restored.get('assertion', {})
+        if (backup.get('status') != 'success' or restored.get('status') != 'success'
+                or restored.get('mode') != 'isolated-drill'
+                or backup.get('caller_arn') != wanted_writer or restored.get('caller_arn') != wanted_restore
+                or any(not backup.get(k) or backup[k] != restored.get(k) for k in fields)
+                or assertion.get('status') != 'ok' or assertion.get('application_read_only_smoke') is not True
+                or assertion.get('representative_table') != 'public.phone_numbers'
+                or assertion.get('migration_head') != backup['phone_schema']['migration_head']
+                or assertion.get('table_count') != backup['phone_schema']['table_count']):
+            raise RuntimeFailure('phone_key_business_acceptance_failed')
+        return {'status': 'success', 'backup': backup, 'restore': restored, 'fax_verified': True,
+                'snapshot': _key_snapshot(public, decoded, retained_assets, canary, runtime)}
+
+    if current['public'] == public:
+        if any(owned_bytes(KEYS / name) != decoded[name]
+               for name in LEAF_KEYS if '-writer-' in name):
+            raise RuntimeFailure('phone_backup_update_preimage_changed')
+        # The updated profile and writer bytes legitimately differ from the
+        # original preimage. Reconstruct that preimage with the exact old SM
+        # pins/hashes supplied by this same request, preserving every other
+        # installed input. Source or configuration drift is never recovered as
+        # a successful key operation.
+        import copy
+        leaf_ids = {key for key in CREDENTIAL_IDS if '-backup-' in key}
+        writers = {name for name in LEAF_KEYS if '-writer-' in name}
+        if (not isinstance(source_versions, dict) or set(source_versions) != leaf_ids
+                or any(type(version) is not int or version < 1 for version in source_versions.values())
+                or not isinstance(source_sha256, dict) or set(source_sha256) != writers
+                or any(not re.fullmatch('[a-f0-9]{64}', str(value)) for value in source_sha256.values())):
+            raise RuntimeFailure('phone_key_recovery_preimage_required')
+        before = copy.deepcopy(current)
+        before['public']['credential_versions'].update(source_versions)
+        inputs = {'profile': hashlib.sha256((json.dumps(before, sort_keys=True) + '\n').encode()).hexdigest(),
+                  'aws': hashlib.sha256(owned_bytes(AWS_CONFIG)).hexdigest()}
+        inputs.update({name: source_sha256[name] if name in writers else
+            hashlib.sha256(owned_bytes(KEYS / name)).hexdigest() for name in sorted(PRODUCER_KEYS)})
+        observed = installation_state(retained_assets, runtime=runtime)
+        observed['profile_sha256'] = fingerprint(inputs)
+        if observed != expected:
+            raise RuntimeFailure('phone_backup_update_preimage_changed')
+        # A lost terminal response can only reuse the exact current candidate
+        # and its existing native backup/restore evidence, never a new key.
+        observed = observe_keys({'public': public, 'keys': {name: material['keys'][name] for name in LEAF_KEYS}},
+                                assets=retained_assets, runtime=runtime)
+        return accept({'authenticated_callers': observed['callers'],
+                       'certificates': {name: pair['certificate'] for name, pair in observed['pairs'].items()}})
+    if recover_only: raise RuntimeFailure('phone_key_terminal_unconfirmed')
+    result = update_backup(update_material, assets=retained_assets, expected=expected,
+        source_sha=current['governance_sha'], infra_sha=current['infra_sha'], runtime=runtime, acceptance=accept)
+    return result['acceptance']
 
 
 def backup_status(*, runtime=None, assets=None):

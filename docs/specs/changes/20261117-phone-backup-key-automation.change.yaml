@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "change_id": "phone-backup-key-automation-20261117",
+  "title": "Phone DB/FAX鍵を中央CAと限定取得cronで自動更新",
+  "owner": "anshin-phone-infra",
+  "status": "review",
+  "risk_level": "critical",
+  "production_change": true,
+  "spec_ids": [
+    "anshin.security.external-credential-management",
+    "anshin.phone.production-and-softphone-preparation",
+    "anshin.release.contract"
+  ],
+  "repositories": [
+    "anshin",
+    "anshin-phone-infra"
+  ],
+  "code_paths": [
+    "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py",
+    "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md"
+  ],
+  "contract_paths": [
+    "anshin/documents/specs/changes/20261117-secret-key-remaining-automation.change.yaml",
+    "anshin-phone-infra/docs/specs/changes/20261117-phone-backup-key-automation.change.yaml"
+  ],
+  "generated_artifacts": [],
+  "test_paths": [
+    "anshin/tests/test_release_ms_a2_transport.py",
+    "anshin/tests/test_external_credential_management.py",
+    "anshin-phone-infra/scripts/test_phase1_render_config.py"
+  ],
+  "invariants": [
+    "本人call_1433635446b7497cbe33122ef1b6339d/item0承認。中央CA発行/Phone限定SA取得、旧SM2はA7日後以降・旧SM1/CA/age/manifest/FAX原本鍵は保全",
+    "既存producer source/asset/業務権限/backupとretention timerを維持し、既存update補償内へ実受入callbackを接続",
+    "実4role証明書serial、fixedversion、freshDB/FAX backup同世代restore/read-only/FAX検証、unknownchildren/responseは同候補照合",
+    "新SSH/key/user/sudo/authority/receipt/journalなし。通常release/rollbackは現用pinを維持"
+  ],
+  "acceptance_criteria": [
+    "既存fixtureでcallback失敗補償・source維持・同一結果再取得・中断とdrift拒否・全4serialを回帰へ固定",
+    "正規canonicalとfixedSHA独立review後にmain統合・既存DEPLOYを実行し、実発行/切替/backup/隔離restore/5分cronを受入する"
+  ],
+  "out_of_scope": [
+    "実電話/実FAX/実push/新契約",
+    "CA/原本暗号鍵の再発行・未追跡世代の整理"
+  ],
+  "rollout": {
+    "strategy": "existing-owner-central-issue-phone-pull",
+    "steps": [
+      "規定§19と源流/consumer同期",
+      "source qualification/review/guarded main",
+      "限定SA初期登録とPhoneobserve-onlyからcron配備",
+      "中央発行・Phone切替と実受入・A保持"
+    ],
+    "triggers": [
+      "本人承認call_1433635446b7497cbe33122ef1b6339d/item0"
+    ]
+  },
+  "rollback": {
+    "strategy": "existing-exact-preimage-compensation",
+    "steps": [
+      "既知失敗は既存ownerが鍵/設定/scheduleをexactpreimageへ戻す",
+      "成否不明はcandidate/入力と元先両世代を保持してInfo診断",
+      "source切戻しで現用資格を初期versionへ戻さない"
+    ],
+    "triggers": [
+      "認証/backup/restore/health失敗",
+      "drift又はunknownchildren"
+    ]
+  },
+  "monitoring": {
+    "owner": "anshin",
+    "signals": [
+      "中央既存cron/Info・Phone限定cronheartbeat",
+      "4pair実STS/既存backup/restore結果・A保持"
+    ],
+    "observation_period": "初回実受入を確認。以後5分取得と既存中央毎時/06JSTへ接続。将来A整理成功を先行記録しない。"
+  },
+  "concurrency": {
+    "strategy": "isolated-worktree",
+    "branches": {
+      "anshin-phone-infra": "codex/secret-key-remaining-automation-20261117"
+    },
+    "base_commits": {
+      "anshin-phone-infra": "456423bbfbe836578bb12184cfcaa6b5b4d31696"
+    },
+    "owned_paths": [
+      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/docs/specs/changes/20261117-phone-backup-key-automation.change.yaml"
+    ],
+    "pre_edit_blob_ids": {
+      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py": "77c2104d8c342064ad4899fa0037d01b509fd60b",
+      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "8139e6fad1711c87e0fd4f7b70c5ae2155d6c3ed",
+      "anshin-phone-infra/docs/specs/changes/20261117-phone-backup-key-automation.change.yaml": null
+    },
+    "integration_order": [
+      "Phone source/spec/既存fixture canonicalとfixedSHA review",
+      "guarded main統合後に中央source/限定cronを配備",
+      "Phone実切替と同世代DB/FAX受入、中央acceptとA保持"
+    ]
+  }
+}

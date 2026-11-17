@@ -12,6 +12,7 @@ authority: reference
 status: draft
 risk_level: high
 source_doc_ids:
+  - anshin.security.external-credential-management
   - anshin.corporate.anshin-phone.foundation-development-instructions
   - anshin.corporate.anshin-phone.notification-status
   - anshin.infrastructure.system-architecture
@@ -22,7 +23,7 @@ source_doc_ids:
   - anshin.release.impact-gate
 consumers: [anshin-phone-infra, anshin-phone-backend, anshin-frontend-monorepo]
 code_paths: [scripts/phone_postgresql_backup_adapter.py, scripts/production_runtime.py, compose.production.yaml]
-contract_paths: [docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml, docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml, docs/specs/changes/2026-10-22-own-call-history.change.yaml]
+contract_paths: [docs/specs/changes/20261117-phone-backup-key-automation.change.yaml, docs/specs/changes/2026-10-29-cloco-provider-alignment.change.yaml, docs/specs/changes/2026-10-13-phone-preparation-navigation.change.yaml, docs/specs/changes/2026-10-17-phone-vm-native-architecture-sync.change.yaml, docs/specs/changes/2026-10-20-filing-acceptance-cloco-intake.change.yaml, docs/specs/changes/2026-10-21-phone-backup-maintenance.change.yaml, docs/specs/changes/2026-10-21-phone-backup-deploy-transition.change.yaml, docs/specs/changes/2026-10-21-phone-softphone-internal.change.yaml, docs/specs/changes/2026-10-22-own-call-history.change.yaml]
 test_paths: [scripts/build_check.sh]
 last_reviewed: "2026-10-29"
 review_interval_days: 30
@@ -33,15 +34,15 @@ sensitivity: internal
 
 ## 専門用語一覧
 
-| 用語 | 意味・本書での扱い |
-| --- | --- |
-| LXD VM | LXD Virtual Machine。Core/Authから分離するPhone専用仮想マシン |
-| SHA | Git Commit SHA。source・検証・統合を識別する固定commit |
-| SIP / RTP | Session Initiation Protocol / Real-time Transport Protocol。端末登録・通話制御と音声伝送 |
-| SDK | Software Development Kit。通話機能を組み込む開発library |
-| GPL / AGPL | GNU General Public License / GNU Affero General Public License。componentごとに適用条件を確認するOSS license |
-| Push | バックグラウンド着信等の通知。実機と実providerの確認を模擬試験で代替しない |
-| Release Plan | 既存release規程が定める機械可読入力。本書の作業計画とは区別する |
+| 用語 | 正式名称・読み方 | 意味・本書での扱い |
+| --- | --- | --- |
+| LXD VM | LXD Virtual Machine | Core/Authから分離するPhone専用仮想マシン |
+| SHA | Secure Hash Algorithm | source・検証・統合を識別するGit固定commit |
+| SIP / RTP | Session Initiation Protocol / Real-time Transport Protocol | 端末登録・通話制御と音声伝送 |
+| SDK | Software Development Kit | 通話機能を組み込む開発library |
+| GPL / AGPL | GNU General Public License / GNU Affero General Public License | componentごとに適用条件を確認するOSS license |
+| Push | プッシュ通知 | バックグラウンド着信等の通知。実機と実providerの確認を模擬試験で代替しない |
+| Release Plan | リリースプラン | 既存release規程が定める機械可読入力。本書の作業計画とは区別する |
 
 ## 位置付け
 
@@ -264,3 +265,7 @@ Authのpublic clientは`anshin-phone-mobile`、package/bundleは`care.anshin.pho
 接続経路・未採用の本番口・Mac内試験の区別は `anshin.phone.cloco-sip-trunk-interface` §6.1を参照する。今回は管理API/DB・本番runtime・公開設定・実資格・実回線を変更しない。提供元向けの追加メールは送らない。Task専用bridge上でcarrier→Asterisk直接、端末側だけKamailio/RTPengineという構成を検証する。既存 `scripts/test_phase1_sip_e2e.py --fixture voice` とFAX fixtureを再利用する。source検査と実packet/音声の結果は既存Phone作業記録へ記載し、模擬結果を実回線合格へ読み替えない。
 
 Mac内のvoice/FAX隔離受入は技術仕様§6.2の固定版でexit0。REGISTER/Digest、Contact、To/Alert-Info、TEL/FAX別From、PCMU、原本/履歴/ACKと終了処理を確認した。実回線・本番公開設定・費用・FAX提供条件・契約容量の確認へ読み替えない。既存firewall rendererの旧端末側設定を、新しいcarrier口の許可設定として適用しない。
+
+## Phone backup鍵の無人更新
+
+DB/FAX writer/restoreの4pairは、Secret Key管理規定（`anshin.security.external-credential-management`）§19の中央発行・Phone限定取得cronへ接続する。鍵更新では配置済みproducer sourceと原本用鍵を維持し、既存update ownerの補償範囲で実backup・同世代隔離restore・全4role認証を受入する。通常のsource/image配備も現用の数値pinを保持し、初期SMや旧資格を再配置しない。実配備と受入は既存Task証跡で確認し、計画の記載だけで完了としない。
