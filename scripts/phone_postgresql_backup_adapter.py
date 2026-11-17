@@ -590,6 +590,10 @@ def rotate_keys(material, *, assets, expected, runtime=None, capture=None, recov
         wanted_writer = canary['authenticated_callers']['db-writer']
         wanted_restore = canary['authenticated_callers']['db-restore']
         backup = latest_backup() if (STATE / 'latest-success.json').exists() else {}
+        fields = ('artifact_key', 'artifact_version_id', 'artifact_sha256', 'manifest_key',
+                  'manifest_version_id', 'manifest_sha256', 'source_fixed_sha', 'production_runtime_sha256')
+        if recover_only and (backup.get('status') != 'success' or any(not backup.get(k) for k in fields)):
+            raise RuntimeFailure('phone_key_terminal_unconfirmed')
         receipt = STATE / ('restore-' + backup.get('artifact_sha256', 'none') + '.json')
         prior = json.loads(owned_bytes(receipt)) if receipt.exists() else None
         if (backup.get('caller_arn') != wanted_writer
@@ -599,11 +603,11 @@ def rotate_keys(material, *, assets, expected, runtime=None, capture=None, recov
             backup = latest_backup()
             receipt = STATE / ('restore-' + backup['artifact_sha256'] + '.json')
         if not receipt.exists():
-            if recover_only: raise RuntimeFailure('phone_key_terminal_unconfirmed')
+            # An ordinary backup may advance latest-success after the key
+            # acceptance response was lost. Reuse its candidate writer and
+            # existing restore owner without capturing another generation.
             restore_backup(restore_material, runtime=runtime)
         restored = json.loads(owned_bytes(receipt))
-        fields = ('artifact_key', 'artifact_version_id', 'artifact_sha256', 'manifest_key',
-                  'manifest_version_id', 'manifest_sha256', 'source_fixed_sha', 'production_runtime_sha256')
         assertion = restored.get('assertion', {})
         if (backup.get('status') != 'success' or restored.get('status') != 'success'
                 or restored.get('mode') != 'isolated-drill'
@@ -644,10 +648,12 @@ def rotate_keys(material, *, assets, expected, runtime=None, capture=None, recov
         observed['profile_sha256'] = fingerprint(inputs)
         if observed != expected:
             raise RuntimeFailure('phone_backup_update_preimage_changed')
-        # A lost terminal response can only reuse the exact current candidate
-        # and its existing native backup/restore evidence, never a new key.
+        # A lost terminal response reuses the exact current candidate and
+        # latest candidate-writer generation, never a new key or capture.
         observed = observe_keys({'public': public, 'keys': {name: material['keys'][name] for name in LEAF_KEYS}},
                                 assets=retained_assets, runtime=runtime)
+        if observed['unknown_references']:
+            raise RuntimeFailure('phone_key_unknown_references')
         return accept({'authenticated_callers': observed['callers'],
                        'certificates': {name: pair['certificate'] for name, pair in observed['pairs'].items()}})
     if recover_only: raise RuntimeFailure('phone_key_terminal_unconfirmed')
