@@ -37,7 +37,8 @@
   ],
   "acceptance_criteria": [
     "既存fixtureでcallback失敗補償・source維持・同一結果再取得・中断とdrift拒否・全4serialを回帰へ固定",
-    "正規canonicalとfixedSHA独立review後にmain統合・既存DEPLOYを実行し、実発行/切替/backup/隔離restore/5分cronを受入する"
+    "正規canonicalとfixedSHA独立review後にmain統合・既存DEPLOYを実行し、実発行/切替/backup/隔離restore/5分cronを受入する",
+    "現用の残1〜13日証明書は実opensslと全4STS/serialで観測・更新可能とし、新候補の残14日条件と期限切れ拒否は維持する"
   ],
   "out_of_scope": [
     "実電話/実FAX/実push/新契約",
@@ -78,20 +79,20 @@
   "concurrency": {
     "strategy": "isolated-worktree",
     "branches": {
-      "anshin-phone-infra": "codex/secret-key-remaining-automation-20261117"
+      "anshin-phone-infra": "codex/secret-key-remaining-automation-20261117-phone-validity"
     },
     "base_commits": {
-      "anshin-phone-infra": "456423bbfbe836578bb12184cfcaa6b5b4d31696"
+      "anshin-phone-infra": "db14f4dc8ef98518aaaacdee1d037d282303d92f"
     },
     "owned_paths": [
       "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py",
-      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py",
       "anshin-phone-infra/docs/specs/changes/20261117-phone-backup-key-automation.change.yaml"
     ],
     "pre_edit_blob_ids": {
-      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py": "77c2104d8c342064ad4899fa0037d01b509fd60b",
-      "anshin-phone-infra/docs/plans/telephony-platform/production-and-softphone-preparation.md": "8139e6fad1711c87e0fd4f7b70c5ae2155d6c3ed",
-      "anshin-phone-infra/docs/specs/changes/20261117-phone-backup-key-automation.change.yaml": null
+      "anshin-phone-infra/scripts/phone_postgresql_backup_adapter.py": "106a33a1f7e7b11f80f4ce9e2b20062564194fe4",
+      "anshin-phone-infra/scripts/test_phase1_render_config.py": "aa96f8fd3e2d7e155cc632145dbccc3aeda1512f",
+      "anshin-phone-infra/docs/specs/changes/20261117-phone-backup-key-automation.change.yaml": "472b696e380018297b3f86605df3c24a6a66fee1"
     },
     "integration_order": [
       "Phone source/spec/既存fixture canonicalとfixedSHA review",

@@ -296,7 +296,7 @@ def replace_known(path, before, after, mode):
         temporary.unlink(missing_ok=True)
 
 
-def credential_canary(runtime, public, work):
+def credential_canary(runtime, public, work, *, minimum_validity_days=14):
     """Authenticate all four fixed roles and read the retained exact generation."""
     configuration = work / 'aws-config'
     write_private(configuration, aws_profiles(public, writer_root=work, restore_root=work))
@@ -315,7 +315,7 @@ def credential_canary(runtime, public, work):
         for purpose in ('writer', 'restore'):
             stem = 'phone-' + data + '-' + purpose
             certificate, private = work / (stem + '-certificate.pem'), work / (stem + '-private-key.pem')
-            runtime.command(['openssl', 'x509', '-in', str(certificate), '-noout', '-checkend', str(14 * 86400)], timeout=10)
+            runtime.command(['openssl', 'x509', '-in', str(certificate), '-noout', '-checkend', str(minimum_validity_days * 86400)], timeout=10)
             subject = runtime.command(['openssl', 'x509', '-in', str(certificate), '-noout', '-subject', '-nameopt', 'RFC2253'], timeout=10).stdout.strip()
             if subject.removeprefix('subject=').strip() != 'CN=anshin-prod-ms-a2-1-phone-' + product + '-backup-' + purpose:
                 raise RuntimeFailure('phone_backup_update_certificate_subject_invalid')
@@ -559,7 +559,9 @@ def observe_keys(material, *, assets, runtime=None):
             runtime.health(runtime.profile())
             if read_profile(CONFIG)['public'] != public:
                 raise RuntimeFailure('phone_key_public_preimage_changed')
-            canary = credential_canary(runtime, public, work)
+            # Still-valid current leaves must remain observable inside the
+            # renewal window; new update candidates keep the 14-day default.
+            canary = credential_canary(runtime, public, work, minimum_validity_days=0)
         # The second read takes the existing lock and detects an intervening
         # release; a result is published only for the same fixed numeric pins.
         return _key_snapshot(public, decoded, assets, canary, runtime)

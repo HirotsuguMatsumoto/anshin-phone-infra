@@ -600,6 +600,117 @@ class PhoneBackupAdapterTest(unittest.TestCase):
             yield SimpleNamespace(owner=owner,runtime=runtime,expected=expected,material=material,assets=new_assets,old_assets=assets,
                                   snapshots=snapshots,root=root,original_schedule=copy.deepcopy(runtime.schedule))
 
+    def certificate_pairs(self, days, *, serial_start):
+        from datetime import datetime, timedelta, timezone
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        from cryptography.x509.oid import NameOID
+        private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        now = datetime.now(timezone.utc)
+        pairs = {}
+        for index, (data, role) in enumerate((('db','writer'), ('db','restore'), ('fax','writer'), ('fax','restore'))):
+            product = 'postgresql' if data == 'db' else 'fax'
+            name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,
+                'anshin-prod-ms-a2-1-phone-'+product+'-backup-'+role)])
+            certificate = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+                .public_key(private.public_key()).serial_number(serial_start+index)
+                .not_valid_before(now-timedelta(days=2)).not_valid_after(now+timedelta(days=days))
+                .sign(private, hashes.SHA256()))
+            stem = 'phone-'+data+'-'+role
+            pairs[stem+'-certificate.pem'] = certificate.public_bytes(serialization.Encoding.PEM)
+            pairs[stem+'-private-key.pem'] = private.private_bytes(serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8, serialization.NoEncryption())
+        return pairs
+
+    @contextmanager
+    def certificate_runtime_fixture(self, current_days):
+        import base64, json, subprocess
+        from cryptography import x509
+        with self.backup_update_fixture() as f, ExitStack() as stack:
+            stack.enter_context(patch.object(f.owner, 'RESTORE_INPUT', f.root/'restore-input'))
+            public = f.owner.read_profile(f.owner.CONFIG)['public']
+            f.owner.replace_known(f.owner.AWS_CONFIG, f.owner.owned_bytes(f.owner.AWS_CONFIG),
+                f.owner.aws_profiles(public), 0o600)
+            pairs = self.certificate_pairs(current_days, serial_start=1)
+            for name, body in pairs.items():
+                if '-writer-' in name:
+                    f.owner.replace_known(f.owner.KEYS/name, f.owner.owned_bytes(f.owner.KEYS/name), body, 0o600)
+            f.current = {'public': public, 'keys': {name:base64.b64encode(body).decode() for name,body in pairs.items()}}
+            f.snapshots = {path:path.read_bytes() for path in f.root.rglob('*') if path.is_file()}
+            f.expected = f.owner.installation_state(f.old_assets, runtime=f.runtime)
+            original = f.runtime.command
+            f.authenticated = []
+            f.runtime.environment = lambda profile: {}
+            def command(argv, **kwargs):
+                if argv[0] == 'openssl':
+                    result = subprocess.run(argv, capture_output=True, text=True, timeout=10)
+                    if result.returncode:
+                        raise f.owner.RuntimeFailure('phone_command_failed_consumer_failure_exit_'+str(result.returncode))
+                    return result
+                if argv[0] == str(f.owner.INSTALL/'tools/aws'):
+                    profile = argv[argv.index('--profile')+1]
+                    data = 'fax' if '-fax-' in profile else 'db'
+                    role = 'restore' if profile.endswith('restore') else 'writer'
+                    work = Path(kwargs['env']['AWS_CONFIG_FILE']).parent
+                    certificate = x509.load_pem_x509_certificate((work/('phone-'+data+'-'+role+'-certificate.pem')).read_bytes())
+                    product = 'postgresql' if data == 'db' else 'fax'
+                    f.authenticated.append(data+'-'+role)
+                    return subprocess.CompletedProcess(argv, 0, json.dumps({'Account':'691862619128',
+                        'Arn':'arn:aws:sts::691862619128:assumed-role/anshin-prod-phone-'+product+'-backup-'+role+'/'+format(certificate.serial_number,'x')}), '')
+                return original(argv, **kwargs)
+            stack.enter_context(patch.object(f.runtime, 'command', side_effect=command))
+            yield f
+
+    def test_short_current_certificates_observe_and_renew_through_real_openssl(self):
+        import base64
+        for days in (1, 13):
+            with self.subTest(days=days), self.certificate_runtime_fixture(days) as f:
+                observed = f.owner.observe_keys(f.current, assets=f.old_assets, runtime=f.runtime)
+                self.assertEqual({'db-writer','db-restore','fax-writer','fax-restore'}, set(observed['callers']))
+                self.assertEqual({'1','2','3','4'}, {value['certificate']['serial'] for value in observed['pairs'].values()})
+                self.assertEqual(f.current['public'], observed['public'])
+                candidate = {'public':f.material['public'], 'keys':dict(f.material['keys'])}
+                renewed = self.certificate_pairs(90, serial_start=101)
+                candidate['keys'].update({name:base64.b64encode(body).decode() for name,body in renewed.items()})
+                result = f.owner.update_backup(candidate, assets=f.old_assets, expected=f.expected,
+                    source_sha='b'*40, infra_sha='c'*40, runtime=f.runtime)
+                self.assertTrue(result['updated'])
+                self.assertEqual(4, result['canary']['authenticated_roles'])
+                current = {'public':candidate['public'], 'keys':{name:candidate['keys'][name] for name in f.owner.LEAF_KEYS}}
+                observed = f.owner.observe_keys(current, assets=f.old_assets, runtime=f.runtime)
+                self.assertEqual(candidate['public'], observed['public'])
+                self.assertEqual({'65','66','67','68'}, {value['certificate']['serial'] for value in observed['pairs'].values()})
+                self.assertEqual(f.original_schedule, f.runtime.schedule)
+                for name, body in f.old_assets.items(): self.assertEqual(body, (f.owner.INSTALL/name).read_bytes())
+                self.assertEqual([], list((f.root/'work').iterdir()))
+
+    def test_short_candidate_certificates_fail_before_install_through_real_openssl(self):
+        import base64
+        for days in (1, 13):
+            with self.subTest(days=days), self.certificate_runtime_fixture(90) as f:
+                candidate = {'public':f.material['public'], 'keys':dict(f.material['keys'])}
+                candidate['keys'].update({name:base64.b64encode(body).decode()
+                    for name,body in self.certificate_pairs(days, serial_start=101).items()})
+                with patch.object(f.owner, 'replace_known', wraps=f.owner.replace_known) as replace:
+                    with self.assertRaisesRegex(f.owner.RuntimeFailure, '^phone_command_failed_consumer_failure_exit_1$'):
+                        f.owner.update_backup(candidate, assets=f.old_assets, expected=f.expected,
+                            source_sha='b'*40, infra_sha='c'*40, runtime=f.runtime)
+                    replace.assert_not_called()
+                self.assertEqual([], f.authenticated)
+                for path, body in f.snapshots.items(): self.assertEqual(body, path.read_bytes())
+                self.assertEqual(f.original_schedule, f.runtime.schedule)
+                self.assertEqual([], list((f.root/'work').iterdir()))
+
+    def test_expired_current_certificates_fail_observation_through_real_openssl(self):
+        with self.certificate_runtime_fixture(-1) as f:
+            with self.assertRaisesRegex(f.owner.RuntimeFailure, '^phone_command_failed_consumer_failure_exit_1$'):
+                f.owner.observe_keys(f.current, assets=f.old_assets, runtime=f.runtime)
+            self.assertEqual([], f.authenticated)
+            for path, body in f.snapshots.items(): self.assertEqual(body, path.read_bytes())
+            self.assertEqual(f.original_schedule, f.runtime.schedule)
+            self.assertEqual([], list((f.root/'work').iterdir()))
+
     def test_backup_update_switches_known_files_and_restarts_timers_after_unlock(self):
         with self.backup_update_fixture() as f, patch.object(f.owner,'credential_canary',return_value={'authenticated_roles':4}) as canary:
             value=f.owner.install_backup(f.material,source_sha='d'*40,infra_sha='e'*40,runtime=f.runtime,assets=f.assets,expected_installed=f.expected)
