@@ -26,6 +26,7 @@ INSTALL = Path('/opt/anshin-phone-backup')
 CONFIG = Path('/etc/anshin-phone/postgresql-backup-profile.json')
 KEYS = Path('/etc/anshin-phone/backup-keys')
 STATE = Path('/var/lib/anshin-phone/postgresql-backup')
+RETENTION_STATE = Path('/var/lib/anshin-phone/fax-retention')
 BUCKET = 'anshin-prod-phone-postgresql-backup-691862619128'
 WRITER = 'arn:aws:iam::691862619128:role/anshin-prod-phone-postgresql-backup-writer'
 FAX_BUCKET = 'anshin-prod-phone-fax-691862619128'
@@ -34,6 +35,7 @@ AWS_CONFIG = Path('/etc/anshin-phone/aws/config')
 UNIT_ROOT = Path('/etc/systemd/system')
 BACKUP_SERVICE = 'anshin-phone-postgresql-backup.service'
 BACKUP_TIMER = 'anshin-phone-postgresql-backup.timer'
+RETENTION_SERVICE = 'anshin-phone-fax-retention.service'
 RETENTION_TIMER = 'anshin-phone-fax-retention.timer'
 BACKUP_LOCK_BUSY = 'phone_command_failed_consumer_failure_exit_75'
 BACKUP_LOCK_WAIT_SECONDS = 90
@@ -136,7 +138,7 @@ def install_backup(material, *, source_sha, infra_sha, runtime=None, assets=None
         write_private(CONFIG, (json.dumps(config, sort_keys=True) + '\n').encode())
         owned_directory(Path('/etc/anshin-phone/aws'))
         write_private(Path('/etc/anshin-phone/aws/config'), aws_profiles(public))
-        for name in (BACKUP_SERVICE, BACKUP_TIMER, 'anshin-phone-fax-retention.service', RETENTION_TIMER):
+        for name in (BACKUP_SERVICE, BACKUP_TIMER, RETENTION_SERVICE, RETENTION_TIMER):
             path = Path('/etc/systemd/system') / name
             source = (INSTALL / 'deploy/postgresql-backup' / name).read_bytes()
             if path.exists():
@@ -287,11 +289,15 @@ def replace_known(path, before, after, mode):
     path = Path(path)
     if owned_bytes(path, mode) != before:
         raise RuntimeFailure('phone_backup_update_preimage_changed')
-    descriptor, name = tempfile.mkstemp(prefix='.phone-backup-input-', dir=path.parent)
+    atomic_replace(path, after, mode)
+
+
+def atomic_replace(path, body, mode):
+    descriptor, name = tempfile.mkstemp(prefix='.' + path.name + '-', dir=path.parent)
     temporary = Path(name)
     try:
         with os.fdopen(descriptor, 'wb') as target:
-            os.fchmod(target.fileno(), mode); target.write(after); target.flush(); os.fsync(target.fileno())
+            os.fchmod(target.fileno(), mode); target.write(body); target.flush(); os.fsync(target.fileno())
         os.replace(temporary, path)
         directory = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
         try: os.fsync(directory)
@@ -432,6 +438,7 @@ def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime,
     if source_only and not set(changes) <= {
         CONFIG, INSTALL / 'scripts/phone_postgresql_backup_adapter.py',
         INSTALL / 'deploy/postgresql-backup' / BACKUP_SERVICE, UNIT_ROOT / BACKUP_SERVICE,
+        INSTALL / 'deploy/postgresql-backup' / RETENTION_SERVICE, UNIT_ROOT / RETENTION_SERVICE,
     }:
         raise RuntimeFailure('phone_backup_source_update_scope_invalid')
     if not changes:
@@ -443,7 +450,7 @@ def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime,
         timers = (BACKUP_TIMER, RETENTION_TIMER)
         safe_cleanup = False
         runtime.command(['systemctl', 'disable', '--now', *timers], timeout=60)
-        runtime.command(['systemctl', 'stop', BACKUP_SERVICE, 'anshin-phone-fax-retention.service'], timeout=330, termination_grace=5)
+        runtime.command(['systemctl', 'stop', BACKUP_SERVICE, RETENTION_SERVICE], timeout=330, termination_grace=5)
         stopped = True; safe_cleanup = True
         with runtime.exclusive():
             locked = True
@@ -475,7 +482,7 @@ def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime,
             try:
                 # Stop any timer started by a partially restored schedule before compensation.
                 runtime.command(['systemctl', 'disable', '--now', BACKUP_TIMER, RETENTION_TIMER], timeout=60)
-                runtime.command(['systemctl', 'stop', BACKUP_SERVICE, 'anshin-phone-fax-retention.service'], timeout=330)
+                runtime.command(['systemctl', 'stop', BACKUP_SERVICE, RETENTION_SERVICE], timeout=330)
                 with runtime.exclusive():
                     compensation_failed = False
                     for path in reversed(changed):
@@ -725,7 +732,7 @@ def backup_status(*, runtime=None, assets=None):
                   for name in (BACKUP_TIMER, RETENTION_TIMER)},
               'services': {name: runtime.command(['systemctl', 'show', name,
                   '--property=ActiveState,Result,ExecMainCode,ExecMainStatus,ExecMainStartTimestamp,ExecMainExitTimestamp'], timeout=10).stdout.strip()
-                  for name in (BACKUP_SERVICE, 'anshin-phone-fax-retention.service')}}
+                  for name in (BACKUP_SERVICE, RETENTION_SERVICE)}}
     if assets is not None:
         result['installation'] = installation_state(assets, runtime=runtime)
         result['recent_failures'] = recent_backup_failures(runtime)
@@ -1299,6 +1306,13 @@ def purge_expired(*, runtime=None):
         if runtime.profile() != installed:
             raise RuntimeFailure('phone_retention_runtime_changed')
         runtime.health(installed)
+        receipt = {
+            'schema_version': 1,
+            'status': 'completed',
+            'completed_at': datetime.now(timezone.utc).isoformat(),
+        }
+        atomic_replace(owned_directory(RETENTION_STATE) / 'latest-success.json',
+                       (json.dumps(receipt, sort_keys=True) + '\n').encode(), 0o600)
         return {'status': 'completed', 'purged_count': value['purged_count'],
                 'source_fixed_sha': installed['backend_sha']}
 

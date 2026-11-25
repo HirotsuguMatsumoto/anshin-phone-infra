@@ -586,11 +586,12 @@ class PhoneBackupAdapterTest(unittest.TestCase):
             owner.write_private(owner.AWS_CONFIG, owner.aws_profiles(public))
             for name in owner.PRODUCER_KEYS: owner.write_private(owner.KEYS/name, (name+'-old').encode())
             assets = {'scripts/phone_postgresql_backup_adapter.py':b'old-source',
-                      'deploy/postgresql-backup/'+owner.BACKUP_TIMER:b'old-unit'}
+                      'deploy/postgresql-backup/'+owner.BACKUP_TIMER:b'old-unit',
+                      'deploy/postgresql-backup/'+owner.RETENTION_SERVICE:b'old-retention-unit'}
             for name, body in assets.items():
                 (owner.INSTALL/name).parent.mkdir(parents=True,exist_ok=True)
                 owner.write_private(owner.INSTALL/name,body)
-                if name.endswith('.timer'):
+                if name.endswith(('.service', '.timer')):
                     (owner.UNIT_ROOT/Path(name).name).write_bytes(body);(owner.UNIT_ROOT/Path(name).name).chmod(0o644)
             class Runtime:
                 def __init__(self):
@@ -798,13 +799,19 @@ class PhoneBackupAdapterTest(unittest.TestCase):
             with self.assertRaisesRegex(f.owner.RuntimeFailure, 'source_update_scope_invalid'):
                 f.owner.install_backup(None, source_sha='b'*40, infra_sha='e'*40,
                     runtime=f.runtime, assets=f.assets, expected_installed=f.expected)
-            assets = {**f.old_assets, 'scripts/phone_postgresql_backup_adapter.py': b'new-source'}
+            unit_path = 'deploy/postgresql-backup/' + f.owner.RETENTION_SERVICE
+            assets = {**f.old_assets, 'scripts/phone_postgresql_backup_adapter.py': b'new-source',
+                      unit_path: b'new-retention-unit'}
             result = f.owner.install_backup(None, source_sha='b'*40, infra_sha='e'*40,
                 runtime=f.runtime, assets=assets, expected_installed=f.expected)
             self.assertTrue(result['updated'])
             self.assertEqual({'status': 'credentials_preserved'}, result['canary'])
             self.assertEqual(f.original_schedule, f.runtime.schedule)
+            self.assertEqual(b'new-retention-unit', (f.owner.UNIT_ROOT/f.owner.RETENTION_SERVICE).read_bytes())
+            self.assertEqual(b'new-retention-unit', (f.owner.INSTALL/unit_path).read_bytes())
             for path, body in f.snapshots.items():
+                if path == f.owner.UNIT_ROOT/f.owner.RETENTION_SERVICE:
+                    continue
                 if path.parent in {f.owner.KEYS, f.owner.UNIT_ROOT} or path == f.owner.AWS_CONFIG:
                     self.assertEqual(body, path.read_bytes())
             self.assertEqual('b'*40, f.owner.read_profile(f.owner.CONFIG)['governance_sha'])
@@ -1016,9 +1023,19 @@ class PhoneBackupAdapterTest(unittest.TestCase):
         return runtime, identifier, projection
 
     def test_retention_success_cleans_only_verified_returned_id(self):
-        from phone_postgresql_backup_adapter import purge_expired
+        import json
+        from datetime import datetime, timezone
+        import phone_postgresql_backup_adapter as owner
         runtime, identifier, _ = self.retention_runtime()
-        result = purge_expired(runtime=runtime)
+        with tempfile.TemporaryDirectory() as directory, patch.object(owner, 'RETENTION_STATE', Path(directory)):
+            before = datetime.now(timezone.utc)
+            result = owner.purge_expired(runtime=runtime)
+            receipt = Path(directory) / 'latest-success.json'
+            evidence = json.loads(receipt.read_text())
+            self.assertEqual(0o600, stat.S_IMODE(receipt.stat().st_mode))
+            self.assertEqual(1, evidence['schema_version'])
+            self.assertEqual('completed', evidence['status'])
+            self.assertGreaterEqual(datetime.fromisoformat(evidence['completed_at']), before)
         self.assertEqual(result['purged_count'], 3)
         self.assertEqual(result['source_fixed_sha'], 'b' * 40)
         runtime.stop_oneoff.assert_called_once_with('fax-retention', 'backend-retention', expected_id=identifier)
@@ -1062,12 +1079,16 @@ class PhoneBackupAdapterTest(unittest.TestCase):
         import json
         import subprocess
         from production_runtime import RuntimeFailure
-        from phone_postgresql_backup_adapter import purge_expired
+        import phone_postgresql_backup_adapter as owner
         runtime, identifier, projection = self.retention_runtime()
         runtime.command.side_effect = [subprocess.CompletedProcess([], 0, value, '')
                                        for value in (json.dumps(projection), '1')]
-        with self.assertRaisesRegex(RuntimeFailure, 'consumer_failed'):
-            purge_expired(runtime=runtime)
+        with tempfile.TemporaryDirectory() as directory, patch.object(owner, 'RETENTION_STATE', Path(directory)):
+            receipt = Path(directory) / 'latest-success.json'
+            receipt.write_bytes(b'prior verified success')
+            with self.assertRaisesRegex(RuntimeFailure, 'consumer_failed'):
+                owner.purge_expired(runtime=runtime)
+            self.assertEqual(b'prior verified success', receipt.read_bytes())
         runtime.stop_oneoff.assert_called_once_with('fax-retention', 'backend-retention', expected_id=identifier)
 
     def test_unresolved_retention_prevents_next_exclusive_storage_body(self):
@@ -1118,6 +1139,8 @@ class PhoneBackupAdapterTest(unittest.TestCase):
         timer = (root / 'anshin-phone-fax-retention.timer').read_text()
         self.assertIn('--purge-expired', service)
         self.assertIn('PrivateTmp=false', service)
+        self.assertIn('StateDirectory=anshin-phone/fax-retention', service)
+        self.assertIn('StateDirectoryMode=0700', service)
         self.assertIn('Restart=no', service)
         self.assertIn('OnCalendar=*-*-* 00:00:00 Asia/Tokyo', timer)
         self.assertEqual(timer.count('OnCalendar='), 1)
