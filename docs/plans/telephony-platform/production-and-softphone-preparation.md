@@ -194,6 +194,8 @@ producerは同じguest lock下でPhone writerを止め、native DB dumpと暗号
 
 backup/retention timerはenabled/activeを読取済み。4手動世代を4定期実行の実績へ読み替えない。`backup-status`はtimerのLastTrigger/次回UTC時刻とserviceの開始・終了時刻、Result/exit statusを投影し、JSTへの変換と実発火・取得成功を既存完了記録へ残す。新しい監視基盤や台帳は作らない。
 
+`backup-status`はPhone PostgreSQL backup unitの直近12時間・最大128 journal行を固定対象として読取り、失敗理由コード、時刻、systemd invocation IDを最大12件返す。Slackの失敗を再起動後も元の実行と照合できる。journal本文や他unitの出力は返さない。
+
 更新は同じ `backup-install` とoptional公開preimageを使う。originは旧Gov/InfraのGit blobから全sourceとunitのhashを再構成し、statusのsource closureと照合する。profile fingerprintは公開profile、AWS profile及び既設producer鍵のbyte hashを束ね、秘密値は返さない。候補codeは自己所有の一時directoryから読み込み、旧installed moduleと混在させず、旧sourceを先に書き換えて実行しない。
 
 native ownerはPhone timerと管理serviceだけを有限時間で停止し、既存guest lock下でpreimageを再確認する。非leaf鍵・既存S3世代・latest-successを保持し、固定4roleの新leafで証明書pair/CN/期限、実Roles Anywhere認証と保持中exact世代の読取を確認する。source/profile/leafは既知の旧byteに限りatomic置換し、失敗時は自分が変更したfileを独立に補償する。既存のenabled/active状態の復元はguest lock解放後に行い、Persistent timerの即時発火と競合させない。未知consumer・補償未確認では一時資格/candidateを保全し、標準FAILED結果へ記録する。初回installへこの更新入力を暗黙適用しない。

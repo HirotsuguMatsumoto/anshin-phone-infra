@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import hashlib
 import inspect
 import json
@@ -16,6 +17,7 @@ import sys
 import time
 import shutil
 import tempfile
+import uuid
 
 from production_runtime import Runtime, RuntimeFailure
 
@@ -664,6 +666,40 @@ def rotate_keys(material, *, assets, expected, runtime=None, capture=None, recov
     return result['acceptance']
 
 
+def recent_backup_failures(runtime):
+    """Project failure reasons from the fixed unit without exporting journal text."""
+    result = runtime.command(
+        ['journalctl', '--unit', BACKUP_SERVICE, '--since=-12hours', '--lines=128',
+         '--output=json', '--output-fields=MESSAGE,_SYSTEMD_INVOCATION_ID,_SYSTEMD_UNIT',
+         '--no-pager'],
+        timeout=10, allow_failure=True,
+    )
+    if result.returncode:
+        return {'status': 'unavailable', 'attempts': []}
+    attempts = {}
+    for line in result.stdout.splitlines():
+        try:
+            envelope = json.loads(line)
+            if envelope.get('_SYSTEMD_UNIT') != BACKUP_SERVICE:
+                continue
+            invocation = envelope['_SYSTEMD_INVOCATION_ID']
+            if not re.fullmatch('[a-f0-9]{32}', invocation):
+                continue
+            message = envelope['MESSAGE']
+            if not isinstance(message, str) or len(message) > 256:
+                continue
+            report = json.loads(message)
+            reason = report.get('reason', '')
+            if report.get('status') != 'failed' or not re.fullmatch('phone_[a-z0-9_]{1,100}', reason):
+                continue
+            at = datetime.fromtimestamp(int(envelope['__REALTIME_TIMESTAMP']) / 1_000_000, timezone.utc)
+        except (ValueError, TypeError, AttributeError, KeyError, OverflowError, OSError):
+            continue
+        attempts[invocation] = {'domain_run_id': 'systemd:' + str(uuid.UUID(hex=invocation)),
+                                'at': at.isoformat(), 'reason': reason}
+    return {'status': 'observed', 'attempts': list(attempts.values())[-12:]}
+
+
 def backup_status(*, runtime=None, assets=None):
     runtime = runtime or Runtime()
     result = {'status': 'observed', 'latest_backup': latest_backup() if (STATE / 'latest-success.json').exists() else None,
@@ -675,6 +711,7 @@ def backup_status(*, runtime=None, assets=None):
                   for name in (BACKUP_SERVICE, 'anshin-phone-fax-retention.service')}}
     if assets is not None:
         result['installation'] = installation_state(assets, runtime=runtime)
+        result['recent_failures'] = recent_backup_failures(runtime)
     return result
 
 

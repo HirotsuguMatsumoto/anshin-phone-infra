@@ -530,6 +530,36 @@ class ProductionRuntimeTest(unittest.TestCase):
 
 
 class PhoneBackupAdapterTest(unittest.TestCase):
+    def test_backup_status_projects_finite_failure_for_exact_systemd_invocation(self):
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        import json
+        import phone_postgresql_backup_adapter as owner
+
+        row = {'_SYSTEMD_UNIT': owner.BACKUP_SERVICE, '_SYSTEMD_INVOCATION_ID': 'a' * 32,
+               '__REALTIME_TIMESTAMP': '1795549209000000'}
+        valid = {**row, 'MESSAGE': json.dumps({
+            'status': 'failed', 'reason': 'phone_command_failed_consumer_failure_exit_75'
+        })}
+        other_unit = {**valid, '_SYSTEMD_UNIT': 'other.service'}
+        private = {**row, 'MESSAGE': json.dumps({
+            'status': 'failed', 'reason': 'private fixture contents'
+        })}
+        runtime = Mock()
+        runtime.command.return_value = SimpleNamespace(
+            returncode=0, stdout='\n'.join(map(json.dumps, [other_unit, private, valid]))
+        )
+
+        result = owner.recent_backup_failures(runtime)
+
+        self.assertEqual('observed', result['status'])
+        self.assertEqual([{'domain_run_id': 'systemd:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                           'at': '2026-11-24T19:40:09+00:00',
+                           'reason': 'phone_command_failed_consumer_failure_exit_75'}],
+                         result['attempts'])
+        self.assertIn(owner.BACKUP_SERVICE, runtime.command.call_args.args[0])
+        self.assertNotIn('private fixture contents', repr(result))
+
     @contextmanager
     def backup_update_fixture(self):
         import json, base64, copy, subprocess
