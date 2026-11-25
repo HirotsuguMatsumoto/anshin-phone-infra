@@ -768,6 +768,48 @@ class PhoneBackupAdapterTest(unittest.TestCase):
                 for path,body in f.snapshots.items():self.assertEqual(body,path.read_bytes())
                 self.assertEqual(f.original_schedule,f.runtime.schedule)
 
+    def test_phone_timer_retries_only_native_lock_contention(self):
+        import phone_postgresql_backup_adapter as owner
+
+        busy = owner.RuntimeFailure(owner.BACKUP_LOCK_BUSY)
+        permanent = owner.RuntimeFailure('phone_runtime_unhealthy')
+        with patch.object(owner, '_capture_backup_attempt', side_effect=[busy, {'status': 'completed'}]) as attempt, \
+                patch.object(owner.time, 'monotonic', side_effect=[0, 1]), \
+                patch.object(owner.time, 'sleep') as sleep:
+            self.assertEqual({'status': 'completed'}, owner.scheduled_backup(timer_run=True))
+            self.assertEqual(2, attempt.call_count)
+            sleep.assert_called_once_with(5)
+        for timer_run, failure in ((False, busy), (True, permanent)):
+            with self.subTest(timer_run=timer_run), patch.object(
+                    owner, '_capture_backup_attempt', side_effect=failure) as attempt:
+                with self.assertRaisesRegex(owner.RuntimeFailure, str(failure)):
+                    owner.scheduled_backup(timer_run=timer_run)
+                attempt.assert_called_once()
+        with patch.object(owner, '_capture_backup_attempt', side_effect=busy) as attempt, \
+                patch.object(owner.time, 'monotonic', side_effect=[0, owner.BACKUP_LOCK_WAIT_SECONDS]), \
+                patch.object(owner.time, 'sleep') as sleep:
+            with self.assertRaisesRegex(owner.RuntimeFailure, owner.BACKUP_LOCK_BUSY):
+                owner.scheduled_backup(timer_run=True)
+            attempt.assert_called_once()
+            sleep.assert_not_called()
+
+    def test_backup_source_only_update_preserves_credentials_and_other_units(self):
+        with self.backup_update_fixture() as f, patch.object(f.owner, 'credential_canary') as canary:
+            with self.assertRaisesRegex(f.owner.RuntimeFailure, 'source_update_scope_invalid'):
+                f.owner.install_backup(None, source_sha='b'*40, infra_sha='e'*40,
+                    runtime=f.runtime, assets=f.assets, expected_installed=f.expected)
+            assets = {**f.old_assets, 'scripts/phone_postgresql_backup_adapter.py': b'new-source'}
+            result = f.owner.install_backup(None, source_sha='b'*40, infra_sha='e'*40,
+                runtime=f.runtime, assets=assets, expected_installed=f.expected)
+            self.assertTrue(result['updated'])
+            self.assertEqual({'status': 'credentials_preserved'}, result['canary'])
+            self.assertEqual(f.original_schedule, f.runtime.schedule)
+            for path, body in f.snapshots.items():
+                if path.parent in {f.owner.KEYS, f.owner.UNIT_ROOT} or path == f.owner.AWS_CONFIG:
+                    self.assertEqual(body, path.read_bytes())
+            self.assertEqual('b'*40, f.owner.read_profile(f.owner.CONFIG)['governance_sha'])
+            canary.assert_not_called()
+
     def test_backup_update_rejects_stale_preimage_before_schedule_or_file_changes(self):
         from production_runtime import RuntimeFailure
         with self.backup_update_fixture() as f:
@@ -950,7 +992,7 @@ class PhoneBackupAdapterTest(unittest.TestCase):
         self.assertIn('PrivateTmp=false', service)
         self.assertIn('TimeoutStartSec=25min', service)
         self.assertIn('TimeoutStopSec=5min', service)
-        self.assertIn('/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --scheduled-backup', service)
+        self.assertIn('/opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --scheduled-backup --timer-run', service)
 
     def retention_runtime(self):
         import contextlib

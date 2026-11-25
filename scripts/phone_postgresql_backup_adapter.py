@@ -35,6 +35,8 @@ UNIT_ROOT = Path('/etc/systemd/system')
 BACKUP_SERVICE = 'anshin-phone-postgresql-backup.service'
 BACKUP_TIMER = 'anshin-phone-postgresql-backup.timer'
 RETENTION_TIMER = 'anshin-phone-fax-retention.timer'
+BACKUP_LOCK_BUSY = 'phone_command_failed_consumer_failure_exit_75'
+BACKUP_LOCK_WAIT_SECONDS = 90
 PRODUCER_KEYS = {'phone-db-writer-certificate.pem', 'phone-db-writer-private-key.pem',
     'phone-fax-writer-certificate.pem', 'phone-fax-writer-private-key.pem',
     'phone-age-recipient.txt', 'phone-manifest-signing.pem', 'phone-manifest-verification.pem'}
@@ -386,40 +388,52 @@ def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime,
     if (set(schedule) != {BACKUP_TIMER, RETENTION_TIMER}
             or any(set(value) != {'enabled', 'active'} or any(type(v) is not bool for v in value.values()) for value in schedule.values())):
         raise RuntimeFailure('phone_backup_update_schedule_unconfirmed')
-    previous = read_profile(CONFIG); public = backup_public(material['public'])
-    leaf_ids = {key for key in CREDENTIAL_IDS if '-backup-' in key}
-    if ({key: value for key, value in public.items() if key != 'credential_versions'}
-            != {key: value for key, value in previous['public'].items() if key != 'credential_versions'}
-            or any(public['credential_versions'][key] != previous['public']['credential_versions'][key]
-                   for key in CREDENTIAL_IDS - leaf_ids)
-            or any(public['credential_versions'][key] < previous['public']['credential_versions'][key] for key in leaf_ids)):
-        raise RuntimeFailure('phone_backup_update_nonleaf_binding_changed')
-    restore_leafs = {name for name in RESTORE_KEYS if '-restore-' in name}
-    if set(material['keys']) != PRODUCER_KEYS | restore_leafs:
-        raise RuntimeFailure('phone_backup_update_keys_invalid')
-    decoded = {name: base64.b64decode(value, validate=True) for name, value in material['keys'].items()}
-    if any(not body or len(body) > 16384 for body in decoded.values()):
-        raise RuntimeFailure('phone_backup_key_size_invalid')
-    for name in PRODUCER_KEYS:
-        old = owned_bytes(KEYS / name)
-        if '-writer-' not in name and old != decoded[name]:
-            raise RuntimeFailure('phone_backup_update_nonleaf_key_changed')
-        if '-writer-' in name and old != decoded[name]:
-            data, kind = name.split('-')[1], 'certificate' if name.endswith('certificate.pem') else 'private-key'
-            credential = 'anshin.production.phone.' + data + '-backup-writer-' + kind
-            if public['credential_versions'][credential] <= previous['public']['credential_versions'][credential]:
-                raise RuntimeFailure('phone_backup_update_leaf_version_unchanged')
+    previous = read_profile(CONFIG)
+    source_only = material is None
+    if source_only and (source_sha != previous['governance_sha'] or acceptance is not None):
+        raise RuntimeFailure('phone_backup_source_update_scope_invalid')
+    public = previous['public'] if source_only else backup_public(material['public'])
+    decoded = {}
+    if not source_only:
+        leaf_ids = {key for key in CREDENTIAL_IDS if '-backup-' in key}
+        if ({key: value for key, value in public.items() if key != 'credential_versions'}
+                != {key: value for key, value in previous['public'].items() if key != 'credential_versions'}
+                or any(public['credential_versions'][key] != previous['public']['credential_versions'][key]
+                       for key in CREDENTIAL_IDS - leaf_ids)
+                or any(public['credential_versions'][key] < previous['public']['credential_versions'][key] for key in leaf_ids)):
+            raise RuntimeFailure('phone_backup_update_nonleaf_binding_changed')
+        restore_leafs = {name for name in RESTORE_KEYS if '-restore-' in name}
+        if set(material['keys']) != PRODUCER_KEYS | restore_leafs:
+            raise RuntimeFailure('phone_backup_update_keys_invalid')
+        decoded = {name: base64.b64decode(value, validate=True) for name, value in material['keys'].items()}
+        if any(not body or len(body) > 16384 for body in decoded.values()):
+            raise RuntimeFailure('phone_backup_key_size_invalid')
+        for name in PRODUCER_KEYS:
+            old = owned_bytes(KEYS / name)
+            if '-writer-' not in name and old != decoded[name]:
+                raise RuntimeFailure('phone_backup_update_nonleaf_key_changed')
+            if '-writer-' in name and old != decoded[name]:
+                data, kind = name.split('-')[1], 'certificate' if name.endswith('certificate.pem') else 'private-key'
+                credential = 'anshin.production.phone.' + data + '-backup-writer-' + kind
+                if public['credential_versions'][credential] <= previous['public']['credential_versions'][credential]:
+                    raise RuntimeFailure('phone_backup_update_leaf_version_unchanged')
     if owned_bytes(AWS_CONFIG) != aws_profiles(previous['public']):
         raise RuntimeFailure('phone_backup_update_aws_profile_changed')
     changes = {INSTALL / name: (body, 0o600) for name, body in assets.items()}
     changes.update({UNIT_ROOT / Path(name).name: (body, 0o644) for name, body in assets.items()
                     if name.startswith('deploy/postgresql-backup/') and Path(name).suffix in {'.service', '.timer'}})
-    changes.update({KEYS / name: (decoded[name], 0o600) for name in PRODUCER_KEYS if '-writer-' in name})
+    changes.update({KEYS / name: (decoded[name], 0o600) for name in PRODUCER_KEYS
+                    if '-writer-' in name and name in decoded})
     configuration = {'manifest_key_id': public['manifest_key_id'], 'governance_sha': source_sha, 'infra_sha': infra_sha, 'public': public}
     changes[CONFIG] = ((json.dumps(configuration, sort_keys=True) + '\n').encode(), 0o600)
     changes[AWS_CONFIG] = (aws_profiles(public), 0o600)
     before = {path: owned_bytes(path, mode) for path, (_, mode) in changes.items()}
     changes = {path: value for path, value in changes.items() if value[0] != before[path]}
+    if source_only and not set(changes) <= {
+        CONFIG, INSTALL / 'scripts/phone_postgresql_backup_adapter.py',
+        INSTALL / 'deploy/postgresql-backup' / BACKUP_SERVICE, UNIT_ROOT / BACKUP_SERVICE,
+    }:
+        raise RuntimeFailure('phone_backup_source_update_scope_invalid')
     if not changes:
         return {'status': 'installed', 'updated': False, 'source_sha': source_sha, 'infra_sha': infra_sha}
     work = Path(tempfile.mkdtemp(prefix='anshin-phone-backup-update-', dir='/run'))
@@ -437,7 +451,10 @@ def update_backup(material, *, assets, expected, source_sha, infra_sha, runtime,
             if {k: v for k, v in actual.items() if k != 'schedule'} != {k: v for k, v in expected.items() if k != 'schedule'}:
                 raise RuntimeFailure('phone_backup_update_preimage_changed')
             runtime.health(runtime.profile())
-            canary = credential_canary(runtime, public, work)
+            canary = (
+                {'status': 'credentials_preserved'} if source_only
+                else credential_canary(runtime, public, work)
+            )
             for path, (body, mode) in changes.items():
                 changed.append(path)
                 replace_known(path, before[path], body, mode)
@@ -1177,8 +1194,22 @@ def environment(runtime, installed, config, container_id):
     return env
 
 
-def scheduled_backup(*, runtime=None, config_path=CONFIG, install=INSTALL):
+def scheduled_backup(*, runtime=None, config_path=CONFIG, install=INSTALL, timer_run=False):
     runtime = runtime or Runtime()
+    deadline = time.monotonic() + BACKUP_LOCK_WAIT_SECONDS if timer_run else None
+    while True:
+        try:
+            return _capture_backup_attempt(runtime, config_path, install)
+        except RuntimeFailure as error:
+            if deadline is None or str(error) != BACKUP_LOCK_BUSY:
+                raise
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(5, remaining))
+
+
+def _capture_backup_attempt(runtime, config_path, install):
     config = read_profile(config_path)
     installed = runtime.profile()
     if not installed:
@@ -1284,7 +1315,10 @@ def main():
     modes.add_argument('--capture-pair', nargs=3, metavar=('WORK', 'ARTIFACT', 'RECIPIENT'))
     modes.add_argument('--upload-fax', type=Path)
     modes.add_argument('--verify-restored-fax', nargs=3, metavar=('MANIFEST', 'WORK', 'POSTGRES_ID'))
+    parser.add_argument('--timer-run', action='store_true')
     arguments = parser.parse_args()
+    if arguments.timer_run and not arguments.scheduled_backup:
+        parser.error('--timer-run requires --scheduled-backup')
     try:
         if arguments.capture_pair:
             result = capture_pair(*arguments.capture_pair)
@@ -1293,7 +1327,7 @@ def main():
         elif arguments.verify_restored_fax:
             result = verify_restored_fax(*arguments.verify_restored_fax)
         else:
-            result = purge_expired() if arguments.purge_expired else scheduled_backup()
+            result = purge_expired() if arguments.purge_expired else scheduled_backup(timer_run=arguments.timer_run)
         print(json.dumps(result, sort_keys=True))
         return 0
     except (RuntimeFailure, OSError, ValueError, KeyError, KeyboardInterrupt) as error:

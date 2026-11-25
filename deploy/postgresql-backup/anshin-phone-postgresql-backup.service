@@ -15,7 +15,7 @@ Environment=AWS_SHARED_CREDENTIALS_FILE=/dev/null
 Environment=AWS_EC2_METADATA_DISABLED=true
 StateDirectory=anshin-phone/postgresql-backup
 StateDirectoryMode=0700
-ExecStart=/usr/bin/python3 /opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --scheduled-backup
+ExecStart=/usr/bin/python3 /opt/anshin-phone-backup/scripts/phone_postgresql_backup_adapter.py --scheduled-backup --timer-run
 NoNewPrivileges=true
 PrivateTmp=false
 ProtectHome=true
