@@ -1003,7 +1003,11 @@ def validate_build_check_contract(
         for line in text.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     }
-    if BUILD_CHECK_COMMAND not in executable_lines:
+    guard_commands = {
+        BUILD_CHECK_COMMAND,
+        f"{BUILD_CHECK_COMMAND} --with-portable-self-test",
+    }
+    if executable_lines.isdisjoint(guard_commands):
         errors.append(
             "scripts/build_check.sh does not invoke the document governance guard"
         )
