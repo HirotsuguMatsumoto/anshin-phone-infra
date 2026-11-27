@@ -457,7 +457,6 @@ fi
 # anshin-document-distribution-profile:v1
 if [[ "${1:-}" == "--document-distribution" ]]; then
   [[ $# -eq 1 ]] || { echo "[build_check] ERROR: distribution mode accepts no paths" >&2; exit 2; }
-  bash scripts/run_document_governance_guard.sh
   DISTRIBUTION_SELECTION="$(bash scripts/run_document_governance_guard.sh --build-check-profile)"
   read -r DISTRIBUTION_PROFILE DISTRIBUTION_BASE DISTRIBUTION_TARGET DISTRIBUTION_HEAD DISTRIBUTION_INPUT <<< "$DISTRIBUTION_SELECTION"
   [[ "$DISTRIBUTION_PROFILE" == "document-distribution" ]] || {
@@ -468,7 +467,7 @@ if [[ "${1:-}" == "--document-distribution" ]]; then
   git diff --no-ext-diff --no-textconv --cached --check --
   git diff --no-ext-diff --no-textconv --check --
   bash -n scripts/build_check.sh scripts/run_document_governance_guard.sh scripts/test_document_governance_guard.sh
-  bash scripts/test_document_governance_guard.sh "$ROOT_DIR"
+  bash scripts/run_document_governance_guard.sh --with-portable-self-test
   [[ "$(bash scripts/run_document_governance_guard.sh --build-check-profile)" == "$DISTRIBUTION_SELECTION" ]] || {
     echo "[build_check] ERROR: distribution inputs changed during verification" >&2
     exit 1
@@ -5057,6 +5056,7 @@ def main() -> int:
     mode.add_argument("--build-check-profile", action="store_true")
     mode.add_argument("--test-build-check-profile", action="store_true")
     mode.add_argument("--build-check-plan", action="store_true")
+    mode.add_argument("--list-change-paths", action="store_true")
     mode.add_argument("--build-check-plan-profile", type=Path)
     mode.add_argument("--build-check-execution-selection", type=Path)
     mode.add_argument("--validate-build-check-plan", type=Path)
@@ -5122,6 +5122,7 @@ def main() -> int:
         args.build_check_profile
         or args.test_build_check_profile
         or args.build_check_plan
+        or args.list_change_paths
         or args.build_check_plan_profile is not None
         or args.build_check_execution_selection is not None
         or args.validate_build_check_plan is not None
@@ -5132,6 +5133,17 @@ def main() -> int:
             prior_state: dict[str, Any] = {}
             if args.test_build_check_profile:
                 test_distribution_profile()
+            elif args.list_change_paths:
+                if args.plan_paths:
+                    raise ContractError(
+                        "change path listing does not accept path arguments"
+                    )
+                sys.stdout.buffer.write(
+                    b"".join(
+                        os.fsencode(path) + b"\0"
+                        for path in _distribution_changed_paths(repository_root)
+                    )
+                )
             elif args.build_check_plan:
                 sys.stdout.buffer.write(
                     json.dumps(

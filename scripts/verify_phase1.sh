@@ -17,6 +17,19 @@ else
 fi
 export ANSHIN_PHONE_BACKEND_DIR
 
+if [ "${1:-}" = "--tests" ]; then
+  shift
+  [ "$#" -gt 0 ] || { echo "no Phase 1 tests were selected" >&2; exit 2; }
+  for test_path do
+    case "$test_path" in
+      scripts/test_phase1_render_config.py|scripts/test_kamailio_render_config.py|scripts/test_pbx_event_pipeline.py|scripts/test_device_and_voice_tools.py|scripts/test_carrier_and_firewall_tools.py|scripts/test_phase1_sip_e2e_cleanup.py|scripts/test_resolve_phone_backend.py)
+        python3 "$repo_dir/$test_path" ;;
+      *) echo "unknown Phase 1 test: $test_path" >&2; exit 2 ;;
+    esac
+  done
+  exit 0
+fi
+
 required_files='compose.phase1.yaml
 deploy/asterisk/Dockerfile
 deploy/asterisk/config/pjsip.conf.template
@@ -41,13 +54,17 @@ printf '%s\n' "$required_files" | while IFS= read -r item; do
   }
 done
 
-python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/pbx_management.py"
-python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/pbx_fax_worker.py"
-python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/render_config.py"
-python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/pbx_event_spool.py"
-python3 -m py_compile "$repo_dir/deploy/pbx-event-forwarder/forwarder.py"
-python3 -m py_compile "$repo_dir/deploy/pbx-event-forwarder/healthcheck.py"
-python3 -m py_compile "$repo_dir/deploy/kamailio/scripts/render_config.py"
+python3 -m py_compile "$repo_dir/deploy/asterisk/scripts/pbx_management.py" \
+  "$repo_dir/deploy/asterisk/scripts/pbx_fax_worker.py" \
+  "$repo_dir/deploy/asterisk/scripts/render_config.py" \
+  "$repo_dir/deploy/asterisk/scripts/pbx_event_spool.py" \
+  "$repo_dir/deploy/pbx-event-forwarder/forwarder.py" \
+  "$repo_dir/deploy/pbx-event-forwarder/healthcheck.py" \
+  "$repo_dir/deploy/kamailio/scripts/render_config.py" \
+  "$repo_dir/scripts/create_sip_enrollment_bundle.py" \
+  "$repo_dir/scripts/evaluate_voice_quality.py" \
+  "$repo_dir/scripts/render_phase1_firewall.py" \
+  "$repo_dir/scripts/validate_carrier_intake.py"
 sh -n "$repo_dir/deploy/kamailio/scripts/entrypoint.sh"
 sh -n "$repo_dir/deploy/rtpengine/scripts/entrypoint.sh"
 sh -n "$repo_dir/scripts/phase1_status.sh"
@@ -59,10 +76,6 @@ python3 "$repo_dir/scripts/test_device_and_voice_tools.py"
 python3 "$repo_dir/scripts/test_carrier_and_firewall_tools.py"
 python3 "$repo_dir/scripts/test_phase1_sip_e2e_cleanup.py"
 python3 "$repo_dir/scripts/test_resolve_phone_backend.py"
-python3 -m py_compile "$repo_dir/scripts/create_sip_enrollment_bundle.py"
-python3 -m py_compile "$repo_dir/scripts/evaluate_voice_quality.py"
-python3 -m py_compile "$repo_dir/scripts/render_phase1_firewall.py"
-python3 -m py_compile "$repo_dir/scripts/validate_carrier_intake.py"
 
 ANSHIN_PHONE_SECRET_DIR="$validation_root/secrets" \
   CARRIER_AUTH_MODE=registration \

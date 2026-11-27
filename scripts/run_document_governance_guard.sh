@@ -8,6 +8,10 @@ if [[ "${1:-}" == "--build-check-profile" ]]; then
   exec python3 "$REPOSITORY_ROOT/scripts/document_governance_portable.py" \
     --repository-root "$REPOSITORY_ROOT" --build-check-profile
 fi
+if [[ "${1:-}" == "--with-portable-self-test" && $# -ne 1 ]]; then
+  echo "[document-governance-build-check] ERROR: unexpected arguments" >&2
+  exit 2
+fi
 EXPLICIT_GOVERNANCE_ROOT=false
 
 if [[ -n "${ANSHIN_GOVERNANCE_ROOT:-}" ]]; then
@@ -60,7 +64,11 @@ PY
   fi
 fi
 
+GUARD_TEST="$REPOSITORY_ROOT/scripts/test_document_governance_guard.sh"
 if $WORKSPACE_COMPLETE; then
+  if [[ "${1:-}" == "--with-portable-self-test" ]]; then
+    bash "$GUARD_TEST" "$REPOSITORY_ROOT"
+  fi
   exec python3 "$GOVERNANCE_ROOT/scripts/run_document_governance_build_check.py" \
     --governance-root "$GOVERNANCE_ROOT" \
     --repository-root "$REPOSITORY_ROOT"
@@ -68,7 +76,6 @@ fi
 
 PORTABLE_CHECKER="$REPOSITORY_ROOT/scripts/document_governance_portable.py"
 CONTRACT_METADATA="$REPOSITORY_ROOT/scripts/document_governance_contract.json"
-GUARD_TEST="$REPOSITORY_ROOT/scripts/test_document_governance_guard.sh"
 if [[ ! -f "$PORTABLE_CHECKER" || ! -f "$CONTRACT_METADATA" || ! -f "$GUARD_TEST" ]]; then
   printf '%s\n' \
     "[document-governance-build-check] ERROR: portable governance distribution is missing" >&2

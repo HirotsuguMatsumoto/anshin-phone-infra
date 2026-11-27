@@ -125,7 +125,6 @@ fi
 # anshin-document-distribution-profile:v1
 if [[ "${1:-}" == "--document-distribution" ]]; then
   [[ $# -eq 1 ]] || { echo "[build_check] ERROR: distribution mode accepts no paths" >&2; exit 2; }
-  bash scripts/run_document_governance_guard.sh
   DISTRIBUTION_SELECTION="$(bash scripts/run_document_governance_guard.sh --build-check-profile)"
   read -r DISTRIBUTION_PROFILE DISTRIBUTION_BASE DISTRIBUTION_TARGET DISTRIBUTION_HEAD DISTRIBUTION_INPUT <<< "$DISTRIBUTION_SELECTION"
   [[ "$DISTRIBUTION_PROFILE" == "document-distribution" ]] || {
@@ -136,7 +135,7 @@ if [[ "${1:-}" == "--document-distribution" ]]; then
   git diff --no-ext-diff --no-textconv --cached --check --
   git diff --no-ext-diff --no-textconv --check --
   bash -n scripts/build_check.sh scripts/run_document_governance_guard.sh scripts/test_document_governance_guard.sh
-  bash scripts/test_document_governance_guard.sh "$ROOT_DIR"
+  bash scripts/run_document_governance_guard.sh --with-portable-self-test
   [[ "$(bash scripts/run_document_governance_guard.sh --build-check-profile)" == "$DISTRIBUTION_SELECTION" ]] || {
     echo "[build_check] ERROR: distribution inputs changed during verification" >&2
     exit 1
@@ -172,5 +171,24 @@ if [[ "$MODE" == "--documents-only" ]]; then
 fi
 
 git diff --check
-./scripts/verify_phase1.sh
+tests=()
+if [[ "$MODE" == "--fast" && "${RUN_PHASE1_SIP_E2E:-0}" != "1" ]]; then
+  changes="$(mktemp "${TMPDIR:-/tmp}/anshin-phone-infra-paths.XXXXXX")"
+  trap 'rm -f "$changes"' EXIT
+  python3 scripts/document_governance_portable.py --repository-root "$ROOT_DIR" --list-change-paths >"$changes"
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      documents/*.md|docs/*.md|AGENTS.md) continue ;;
+      scripts/test_phase1_render_config.py|scripts/test_kamailio_render_config.py|scripts/test_pbx_event_pipeline.py|scripts/test_device_and_voice_tools.py|scripts/test_carrier_and_firewall_tools.py|scripts/test_phase1_sip_e2e_cleanup.py|scripts/test_resolve_phone_backend.py)
+        [[ -f "$path" ]] || { tests=(); break; }
+        tests+=("$path") ;;
+      *) tests=(); break ;;
+    esac
+  done <"$changes"
+fi
+if [[ "${#tests[@]}" -gt 0 ]]; then
+  ./scripts/verify_phase1.sh --tests "${tests[@]}"
+else
+  ./scripts/verify_phase1.sh
+fi
 echo "[build_check] OK mode=$MODE"
